@@ -8,24 +8,24 @@ modern text indexing in go - [blugelabs.com](https://www.blugelabs.com/)
 
 ## Features
 
-* Supported field types:
-    * Text, Numeric, Date, Geo Point
-* Supported query types:
-    * Term, Phrase, Match, Match Phrase, Prefix
-    * Conjunction, Disjunction, Boolean
-    * Numeric Range, Date Range
-* BM25 Similarity/Scoring with pluggable interfaces
-* Search result match highlighting
-* Extendable Aggregations:
-    * Bucketing
-        * Terms
-        * Numeric Range
-        * Date Range
-    * Metrics
-        * Min/Max/Count/Sum
-        * Avg/Weighted Avg
-        * Cardinality Estimation ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
-        * Quantile Approximation ([T-Digest](https://github.com/caio/go-tdigest)) 
+- Supported field types:
+  - Text, Numeric, Date, Geo Point
+- Supported query types:
+  - Term, Phrase, Match, Match Phrase, Prefix
+  - Conjunction, Disjunction, Boolean
+  - Numeric Range, Date Range
+- BM25 Similarity/Scoring with pluggable interfaces
+- Search result match highlighting
+- Extendable Aggregations:
+  - Bucketing
+    - Terms
+    - Numeric Range
+    - Date Range
+  - Metrics
+    - Min/Max/Count/Sum
+    - Avg/Weighted Avg
+    - Cardinality Estimation ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
+    - Quantile Approximation ([T-Digest](https://github.com/caio/go-tdigest))
 
 ## Indexing
 

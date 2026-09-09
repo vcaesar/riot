@@ -1,0 +1,16 @@
+language: go
+
+go:
+  - 1.7.x
+  - 1.8.x
+  - tip
+
+install:
+  - export PATH=$PATH:$HOME/gopath/bin
+  - go get -u github.com/go-ego/gse  
+  - go get -u github.com/go-ego/gpy  
+  - go get -v -t
+
+# notifications:
+#   email:
+#     - .com

@@ -17,3 +17,4 @@ vendor/**
 /search/query/y.output
 *.test
 tags
+.v0
