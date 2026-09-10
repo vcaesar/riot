@@ -16,8 +16,8 @@ require (
 	github.com/caio/go-tdigest v3.1.0+incompatible
 	github.com/leesper/go_rng v0.0.0-20190531154944-a612b043e353 // indirect
 	github.com/spf13/cobra v0.0.5
-	golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a
-	golang.org/x/text v0.3.0
+	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f
+	golang.org/x/text v0.3.8
 	gonum.org/v1/gonum v0.7.0 // indirect
 )
 
