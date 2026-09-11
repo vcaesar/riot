@@ -17,9 +17,9 @@ package bluge
 import (
 	"fmt"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/blugelabs/bluge/index"
+	"github.com/vcaesar/riot/index"
 )
 
 type Writer struct {
@@ -63,16 +63,18 @@ func (w *Writer) Batch(batch *index.Batch) error {
 	return w.chill.Batch(batch)
 }
 
-func (w *Writer) Close() error {
-	return w.chill.Close()
-}
-
+// Status returns index statistics with independently sampled fields.
 func (w *Writer) Status() index.Stats {
 	return w.chill.Stats()
 }
 
-func (w *Writer) DirectoryStats() (numFilesOnDisk, numBytesUsedDisk uint64) {
+// DirectoryStats returns the directory's total item count and cumulative size in bytes.
+func (w *Writer) DirectoryStats() (numItems, numBytes uint64) {
 	return w.chill.DirectoryStats()
+}
+
+func (w *Writer) Close() error {
+	return w.chill.Close()
 }
 
 func (w *Writer) Reader() (*Reader, error) {

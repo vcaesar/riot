@@ -19,8 +19,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/RoaringBitmap/roaring"
-	segment "github.com/blugelabs/bluge_segment_api"
+	"github.com/RoaringBitmap/roaring/v2"
+	segment "github.com/vcaesar/bluge_segment_api"
 )
 
 type SegmentPlugin struct {
@@ -72,14 +72,17 @@ func (s *Writer) newSegment(results []segment.Document) (*segmentWrapper, uint64
 type segmentWrapper struct {
 	segment.Segment
 	refCounter
-	persisted bool
+	persisted        bool
+	timeOnce         sync.Once
+	timeMin, timeMax int64
+	timeErr          error
 }
 
-func (s segmentWrapper) Persisted() bool {
+func (s *segmentWrapper) Persisted() bool {
 	return s.persisted
 }
 
-func (s segmentWrapper) Close() error {
+func (s *segmentWrapper) Close() error {
 	return s.DecRef()
 }
 

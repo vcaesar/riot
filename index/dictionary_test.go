@@ -153,9 +153,9 @@ func TestIndexFieldDict(t *testing.T) {
 	}
 
 	// test use case for prefix
-	byteBeg := []byte("cat")
-	byteEnd := incrementBytes(byteBeg)
-	dict4, err := indexReader.DictionaryIterator("prefix", nil, byteBeg, byteEnd)
+	kBeg := []byte("cat")
+	kEnd := incrementBytes(kBeg)
+	dict4, err := indexReader.DictionaryIterator("prefix", nil, kBeg, kEnd)
 	if err != nil {
 		t.Errorf("error creating reader: %v", err)
 	}

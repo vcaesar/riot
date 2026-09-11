@@ -17,7 +17,7 @@ package collector
 import (
 	"context"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type AllCollector struct {
@@ -29,27 +29,28 @@ func NewAllCollector() *AllCollector {
 
 func (a *AllCollector) Collect(ctx context.Context, aggs search.Aggregations,
 	searcher search.Collectible) (search.DocumentMatchIterator, error) {
-	iter := &AllIterator{
+	return &AllIterator{
 		ctx:           ctx,
-		neededFields:  aggs.Fields(),
+		neededFields:  uniqueFields(aggs.Fields()),
 		bucket:        search.NewBucket("", aggs),
 		searcher:      searcher,
 		searchContext: search.NewSearchContext(searcher.DocumentMatchPoolSize(), 0),
-	}
-	if len(iter.neededFields) <= 1 {
-		return iter, nil
-	}
+	}, nil
+}
 
-	// filter repeat field
-	store := make(map[string]struct{}, len(iter.neededFields))
-	for _, field := range iter.neededFields {
-		store[field] = struct{}{}
+func uniqueFields(fields []string) []string {
+	if len(fields) < 2 {
+		return fields
 	}
-	iter.neededFields = iter.neededFields[:0]
-	for field := range store {
-		iter.neededFields = append(iter.neededFields, field)
+	seen := make(map[string]struct{}, len(fields))
+	unique := fields[:0]
+	for _, field := range fields {
+		if _, exists := seen[field]; !exists {
+			seen[field] = struct{}{}
+			unique = append(unique, field)
+		}
 	}
-	return iter, nil
+	return unique
 }
 
 func (a *AllCollector) Size() int {

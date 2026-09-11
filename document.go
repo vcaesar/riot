@@ -15,31 +15,31 @@
 package bluge
 
 import (
-	segment "github.com/blugelabs/bluge_segment_api"
+	"encoding/binary"
+
+	segment "github.com/vcaesar/bluge_segment_api"
+	"github.com/vcaesar/riot/index"
 )
 
-type Document struct {
-	fields    []Field
-	timestamp int64
-}
+type Document []Field
 
 func NewDocument(id string) *Document {
 	return &Document{
-		fields: []Field{NewKeywordField(_idField, id).StoreValue().Sortable()},
+		NewKeywordField(_idField, id).StoreValue().Sortable(),
 	}
 }
 
 func NewDocumentWithIdentifier(id Identifier) *Document {
 	return &Document{
-		fields: []Field{NewKeywordFieldBytes(id.Field(), id.Term()).StoreValue().Sortable()},
+		NewKeywordFieldBytes(id.Field(), id.Term()).StoreValue().Sortable(),
 	}
 }
 
 func (d Document) Size() int {
 	sizeInBytes := sizeOfSlice
 
-	for _, field := range d.fields {
-		sizeInBytes += field.Size()
+	for _, entry := range d {
+		sizeInBytes += entry.Size()
 	}
 
 	return sizeInBytes
@@ -48,21 +48,36 @@ func (d Document) Size() int {
 // ID is an experimental helper method
 // to simplify common use cases
 func (d Document) ID() segment.Term {
-	return Identifier(d.fields[0].Value())
+	return Identifier(d[0].Value())
 }
 
 func (d *Document) AddField(f Field) *Document {
-	d.fields = append(d.fields, f)
+	*d = append(*d, f)
 	return d
 }
 
-func (d *Document) Timestamp() int64 {
-	return d.timestamp
-}
-
+// SetTimestamp sets optional segment-pruning metadata. Zero means unknown.
+// The units are caller-defined and must match Config.WithTimeRange.
 func (d *Document) SetTimestamp(v int64) *Document {
-	d.timestamp = v
-	return d
+	value := make([]byte, 8)
+	binary.BigEndian.PutUint64(value, uint64(v))
+	field := NewStoredOnlyField(index.TimestampField, value)
+	for j, f := range *d {
+		if f.Name() == index.TimestampField {
+			(*d)[j] = field
+			return d
+		}
+	}
+	return d.AddField(field)
+}
+
+func (d Document) Timestamp() int64 {
+	for _, f := range d {
+		if f.Name() == index.TimestampField && len(f.Value()) == 8 {
+			return int64(binary.BigEndian.Uint64(f.Value()))
+		}
+	}
+	return 0
 }
 
 // FieldConsumer is anything which can consume a field
@@ -74,7 +89,7 @@ type FieldConsumer interface {
 
 func (d Document) Analyze() {
 	fieldOffsets := map[string]int{}
-	for _, field := range d.fields {
+	for _, field := range d {
 		if !field.Index() {
 			continue
 		}
@@ -86,7 +101,7 @@ func (d Document) Analyze() {
 		fieldOffsets[field.Name()] = lastPos
 
 		// see if any of the composite fields need this
-		for _, otherField := range d.fields {
+		for _, otherField := range d {
 			if otherField == field {
 				// never include yourself
 				continue
@@ -99,7 +114,7 @@ func (d Document) Analyze() {
 }
 
 func (d Document) EachField(vf segment.VisitField) {
-	for _, field := range d.fields {
+	for _, field := range d {
 		vf(field)
 	}
 }

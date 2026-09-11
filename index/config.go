@@ -17,10 +17,10 @@ package index
 import (
 	"math"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/blugelabs/bluge/index/mergeplan"
-	"github.com/blugelabs/ice"
+	iceV1 "github.com/vcaesar/ice"
+	"github.com/vcaesar/riot/index/mergeplan"
 )
 
 type Config struct {
@@ -42,7 +42,8 @@ type Config struct {
 
 	MergeBufferSize int
 
-	// Time filter
+	// Inclusive segment time bounds; zero leaves that bound unrestricted.
+	// Unknown timestamps are retained. Only read-only OpenReader accepts a range.
 	FilterTimeMin int64
 	FilterTimeMax int64
 
@@ -80,6 +81,13 @@ type Config struct {
 	virtualFields map[string][]segment.Field
 }
 
+// WithTimeRange prunes segments outside the inclusive range, not individual documents.
+// Zero bounds are unrestricted. Documents must use the same timestamp units.
+func (config Config) WithTimeRange(min, max int64) Config {
+	config.FilterTimeMin, config.FilterTimeMax = min, max
+	return config
+}
+
 func (config Config) WithSegmentType(typ string) Config {
 	config.SegmentType = typ
 	return config
@@ -102,12 +110,6 @@ func (config Config) WithVirtualField(field segment.Field) Config {
 
 func (config Config) WithNormCalc(calc func(field string, numTerms int) float32) Config {
 	config.NormCalc = calc
-	return config
-}
-
-func (config Config) WithTimeRange(min, max int64) Config {
-	config.FilterTimeMin = min
-	config.FilterTimeMax = max
 	return config
 }
 
@@ -163,8 +165,8 @@ func DefaultConfigWithDirectory(df func() Directory) Config {
 
 func defaultConfig() Config {
 	rv := Config{
-		SegmentType:      ice.Type,
-		SegmentVersion:   ice.Version,
+		SegmentType:      iceV1.Type,
+		SegmentVersion:   iceV1.Version,
 		MergePlanOptions: mergeplan.DefaultMergePlanOptions,
 		DeletionPolicyFunc: func() DeletionPolicy {
 			return NewKeepNLatestDeletionPolicy(1)
@@ -221,11 +223,11 @@ func defaultConfig() Config {
 	}
 
 	rv.WithSegmentPlugin(&SegmentPlugin{
-		Type:    ice.Type,
-		Version: ice.Version,
-		New:     ice.New,
-		Load:    ice.Load,
-		Merge:   ice.Merge,
+		Type:    iceV1.Type,
+		Version: iceV1.Version,
+		New:     iceV1.New,
+		Load:    iceV1.Load,
+		Merge:   iceV1.Merge,
 	})
 
 	return rv

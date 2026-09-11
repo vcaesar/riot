@@ -25,8 +25,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/RoaringBitmap/roaring"
-	segment "github.com/blugelabs/bluge_segment_api"
+	"github.com/RoaringBitmap/roaring/v2"
+	segment "github.com/vcaesar/bluge_segment_api"
 )
 
 type asyncSegmentResult struct {
@@ -73,7 +73,7 @@ func (i *Snapshot) decRef() (err error) {
 	i.refs--
 	if i.refs == 0 {
 		for _, s := range i.segment {
-			if s != nil {
+			if s != nil && s.segment != nil {
 				err2 := s.segment.DecRef()
 				if err == nil {
 					err = err2
@@ -449,8 +449,10 @@ const blugeSnapshotFormatVersion3 = 3
 const blugeSnapshotFormatVersion = blugeSnapshotFormatVersion3
 const crcWidth = 4
 
-func (i *Snapshot) WriteTo(w io.Writer, _ chan struct{}) (int64, error) {
-	bw := bufio.NewWriter(w)
+func (i *Snapshot) WriteTo(w io.Writer, _ chan struct{}) (written int64, writeErr error) {
+	output := newCountHashWriter(w)
+	defer func() { written = int64(output.Count()) }()
+	bw := bufio.NewWriter(output)
 	chw := newCountHashWriter(bw)
 
 	var bytesWritten int64
@@ -472,7 +474,11 @@ func (i *Snapshot) WriteTo(w io.Writer, _ chan struct{}) (int64, error) {
 	bytesWritten += int64(sz)
 
 	for _, segmentSnapshot := range i.segment {
-		sz, err = recordSegment(chw, segmentSnapshot, segmentSnapshot.id, segmentSnapshot.segment.Type(), segmentSnapshot.segment.Version())
+		typ, ver := segmentSnapshot.segmentType, segmentSnapshot.segmentVersion
+		if segmentSnapshot.segment != nil {
+			typ, ver = segmentSnapshot.segment.Type(), segmentSnapshot.segment.Version()
+		}
+		sz, err = recordSegment(chw, segmentSnapshot, segmentSnapshot.id, typ, ver)
 		if err != nil {
 			return bytesWritten, fmt.Errorf("error writing snapshot %d: %w", i.epoch, err)
 		}
@@ -496,7 +502,10 @@ func (i *Snapshot) WriteTo(w io.Writer, _ chan struct{}) (int64, error) {
 	return bytesWritten, nil
 }
 
-func recordSegment(w io.Writer, snapshot *segmentSnapshot, id uint64, typ string, ver uint32) (int, error) {
+func recordSegment(w io.Writer, snapshot *segmentSnapshot, id uint64, typ string, ver uint32) (written int, writeErr error) {
+	output := newCountHashWriter(w)
+	w = output
+	defer func() { written = output.Count() }()
 	var bytesWritten int
 	var intBuf = make([]byte, binary.MaxVarintLen64)
 	// record type
@@ -522,27 +531,23 @@ func recordSegment(w io.Writer, snapshot *segmentSnapshot, id uint64, typ string
 	}
 	bytesWritten += sz
 
-	// record segment size
-	err = binary.Write(w, binary.BigEndian, uint64(snapshot.segment.Size()))
-	if err != nil {
-		return bytesWritten, err
+	min, max := snapshot.Timestamp()
+	if snapshot.segment != nil {
+		snapshot.segment.Timestamp()
+		if snapshot.segment.timeErr != nil {
+			return bytesWritten, snapshot.segment.timeErr
+		}
 	}
-
-	// record segment docNum
-	err = binary.Write(w, binary.BigEndian, snapshot.segment.Count())
-	if err != nil {
-		return bytesWritten, err
-	}
-
-	// record segment timestamp
-	docTimeMin, docTimeMax := snapshot.segment.Timestamp()
-	err = binary.Write(w, binary.BigEndian, uint64(docTimeMin))
-	if err != nil {
-		return bytesWritten, err
-	}
-	err = binary.Write(w, binary.BigEndian, uint64(docTimeMax))
-	if err != nil {
-		return bytesWritten, err
+	for _, value := range []uint64{snapshot.SegmentSize(), snapshot.DocNum(), uint64(min), uint64(max)} {
+		binary.BigEndian.PutUint64(intBuf, value)
+		sz, err = w.Write(intBuf[:8])
+		bytesWritten += sz
+		if err != nil {
+			return bytesWritten, err
+		}
+		if sz != 8 {
+			return bytesWritten, io.ErrShortWrite
+		}
 	}
 
 	// record deleted bits
@@ -578,7 +583,10 @@ func recordSegment(w io.Writer, snapshot *segmentSnapshot, id uint64, typ string
 	return bytesWritten, nil
 }
 
-func writeVarLenString(w io.Writer, intBuf []byte, str string) (int, error) {
+func writeVarLenString(w io.Writer, intBuf []byte, str string) (written int, writeErr error) {
+	output := newCountHashWriter(w)
+	w = output
+	defer func() { written = output.Count() }()
 	var bytesWritten int
 	n := binary.PutUvarint(intBuf, uint64(len(str)))
 	sz, err := w.Write(intBuf[:n])
@@ -594,184 +602,83 @@ func writeVarLenString(w io.Writer, intBuf []byte, str string) (int, error) {
 	return bytesWritten, nil
 }
 
+// ReadFrom reads the snapshot payload. The directory loader validates the trailing CRC.
 func (i *Snapshot) ReadFrom(r io.Reader) (int64, error) {
-	var bytesRead int64
+	d := &snapshotDecoder{r: r}
+	version, err := binary.ReadUvarint(d)
+	if err != nil {
+		return d.n, err
+	}
+	if version < blugeSnapshotFormatVersion1 || version > blugeSnapshotFormatVersion3 {
+		return d.n, fmt.Errorf("unsupported snapshot format version: %d", version)
+	}
 	br := bufio.NewReader(r)
-
-	// read bluge snapshot format version
-	peek, err := br.Peek(binary.MaxVarintLen64)
-	if err != nil && err != io.EOF {
-		return bytesRead, fmt.Errorf("error peeking snapshot format version %d: %w", i.epoch, err)
+	var n int64
+	if version == blugeSnapshotFormatVersion1 {
+		n, err = i.readFromVersion1(br)
+	} else {
+		n, err = i.readFromVersion(br, version)
 	}
-	snapshotFormatVersion, n := binary.Uvarint(peek)
-	sz, err := br.Discard(n)
-	if err != nil {
-		return bytesRead, fmt.Errorf("error reading snapshot format version %d: %w", i.epoch, err)
-	}
-	bytesRead += int64(sz)
-
-	switch snapshotFormatVersion {
-	case blugeSnapshotFormatVersion1, blugeSnapshotFormatVersion2, blugeSnapshotFormatVersion3:
-		n, err := i.readFromVersion(br, int(snapshotFormatVersion))
-		return n + bytesRead, err
-	}
-
-	return bytesRead, fmt.Errorf("unsupportred snapshot format version: %d", snapshotFormatVersion)
+	return d.n + n, err
 }
 
-func (i *Snapshot) readFromVersion(br *bufio.Reader, snapshotFormatVersion int) (int64, error) {
-	var bytesRead int64
-
-	// read number of segments
-	peek, err := br.Peek(binary.MaxVarintLen64)
-	if err != nil && err != io.EOF {
-		return bytesRead, fmt.Errorf("error peeking snapshot number of segments %d: %w", i.epoch, err)
-	}
-	numSegments, n := binary.Uvarint(peek)
-	sz, err := br.Discard(n)
-	if err != nil {
-		return bytesRead, fmt.Errorf("error reading snapshot number of segments %d: %w", i.epoch, err)
-	}
-	bytesRead += int64(sz)
-
-	for j := 0; j < int(numSegments); j++ {
-		segmentBytesRead, ss, err := i.readSegmentSnapshot(br, snapshotFormatVersion)
-		if err != nil {
-			return bytesRead, err
-		}
-		bytesRead += segmentBytesRead
-
-		// filter segments with time range
-		if i.parent != nil {
-			if i.parent.config.FilterTimeMin > 0 {
-				if ss.docTimeMax < i.parent.config.FilterTimeMin {
-					continue
-				}
-			}
-			if i.parent.config.FilterTimeMax > 0 {
-				if ss.docTimeMin > i.parent.config.FilterTimeMax {
-					continue
-				}
-			}
-		}
-
-		i.segment = append(i.segment, ss)
-	}
-
-	return bytesRead, nil
+func (i *Snapshot) readFromVersion1(br *bufio.Reader) (int64, error) {
+	return i.readFromVersion(br, blugeSnapshotFormatVersion1)
 }
 
-func (i *Snapshot) readSegmentSnapshot(br *bufio.Reader, snapshotFormatVersion int) (bytesRead int64, ss *segmentSnapshot, err error) {
-	var sz int
-	var segmentType string
-	// read type
-	sz, segmentType, err = readVarLenString(br)
+func (i *Snapshot) readFromVersion(br *bufio.Reader, version uint64) (int64, error) {
+	d := &snapshotDecoder{r: br}
+	count, err := binary.ReadUvarint(d)
 	if err != nil {
-		return bytesRead, nil, fmt.Errorf("error reading snapshot %d: %w", i.epoch, err)
+		return d.n, err
 	}
-	bytesRead += int64(sz)
-
-	// read ver
-	verBuf := make([]byte, 4)
-	sz, err = br.Read(verBuf)
-	if err != nil {
-		return bytesRead, nil, fmt.Errorf("error reading snapshot %d: %w", i.epoch, err)
-	}
-	segmentVersion := binary.BigEndian.Uint32(verBuf)
-	bytesRead += int64(sz)
-
-	// read segment id
-	peekSegmentID, err := br.Peek(binary.MaxVarintLen64)
-	if err != nil && err != io.EOF {
-		return bytesRead, nil, fmt.Errorf("error reading snapshot %d: %w", i.epoch, err)
-	}
-	segmentID, n := binary.Uvarint(peekSegmentID)
-	sz, err = br.Discard(n)
-	if err != nil {
-		return bytesRead, nil, fmt.Errorf("error reading snapshot %d: %w", i.epoch, err)
-	}
-	bytesRead += int64(sz)
-
-	var segmentSize, docNum, docTimeMin, docTimeMax uint64
-	switch snapshotFormatVersion {
-	case blugeSnapshotFormatVersion1:
-	case blugeSnapshotFormatVersion2:
-		// read segment timestamp
-		_ = binary.Read(br, binary.BigEndian, &docTimeMin)
-		_ = binary.Read(br, binary.BigEndian, &docTimeMax)
-	case blugeSnapshotFormatVersion3:
-		// read segment size
-		_ = binary.Read(br, binary.BigEndian, &segmentSize)
-		// read segment docNum
-		_ = binary.Read(br, binary.BigEndian, &docNum)
-		// read segment timestamp
-		_ = binary.Read(br, binary.BigEndian, &docTimeMin)
-		_ = binary.Read(br, binary.BigEndian, &docTimeMax)
-	}
-
-	ss = &segmentSnapshot{
-		id:             segmentID,
-		segmentType:    segmentType,
-		segmentVersion: segmentVersion,
-		segmentSize:    segmentSize,
-		docNum:         docNum,
-		docTimeMin:     int64(docTimeMin),
-		docTimeMax:     int64(docTimeMax),
-	}
-
-	// read size of deleted bitmap
-	peek, err := br.Peek(binary.MaxVarintLen64)
-	if err != nil && err != io.EOF {
-		return bytesRead, nil, fmt.Errorf("xerror reading snapshot %d: %w", i.epoch, err)
-	}
-	delLen, n := binary.Uvarint(peek)
-	sz, err = br.Discard(n)
-	if err != nil {
-		return bytesRead, nil, fmt.Errorf("error reading snapshot %d: %w", i.epoch, err)
-	}
-	bytesRead += int64(sz)
-
-	if delLen > 0 {
-		deletedBytes := make([]byte, int(delLen))
-		sz, err = io.ReadFull(br, deletedBytes)
+	var segments []*segmentSnapshot
+	for j := uint64(0); j < count; j++ {
+		var n int64
+		var ss *segmentSnapshot
+		if version == blugeSnapshotFormatVersion1 {
+			n, ss, err = i.readSegmentSnapshot(br)
+		} else {
+			n, ss, err = i.readSegmentSnapshotVersion(br, version)
+		}
+		d.n += n
 		if err != nil {
-			return bytesRead, nil, fmt.Errorf("error reading snapshot %d: %w", i.epoch, err)
+			return d.n, err
 		}
-		bytesRead += int64(sz)
-
-		rr := bytes.NewReader(deletedBytes)
-		deletedBitmap := roaring.NewBitmap()
-		_, err = deletedBitmap.ReadFrom(rr)
-		if err != nil {
-			return bytesRead, nil, fmt.Errorf("error reading snapshot %d: %w", i.epoch, err)
-		}
-
-		if !deletedBitmap.IsEmpty() {
-			ss.deleted = deletedBitmap
-		}
+		segments = append(segments, ss)
 	}
-	return bytesRead, ss, nil
+	// Do not mutate a snapshot on a partial or malformed read.
+	if len(i.segment) != 0 {
+		return d.n, fmt.Errorf("cannot read into a populated snapshot")
+	}
+	i.segment = segments
+	return d.n, nil
+}
+
+func (i *Snapshot) readSegmentSnapshot(br *bufio.Reader) (bytesRead int64, ss *segmentSnapshot, err error) {
+	return i.readSegmentSnapshotVersion(br, blugeSnapshotFormatVersion1)
+}
+
+func (i *Snapshot) readSegmentSnapshotVersion(br *bufio.Reader, version uint64) (int64, *segmentSnapshot, error) {
+	n, typ, err := readVarLenString(br)
+	if err != nil {
+		return int64(n), nil, fmt.Errorf("error reading snapshot %d: %w", i.epoch, err)
+	}
+	d := &snapshotDecoder{r: br}
+	ss, err := d.segment(version, typ)
+	if err != nil {
+		return int64(n) + d.n, nil, fmt.Errorf("error reading snapshot %d: %w", i.epoch, err)
+	}
+	return int64(n) + d.n, ss, nil
 }
 
 func readVarLenString(r *bufio.Reader) (n int, str string, err error) {
-	peek, err := r.Peek(binary.MaxVarintLen64)
+	d := &snapshotDecoder{r: r}
+	data, err := d.blob()
 	if err != nil {
-		return n, "", err
+		return int(d.n), "", err
 	}
-	strLen, uVarRead := binary.Uvarint(peek)
-	sz, err := r.Discard(uVarRead)
-	if err != nil {
-		return n, "", err
-	}
-	n += sz
-
-	strBytes := make([]byte, strLen)
-	sz, err = r.Read(strBytes)
-	if err != nil {
-		return n, "", err
-	}
-	n += sz
-	return n, string(strBytes), nil
+	return int(d.n), string(data), nil
 }
 
 func (i *Snapshot) DocumentValueReader(fields []string) (

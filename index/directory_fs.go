@@ -23,8 +23,8 @@ import (
 	"strconv"
 
 	"github.com/blevesearch/mmap-go"
-	"github.com/blugelabs/bluge/index/lock"
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
+	"github.com/vcaesar/riot/index/lock"
 )
 
 const pidFilename = "bluge.pid"
@@ -91,6 +91,12 @@ func (d *FileSystemDirectory) List(kind string) ([]uint64, error) {
 
 	var rv uint64Slice
 	for _, dirEntry := range dirEntries {
+		if _, err := dirEntry.Info(); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
 		if filepath.Ext(dirEntry.Name()) != kind {
 			continue
 		}
@@ -200,7 +206,7 @@ func (d *FileSystemDirectory) Lock() error {
 	if err != nil {
 		return fmt.Errorf("error truncating pid file: %w", err)
 	}
-	_, err = fmt.Fprintf(d.pid.File(), "%d\n", os.Getpid())
+	_, err = d.pid.File().Write([]byte(fmt.Sprintf("%d\n", os.Getpid())))
 	if err != nil {
 		return fmt.Errorf("error writing pid: %w", err)
 	}
@@ -226,15 +232,21 @@ func (d *FileSystemDirectory) Unlock() error {
 }
 
 func (d *FileSystemDirectory) Stats() (numFilesOnDisk, numBytesUsedDisk uint64) {
-	fs, err := os.ReadDir(d.path)
-	if err == nil {
-		for _, f := range fs {
-			if !f.IsDir() {
-				numFilesOnDisk++
-				if info, err := f.Info(); err == nil {
-					numBytesUsedDisk += uint64(info.Size())
-				}
+	dirEntries, err := os.ReadDir(d.path)
+	if err != nil {
+		return 0, 0
+	}
+	for _, dirEntry := range dirEntries {
+		fileInfo, err := dirEntry.Info()
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
 			}
+			return 0, 0
+		}
+		if !fileInfo.IsDir() {
+			numFilesOnDisk++
+			numBytesUsedDisk += uint64(fileInfo.Size())
 		}
 	}
 	return numFilesOnDisk, numBytesUsedDisk

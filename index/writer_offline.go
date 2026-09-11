@@ -19,9 +19,9 @@ import (
 	"io"
 	"sync"
 
-	"github.com/RoaringBitmap/roaring"
+	"github.com/RoaringBitmap/roaring/v2"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 )
 
 type WriterOffline struct {
@@ -36,6 +36,9 @@ type WriterOffline struct {
 }
 
 func OpenOfflineWriter(config Config) (writer *WriterOffline, err error) {
+	if config.hasTimeRange() {
+		return nil, fmt.Errorf("time ranges are only supported by read-only readers")
+	}
 	writer = &WriterOffline{
 		config:    config,
 		directory: config.DirectoryFunc(),

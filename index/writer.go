@@ -24,9 +24,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/RoaringBitmap/roaring"
+	"github.com/RoaringBitmap/roaring/v2"
 )
 
 type Writer struct {
@@ -56,6 +56,9 @@ type Writer struct {
 }
 
 func OpenWriter(config Config) (*Writer, error) {
+	if config.hasTimeRange() {
+		return nil, fmt.Errorf("time ranges are only supported by read-only readers")
+	}
 	rv := &Writer{
 		config:         config,
 		deletionPolicy: config.DeletionPolicyFunc(),
@@ -409,6 +412,9 @@ func (s *Writer) currentEpoch() uint64 {
 }
 
 func OpenReader(config Config) (*Snapshot, error) {
+	if config.FilterTimeMin != 0 && config.FilterTimeMax != 0 && config.FilterTimeMin > config.FilterTimeMax {
+		return nil, fmt.Errorf("invalid time range")
+	}
 	parent := &Writer{
 		config:    config,
 		directory: config.DirectoryFunc(),
@@ -449,7 +455,7 @@ func OpenReader(config Config) (*Snapshot, error) {
 	return indexSnapshot, nil
 }
 
-func (s *Writer) loadSnapshot(epoch uint64) (*Snapshot, error) {
+func (s *Writer) loadSnapshot(epoch uint64) (result *Snapshot, err error) {
 	snapshot := &Snapshot{
 		parent:  s,
 		epoch:   epoch,
@@ -462,6 +468,23 @@ func (s *Writer) loadSnapshot(epoch uint64) (*Snapshot, error) {
 		return nil, err
 	}
 
+	defer func() {
+		if closer != nil {
+			if closeErr := closer.Close(); closeErr != nil {
+				err = fmt.Errorf("error closing snapshot (read error: %v): %w", err, closeErr)
+			}
+		}
+		if err != nil {
+			if closeErr := snapshot.Close(); closeErr != nil {
+				err = fmt.Errorf("error releasing snapshot (read error: %v): %w", err, closeErr)
+			}
+			result = nil
+		}
+	}()
+	if data.Len() < crcWidth {
+		return nil, io.ErrUnexpectedEOF
+	}
+
 	// wrap the reader so we never read the last 4 bytes (CRC)
 	dataReader := io.LimitReader(data.Reader(), int64(data.Len()-crcWidth))
 	var crcReader *countHashReader
@@ -470,12 +493,12 @@ func (s *Writer) loadSnapshot(epoch uint64) (*Snapshot, error) {
 		dataReader = crcReader
 	}
 
-	_, err = snapshot.ReadFrom(dataReader)
+	bytesRead, err := snapshot.ReadFrom(dataReader)
 	if err != nil {
-		if closer != nil {
-			_ = closer.Close()
-		}
 		return nil, err
+	}
+	if bytesRead != int64(data.Len()-crcWidth) {
+		return nil, fmt.Errorf("trailing snapshot data")
 	}
 
 	if crcReader != nil {
@@ -484,24 +507,21 @@ func (s *Writer) loadSnapshot(epoch uint64) (*Snapshot, error) {
 		var fileCRCBytes []byte
 		fileCRCBytes, err = data.Read(data.Len()-crcWidth, data.Len())
 		if err != nil {
-			if closer != nil {
-				_ = closer.Close()
-			}
 			return nil, fmt.Errorf("error reading snapshot CRC: %w", err)
 		}
 		if !bytes.Equal(computedCRCBytes, fileCRCBytes) {
-			if closer != nil {
-				_ = closer.Close()
-			}
 			return nil, fmt.Errorf("CRC mismatch loading snapshot %d: computed: %x file: %x",
 				epoch, computedCRCBytes, fileCRCBytes)
 		}
 	}
-	if closer != nil {
-		err = closer.Close()
-		if err != nil {
-			return nil, err
+	if s.config.hasTimeRange() {
+		kept := make([]*segmentSnapshot, 0, len(snapshot.segment))
+		for _, ss := range snapshot.segment {
+			if !s.config.excludes(ss) {
+				kept = append(kept, ss)
+			}
 		}
+		snapshot.segment = kept
 	}
 
 	var running uint64
@@ -515,6 +535,14 @@ func (s *Writer) loadSnapshot(epoch uint64) (*Snapshot, error) {
 			return nil, fmt.Errorf("error opening segment %d: %w", segSnapshot.id, err)
 		}
 
+		if segSnapshot.docTimeMin != 0 || segSnapshot.docTimeMax != 0 {
+			segSnapshot.segment.timeOnce.Do(func() {
+				segSnapshot.segment.timeMin, segSnapshot.segment.timeMax = segSnapshot.docTimeMin, segSnapshot.docTimeMax
+			})
+		}
+		if segSnapshot.deleted != nil && uint64(segSnapshot.deleted.Maximum()) >= segSnapshot.segment.Count() {
+			return nil, fmt.Errorf("deleted document outside segment %d", segSnapshot.id)
+		}
 		snapshot.offsets = append(snapshot.offsets, running)
 		running += segSnapshot.segment.Count()
 	}

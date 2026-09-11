@@ -18,11 +18,13 @@ import (
 	"io"
 	"log"
 
-	"github.com/blugelabs/bluge/analysis"
-	"github.com/blugelabs/bluge/analysis/analyzer"
-	"github.com/blugelabs/bluge/index"
-	"github.com/blugelabs/bluge/search"
-	"github.com/blugelabs/bluge/search/similarity"
+	"github.com/vcaesar/riot/index"
+
+	"github.com/vcaesar/riot/search"
+	"github.com/vcaesar/riot/search/similarity"
+
+	"github.com/vcaesar/riot/analysis"
+	"github.com/vcaesar/riot/analysis/analyzer"
 )
 
 type Config struct {
@@ -45,6 +47,13 @@ type Config struct {
 func (config Config) WithVirtualField(field Field) Config {
 	_ = field.Analyze(0)
 	config.indexConfig = config.indexConfig.WithVirtualField(field)
+	return config
+}
+
+// WithTimeRange prunes segments outside inclusive bounds when opening a reader.
+// Zero is unrestricted; unknown timestamps are retained. Writers reject ranges.
+func (config Config) WithTimeRange(min, max int64) Config {
+	config.indexConfig = config.indexConfig.WithTimeRange(min, max)
 	return config
 }
 
@@ -93,6 +102,7 @@ func DefaultConfigWithDirectory(df func() index.Directory) Config {
 	return defaultConfig(indexConfig)
 }
 
+// DefaultConfigWithIndexConfig builds a search configuration using the supplied index settings.
 func DefaultConfigWithIndexConfig(indexConfig index.Config) Config {
 	return defaultConfig(indexConfig)
 }

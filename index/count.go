@@ -38,6 +38,9 @@ func (c *countHashWriter) Write(b []byte) (int, error) {
 	n, err := c.w.Write(b)
 	c.crc = crc32.Update(c.crc, crc32.IEEETable, b[:n])
 	c.n += n
+	if err == nil && n != len(b) {
+		err = io.ErrShortWrite
+	}
 	return n, err
 }
 

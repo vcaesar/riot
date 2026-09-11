@@ -18,18 +18,106 @@ import (
 	"sync/atomic"
 )
 
-func (s *Writer) DirectoryStats() (numFilesOnDisk, numBytesUsedDisk uint64) {
-	return s.directory.Stats()
+// Stats returns a race-safe snapshot. Fields are sampled independently, not
+// as a single point-in-time view of the index.
+func (s *Writer) Stats() Stats {
+	rv := Stats{
+		TotUpdates:                         atomic.LoadUint64(&s.stats.TotUpdates),
+		TotDeletes:                         atomic.LoadUint64(&s.stats.TotDeletes),
+		TotBatches:                         atomic.LoadUint64(&s.stats.TotBatches),
+		TotBatchesEmpty:                    atomic.LoadUint64(&s.stats.TotBatchesEmpty),
+		TotBatchIntroTime:                  atomic.LoadUint64(&s.stats.TotBatchIntroTime),
+		MaxBatchIntroTime:                  atomic.LoadUint64(&s.stats.MaxBatchIntroTime),
+		CurRootEpoch:                       atomic.LoadUint64(&s.stats.CurRootEpoch),
+		LastPersistedEpoch:                 atomic.LoadUint64(&s.stats.LastPersistedEpoch),
+		LastMergedEpoch:                    atomic.LoadUint64(&s.stats.LastMergedEpoch),
+		TotOnErrors:                        atomic.LoadUint64(&s.stats.TotOnErrors),
+		TotAnalysisTime:                    atomic.LoadUint64(&s.stats.TotAnalysisTime),
+		TotIndexTime:                       atomic.LoadUint64(&s.stats.TotIndexTime),
+		TotIndexedPlainTextBytes:           atomic.LoadUint64(&s.stats.TotIndexedPlainTextBytes),
+		TotTermSearchersStarted:            atomic.LoadUint64(&s.stats.TotTermSearchersStarted),
+		TotTermSearchersFinished:           atomic.LoadUint64(&s.stats.TotTermSearchersFinished),
+		TotIntroduceLoop:                   atomic.LoadUint64(&s.stats.TotIntroduceLoop),
+		TotIntroduceSegmentBeg:             atomic.LoadUint64(&s.stats.TotIntroduceSegmentBeg),
+		TotIntroduceSegmentEnd:             atomic.LoadUint64(&s.stats.TotIntroduceSegmentEnd),
+		TotIntroducePersistBeg:             atomic.LoadUint64(&s.stats.TotIntroducePersistBeg),
+		TotIntroducePersistEnd:             atomic.LoadUint64(&s.stats.TotIntroducePersistEnd),
+		TotIntroduceMergeBeg:               atomic.LoadUint64(&s.stats.TotIntroduceMergeBeg),
+		TotIntroduceMergeEnd:               atomic.LoadUint64(&s.stats.TotIntroduceMergeEnd),
+		TotIntroduceRevertBeg:              atomic.LoadUint64(&s.stats.TotIntroduceRevertBeg),
+		TotIntroduceRevertEnd:              atomic.LoadUint64(&s.stats.TotIntroduceRevertEnd),
+		TotIntroducedItems:                 atomic.LoadUint64(&s.stats.TotIntroducedItems),
+		TotIntroducedSegmentsBatch:         atomic.LoadUint64(&s.stats.TotIntroducedSegmentsBatch),
+		TotIntroducedSegmentsMerge:         atomic.LoadUint64(&s.stats.TotIntroducedSegmentsMerge),
+		TotPersistLoopBeg:                  atomic.LoadUint64(&s.stats.TotPersistLoopBeg),
+		TotPersistLoopErr:                  atomic.LoadUint64(&s.stats.TotPersistLoopErr),
+		TotPersistLoopProgress:             atomic.LoadUint64(&s.stats.TotPersistLoopProgress),
+		TotPersistLoopWait:                 atomic.LoadUint64(&s.stats.TotPersistLoopWait),
+		TotPersistLoopWaitNotified:         atomic.LoadUint64(&s.stats.TotPersistLoopWaitNotified),
+		TotPersistLoopEnd:                  atomic.LoadUint64(&s.stats.TotPersistLoopEnd),
+		TotPersistedItems:                  atomic.LoadUint64(&s.stats.TotPersistedItems),
+		TotItemsToPersist:                  atomic.LoadUint64(&s.stats.TotItemsToPersist),
+		TotPersistedSegments:               atomic.LoadUint64(&s.stats.TotPersistedSegments),
+		TotPersisterSlowMergerPause:        atomic.LoadUint64(&s.stats.TotPersisterSlowMergerPause),
+		TotPersisterSlowMergerResume:       atomic.LoadUint64(&s.stats.TotPersisterSlowMergerResume),
+		TotPersisterNapPauseCompleted:      atomic.LoadUint64(&s.stats.TotPersisterNapPauseCompleted),
+		TotPersisterMergerNapBreak:         atomic.LoadUint64(&s.stats.TotPersisterMergerNapBreak),
+		TotFileMergeLoopBeg:                atomic.LoadUint64(&s.stats.TotFileMergeLoopBeg),
+		TotFileMergeLoopErr:                atomic.LoadUint64(&s.stats.TotFileMergeLoopErr),
+		TotFileMergeLoopEnd:                atomic.LoadUint64(&s.stats.TotFileMergeLoopEnd),
+		TotFileMergePlan:                   atomic.LoadUint64(&s.stats.TotFileMergePlan),
+		TotFileMergePlanErr:                atomic.LoadUint64(&s.stats.TotFileMergePlanErr),
+		TotFileMergePlanNone:               atomic.LoadUint64(&s.stats.TotFileMergePlanNone),
+		TotFileMergePlanOk:                 atomic.LoadUint64(&s.stats.TotFileMergePlanOk),
+		TotFileMergePlanTasks:              atomic.LoadUint64(&s.stats.TotFileMergePlanTasks),
+		TotFileMergePlanTasksDone:          atomic.LoadUint64(&s.stats.TotFileMergePlanTasksDone),
+		TotFileMergePlanTasksErr:           atomic.LoadUint64(&s.stats.TotFileMergePlanTasksErr),
+		TotFileMergePlanTasksSegments:      atomic.LoadUint64(&s.stats.TotFileMergePlanTasksSegments),
+		TotFileMergePlanTasksSegmentsEmpty: atomic.LoadUint64(&s.stats.TotFileMergePlanTasksSegmentsEmpty),
+		TotFileMergeSegmentsEmpty:          atomic.LoadUint64(&s.stats.TotFileMergeSegmentsEmpty),
+		TotFileMergeSegments:               atomic.LoadUint64(&s.stats.TotFileMergeSegments),
+		TotFileSegmentsAtRoot:              atomic.LoadUint64(&s.stats.TotFileSegmentsAtRoot),
+		TotFileMergeWrittenBytes:           atomic.LoadUint64(&s.stats.TotFileMergeWrittenBytes),
+		TotFileMergeZapBeg:                 atomic.LoadUint64(&s.stats.TotFileMergeZapBeg),
+		TotFileMergeZapEnd:                 atomic.LoadUint64(&s.stats.TotFileMergeZapEnd),
+		TotFileMergeZapTime:                atomic.LoadUint64(&s.stats.TotFileMergeZapTime),
+		MaxFileMergeZapTime:                atomic.LoadUint64(&s.stats.MaxFileMergeZapTime),
+		TotFileMergeZapIntroductionTime:    atomic.LoadUint64(&s.stats.TotFileMergeZapIntroductionTime),
+		MaxFileMergeZapIntroductionTime:    atomic.LoadUint64(&s.stats.MaxFileMergeZapIntroductionTime),
+		TotFileMergeIntroductions:          atomic.LoadUint64(&s.stats.TotFileMergeIntroductions),
+		TotFileMergeIntroductionsDone:      atomic.LoadUint64(&s.stats.TotFileMergeIntroductionsDone),
+		TotFileMergeIntroductionsSkipped:   atomic.LoadUint64(&s.stats.TotFileMergeIntroductionsSkipped),
+		TotFileMergeIntroductionsObsoleted: atomic.LoadUint64(&s.stats.TotFileMergeIntroductionsObsoleted),
+		CurFilesIneligibleForRemoval:       atomic.LoadUint64(&s.stats.CurFilesIneligibleForRemoval),
+		TotSnapshotsRemovedFromMetaStore:   atomic.LoadUint64(&s.stats.TotSnapshotsRemovedFromMetaStore),
+		TotMemMergeBeg:                     atomic.LoadUint64(&s.stats.TotMemMergeBeg),
+		TotMemMergeErr:                     atomic.LoadUint64(&s.stats.TotMemMergeErr),
+		TotMemMergeDone:                    atomic.LoadUint64(&s.stats.TotMemMergeDone),
+		TotMemMergeZapBeg:                  atomic.LoadUint64(&s.stats.TotMemMergeZapBeg),
+		TotMemMergeZapEnd:                  atomic.LoadUint64(&s.stats.TotMemMergeZapEnd),
+		TotMemMergeZapTime:                 atomic.LoadUint64(&s.stats.TotMemMergeZapTime),
+		MaxMemMergeZapTime:                 atomic.LoadUint64(&s.stats.MaxMemMergeZapTime),
+		TotMemMergeSegments:                atomic.LoadUint64(&s.stats.TotMemMergeSegments),
+		TotMemorySegmentsAtRoot:            atomic.LoadUint64(&s.stats.TotMemorySegmentsAtRoot),
+		TotEventFired:                      atomic.LoadUint64(&s.stats.TotEventFired),
+		TotEventReturned:                   atomic.LoadUint64(&s.stats.TotEventReturned),
+		CurOnDiskBytesUsedByRoot:           atomic.LoadUint64(&s.stats.CurOnDiskBytesUsedByRoot),
+		persistEpoch:                       atomic.LoadUint64(&s.stats.persistEpoch),
+		persistSnapshotSize:                atomic.LoadUint64(&s.stats.persistSnapshotSize),
+		mergeEpoch:                         atomic.LoadUint64(&s.stats.mergeEpoch),
+		mergeSnapshotSize:                  atomic.LoadUint64(&s.stats.mergeSnapshotSize),
+		newSegBufBytesAdded:                atomic.LoadUint64(&s.stats.newSegBufBytesAdded),
+		newSegBufBytesRemoved:              atomic.LoadUint64(&s.stats.newSegBufBytesRemoved),
+		analysisBytesAdded:                 atomic.LoadUint64(&s.stats.analysisBytesAdded),
+		analysisBytesRemoved:               atomic.LoadUint64(&s.stats.analysisBytesRemoved),
+	}
+	rv.CurOnDiskFiles, rv.CurOnDiskBytes = s.DirectoryStats()
+	return rv
 }
 
-func (s *Writer) Stats() Stats {
-	// add some computed values
-	numFilesOnDisk, numBytesUsedDisk := s.directory.Stats()
-
-	s.stats.CurOnDiskBytes = numBytesUsedDisk
-	s.stats.CurOnDiskFiles = numFilesOnDisk
-
-	return s.stats
+// DirectoryStats returns the directory's total item count and cumulative size in bytes.
+func (s *Writer) DirectoryStats() (numItems, numBytes uint64) {
+	return s.directory.Stats()
 }
 
 // Stats tracks statistics about the index, fields that are
