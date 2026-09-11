@@ -822,3 +822,56 @@ func TestFindMultiPhrasePaths(t *testing.T) {
 		}
 	}
 }
+
+// TestPhraseSearchReusesLocationsScratch runs a phrase over several
+// candidates, some rejected, some accepted, and checks the accepted hits'
+// locations are intact despite the searcher recycling its location maps.
+func TestPhraseSearchReusesLocationsScratch(t *testing.T) {
+	soptions := search.SearcherOptions{
+		SimilarityForField: func(_ string) search.Similarity {
+			return similarity.NewBM25Similarity()
+		},
+		IncludeTermVectors: true,
+	}
+	phraseSearcher, err := NewMultiPhraseSearcher(baseTestIndexReader, [][]string{{"beer"}, {"beer"}}, "desc", nil, soptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := phraseSearcher.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	// docs 2 and 3 contain a single beer and must be rejected
+	want := map[uint64]int{
+		baseTestIndexReaderDirect.docNumByID("1"): 4,
+		baseTestIndexReaderDirect.docNumByID("4"): 65,
+	}
+	ctx := &search.Context{
+		DocumentMatchPool: search.NewDocumentMatchPool(phraseSearcher.DocumentMatchPoolSize(), 0),
+	}
+	got := map[uint64]int{}
+	next, err := phraseSearcher.Next(ctx)
+	for err == nil && next != nil {
+		next.Complete(nil)
+		locs := next.Locations["desc"]["beer"]
+		got[next.Number] = len(locs)
+		for i, loc := range locs {
+			if loc.Pos != i+1 {
+				t.Fatalf("doc %d: location %d has pos %d, want %d", next.Number, i, loc.Pos, i+1)
+			}
+		}
+		ctx.DocumentMatchPool.Put(next)
+		next, err = phraseSearcher.Next(ctx)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("hits/locations = %v, want %v", got, want)
+	}
+	if len(phraseSearcher.locationsMap["desc"]["beer"]) != 0 {
+		t.Fatal("expected the scratch location map to be emptied after the last candidate")
+	}
+}

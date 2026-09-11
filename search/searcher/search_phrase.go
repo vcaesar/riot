@@ -29,6 +29,9 @@ type PhraseSearcher struct {
 	path         phrasePath
 	paths        []phrasePath
 	locations    []search.Location
+	// locationsMap is scratch reused across candidates so Complete
+	// does not rebuild the field/term maps for every document
+	locationsMap search.FieldTermLocationMap
 	initialized  bool
 	slop         int
 }
@@ -186,6 +189,7 @@ func (s *PhraseSearcher) Next(ctx *search.Context) (*search.DocumentMatch, error
 // also satisfies the phase constraints.  if so, it returns a DocumentMatch
 // for this document, otherwise nil
 func (s *PhraseSearcher) checkCurrMustMatch() *search.DocumentMatch {
+	s.currMust.Locations = s.locationsMap
 	s.locations = s.currMust.Complete(s.locations)
 
 	locations := s.currMust.Locations
@@ -200,6 +204,14 @@ func (s *PhraseSearcher) checkCurrMustMatch() *search.DocumentMatch {
 	for field, tlm := range locations {
 		ftls = s.checkCurrMustMatchField(field, tlm, ftls)
 	}
+
+	// keep the maps, drop the locations they point at (they live in s.locations)
+	for _, tlm := range locations {
+		for term, locs := range tlm {
+			tlm[term] = locs[:0]
+		}
+	}
+	s.locationsMap = locations
 
 	if len(ftls) > 0 {
 		// return match

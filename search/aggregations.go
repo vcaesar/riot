@@ -61,15 +61,21 @@ type BucketCalculator interface {
 type Bucket struct {
 	name         string
 	aggregations map[string]Calculator
+	// calculators mirrors aggregations; iterated per hit because ranging
+	// over a map is far slower than a slice
+	calculators []Calculator
 }
 
 func NewBucket(name string, aggregations map[string]Aggregation) *Bucket {
 	rv := &Bucket{
 		name:         name,
-		aggregations: make(map[string]Calculator),
+		aggregations: make(map[string]Calculator, len(aggregations)),
+		calculators:  make([]Calculator, 0, len(aggregations)),
 	}
 	for name, agg := range aggregations {
-		rv.aggregations[name] = agg.Calculator()
+		calc := agg.Calculator()
+		rv.aggregations[name] = calc
+		rv.calculators = append(rv.calculators, calc)
 	}
 	return rv
 }
@@ -80,6 +86,7 @@ func (b *Bucket) Merge(other *Bucket) {
 			thisCalculator.Merge(otherCalculator)
 		} else {
 			b.aggregations[otherAggName] = otherCalculator
+			b.calculators = append(b.calculators, otherCalculator)
 		}
 	}
 }
@@ -89,13 +96,13 @@ func (b *Bucket) Name() string {
 }
 
 func (b *Bucket) Consume(d *DocumentMatch) {
-	for _, aggCalc := range b.aggregations {
+	for _, aggCalc := range b.calculators {
 		aggCalc.Consume(d)
 	}
 }
 
 func (b *Bucket) Finish() {
-	for _, aggCalc := range b.aggregations {
+	for _, aggCalc := range b.calculators {
 		aggCalc.Finish()
 	}
 }
