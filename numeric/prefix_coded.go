@@ -45,7 +45,9 @@ func NewPrefixCodedInt64Prealloc(in int64, shift uint, prealloc []byte) (
 
 	rv[0] = ShiftStartInt64 + byte(shift)
 
+	//nolint:gosec // G115: flip the sign bit while preserving the full two's-complement bit pattern.
 	sortableBits := int64(uint64(in) ^ 0x8000000000000000)
+	//nolint:gosec // G115: use an unsigned shift on the bit pattern, not an arithmetic signed shift.
 	sortableBits = int64(uint64(sortableBits) >> shift)
 	for nChars > 0 {
 		// Store 7 bits per byte for compatibility
@@ -88,6 +90,7 @@ func (p PrefixCoded) Int64() (int64, error) {
 		sortableBits <<= 7
 		sortableBits |= int64(inbyte)
 	}
+	//nolint:gosec // G115: restore the signed value by flipping the encoded sign bit.
 	return int64(uint64(sortableBits<<shift) ^ 0x8000000000000000), nil
 }
 

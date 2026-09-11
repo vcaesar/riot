@@ -35,9 +35,9 @@ var DisjunctionMaxClauseCount = 0
 var DisjunctionHeapTakeover = 10
 
 func NewDisjunctionSearcher(indexReader search.Reader,
-	qsearchers []search.Searcher, min int, scorer search.CompositeScorer, options search.SearcherOptions) (
+	qsearchers []search.Searcher, minMatches int, scorer search.CompositeScorer, options search.SearcherOptions) (
 	search.Searcher, error) {
-	return newDisjunctionSearcher(indexReader, qsearchers, min, scorer, options, true)
+	return newDisjunctionSearcher(indexReader, qsearchers, minMatches, scorer, options, true)
 }
 
 func optionsDisjunctionOptimizable(options search.SearcherOptions) bool {
@@ -46,12 +46,12 @@ func optionsDisjunctionOptimizable(options search.SearcherOptions) bool {
 }
 
 func newDisjunctionSearcher(indexReader search.Reader,
-	qsearchers []search.Searcher, min int, scorer search.CompositeScorer, options search.SearcherOptions,
+	qsearchers []search.Searcher, minMatches int, scorer search.CompositeScorer, options search.SearcherOptions,
 	limit bool) (search.Searcher, error) {
 	// attempt the "unadorned" disjunction optimization only when we
 	// do not need extra information like freq-norm's or term vectors
 	// and the requested min is simple
-	if len(qsearchers) > 1 && min <= 1 &&
+	if len(qsearchers) > 1 && minMatches <= 1 &&
 		optionsDisjunctionOptimizable(options) {
 		rv, err := optimizeCompositeSearcher("disjunction:unadorned",
 			indexReader, qsearchers, options)
@@ -61,10 +61,10 @@ func newDisjunctionSearcher(indexReader search.Reader,
 	}
 
 	if len(qsearchers) > DisjunctionHeapTakeover {
-		return newDisjunctionHeapSearcher(qsearchers, min, scorer, options,
+		return newDisjunctionHeapSearcher(qsearchers, minMatches, scorer, options,
 			limit)
 	}
-	return newDisjunctionSliceSearcher(qsearchers, min, scorer, options,
+	return newDisjunctionSliceSearcher(qsearchers, minMatches, scorer, options,
 		limit)
 }
 

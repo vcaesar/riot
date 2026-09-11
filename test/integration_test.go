@@ -22,6 +22,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/vcaesar/riot/search"
@@ -32,6 +33,42 @@ import (
 
 var segType = flag.String("segType", "", "force scorch segment type")
 var segVer = flag.Int("segVer", 0, "force scorch segment version")
+
+func checkedSegmentVersion(version int) (uint32, error) {
+	if version < 0 || uint64(version) > math.MaxUint32 {
+		return 0, fmt.Errorf("segment version outside uint32 range: %d", version)
+	}
+	return uint32(version), nil
+}
+
+func TestCheckedSegmentVersion(t *testing.T) {
+	for _, test := range []struct {
+		version string
+		want    uint32
+		wantErr bool
+	}{
+		{version: "0"},
+		{version: "1", want: 1},
+		{version: "2", want: 2},
+		{version: "4294967295", want: math.MaxUint32},
+		{version: "-1", wantErr: true},
+		{version: "4294967296", wantErr: true},
+	} {
+		t.Run(test.version, func(t *testing.T) {
+			version, err := strconv.Atoi(test.version)
+			if err != nil {
+				if strconv.IntSize == 32 {
+					t.Skip("version does not fit in a 32-bit int")
+				}
+				t.Fatal(err)
+			}
+			got, err := checkedSegmentVersion(version)
+			if (err != nil) != test.wantErr || got != test.want {
+				t.Errorf("version = %d, error = %v; want %d, error = %v", got, err, test.want, test.wantErr)
+			}
+		})
+	}
+}
 
 func collectHits(dmi search.DocumentMatchIterator) (rv []*match, err error) {
 	var next *search.DocumentMatch
@@ -121,7 +158,11 @@ func TestIntegration(t *testing.T) {
 			t.Logf("forcing segment type: %s", *segType)
 		}
 		if *segVer != 0 {
-			cfg = cfg.WithSegmentVersion(uint32(*segVer))
+			version, versionErr := checkedSegmentVersion(*segVer)
+			if versionErr != nil {
+				t.Fatal(versionErr)
+			}
+			cfg = cfg.WithSegmentVersion(version)
 			t.Logf("forcing segment version: %d", *segVer)
 		}
 		idx, err := bluge.OpenWriter(cfg)

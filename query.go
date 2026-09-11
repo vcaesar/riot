@@ -55,12 +55,12 @@ func (s querySlice) searchers(i search.Reader, options search.SearcherOptions) (
 	return rv, nil
 }
 
-func (s querySlice) disjunction(i search.Reader, options search.SearcherOptions, min int) (search.Searcher, error) {
+func (s querySlice) disjunction(i search.Reader, options search.SearcherOptions, minMatches int) (search.Searcher, error) {
 	constituents, err := s.searchers(i, options)
 	if err != nil {
 		return nil, err
 	}
-	return searcher.NewDisjunctionSearcher(i, constituents, min, similarity.NewCompositeSumScorer(), options)
+	return searcher.NewDisjunctionSearcher(i, constituents, minMatches, similarity.NewCompositeSumScorer(), options)
 }
 
 func (s querySlice) conjunction(i search.Reader, options search.SearcherOptions) (search.Searcher, error) {
@@ -340,7 +340,7 @@ func (q *DateRangeQuery) Field() string {
 }
 
 func (q *DateRangeQuery) Searcher(i search.Reader, options search.SearcherOptions) (search.Searcher, error) {
-	min, max, err := q.parseEndpoints()
+	minValue, maxValue, err := q.parseEndpoints()
 	if err != nil {
 		return nil, err
 	}
@@ -354,20 +354,20 @@ func (q *DateRangeQuery) Searcher(i search.Reader, options search.SearcherOption
 		q.scorer = similarity.ConstantScorer(1)
 	}
 
-	return searcher.NewNumericRangeSearcher(i, min, max, q.inclusiveStart, q.inclusiveEnd, field,
+	return searcher.NewNumericRangeSearcher(i, minValue, maxValue, q.inclusiveStart, q.inclusiveEnd, field,
 		q.boost.Value(), q.scorer, similarity.NewCompositeSumScorer(), options)
 }
 
-func (q *DateRangeQuery) parseEndpoints() (min, max float64, err error) {
-	min = math.Inf(-1)
-	max = math.Inf(1)
+func (q *DateRangeQuery) parseEndpoints() (minValue, maxValue float64, err error) {
+	minValue = math.Inf(-1)
+	maxValue = math.Inf(1)
 	if !q.start.IsZero() {
 		if !isDatetimeCompatible(q.start) {
 			// overflow
 			return 0, 0, fmt.Errorf("invalid/unsupported date range, start: %v", q.start)
 		}
 		startInt64 := q.start.UnixNano()
-		min = numeric.Int64ToFloat64(startInt64)
+		minValue = numeric.Int64ToFloat64(startInt64)
 	}
 	if !q.end.IsZero() {
 		if !isDatetimeCompatible(q.end) {
@@ -375,10 +375,10 @@ func (q *DateRangeQuery) parseEndpoints() (min, max float64, err error) {
 			return 0, 0, fmt.Errorf("invalid/unsupported date range, end: %v", q.end)
 		}
 		endInt64 := q.end.UnixNano()
-		max = numeric.Int64ToFloat64(endInt64)
+		maxValue = numeric.Int64ToFloat64(endInt64)
 	}
 
-	return min, max, nil
+	return minValue, maxValue, nil
 }
 
 func (q *DateRangeQuery) Validate() error {
@@ -1101,18 +1101,18 @@ var MaxNumeric = math.Inf(1)
 // Either, but not both endpoints can be nil.
 // The minimum value is inclusive.
 // The maximum value is exclusive.
-func NewNumericRangeQuery(min, max float64) *NumericRangeQuery {
-	return NewNumericRangeInclusiveQuery(min, max, true, false)
+func NewNumericRangeQuery(minValue, maxValue float64) *NumericRangeQuery {
+	return NewNumericRangeInclusiveQuery(minValue, maxValue, true, false)
 }
 
 // NewNumericRangeInclusiveQuery creates a new Query for ranges
 // of numeric values.
 // Either, but not both endpoints can be nil.
 // Control endpoint inclusion with inclusiveMin, inclusiveMax.
-func NewNumericRangeInclusiveQuery(min, max float64, minInclusive, maxInclusive bool) *NumericRangeQuery {
+func NewNumericRangeInclusiveQuery(minValue, maxValue float64, minInclusive, maxInclusive bool) *NumericRangeQuery {
 	return &NumericRangeQuery{
-		min:          min,
-		max:          max,
+		min:          minValue,
+		max:          maxValue,
 		inclusiveMin: minInclusive,
 		inclusiveMax: maxInclusive,
 	}
@@ -1338,18 +1338,18 @@ type TermRangeQuery struct {
 // Either, but not both endpoints can be "".
 // The minimum value is inclusive.
 // The maximum value is exclusive.
-func NewTermRangeQuery(min, max string) *TermRangeQuery {
-	return NewTermRangeInclusiveQuery(min, max, true, false)
+func NewTermRangeQuery(minValue, maxValue string) *TermRangeQuery {
+	return NewTermRangeInclusiveQuery(minValue, maxValue, true, false)
 }
 
 // NewTermRangeInclusiveQuery creates a new Query for ranges
 // of text terms.
 // Either, but not both endpoints can be "".
 // Control endpoint inclusion with inclusiveMin, inclusiveMax.
-func NewTermRangeInclusiveQuery(min, max string, minInclusive, maxInclusive bool) *TermRangeQuery {
+func NewTermRangeInclusiveQuery(minValue, maxValue string, minInclusive, maxInclusive bool) *TermRangeQuery {
 	return &TermRangeQuery{
-		min:          min,
-		max:          max,
+		min:          minValue,
+		max:          maxValue,
 		inclusiveMin: minInclusive,
 		inclusiveMax: maxInclusive,
 	}

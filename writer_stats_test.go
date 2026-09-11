@@ -25,7 +25,7 @@ type writerStatsDirectory struct {
 	index.Directory
 }
 
-func (d *writerStatsDirectory) Stats() (uint64, uint64) { return 3, 456 }
+func (d *writerStatsDirectory) Stats() (items, bytes uint64) { return 3, 456 }
 
 func TestWriterStatus(t *testing.T) {
 	for _, custom := range []bool{false, true} {

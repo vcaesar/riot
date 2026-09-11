@@ -344,6 +344,7 @@ var geoPrecisionStep uint = 9
 
 func NewGeoPointField(name string, lon, lat float64) *TermField {
 	mHash := geo.MortonHash(lon, lat)
+	//nolint:gosec // G115: preserve all Morton hash bits in the signed prefix-coding API.
 	prefixCoded := numeric.MustNewPrefixCodedInt64(int64(mHash), 0)
 	return &TermField{
 		FieldOptions:      defaultNumericIndexingOptions,
@@ -363,6 +364,7 @@ func DecodeGeoLonLat(value []byte) (lon, lat float64, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
+	//nolint:gosec // G115: restore all Morton hash bits from the signed prefix-coding API.
 	return geo.MortonUnhashLon(uint64(i64)), geo.MortonUnhashLat(uint64(i64)), nil
 }
 

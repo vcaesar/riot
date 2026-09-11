@@ -28,10 +28,10 @@ type ShingleFilter struct {
 	fill           string
 }
 
-func NewShingleFilter(min, max int, outputOriginal bool, sep, fill string) *ShingleFilter {
+func NewShingleFilter(minSize, maxSize int, outputOriginal bool, sep, fill string) *ShingleFilter {
 	return &ShingleFilter{
-		min:            min,
-		max:            max,
+		min:            minSize,
+		max:            maxSize,
 		outputOriginal: outputOriginal,
 		tokenSeparator: sep,
 		fill:           fill,

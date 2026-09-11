@@ -383,11 +383,13 @@ func origRelateAndRecurse(start, end uint64, res uint,
 			sminLon, sminLat, smaxLon, smaxLat)) {
 		if !within && checkBoundaries {
 			return [][]byte{
+				//nolint:gosec // G115: preserve all Morton hash bits in the signed prefix-coding API.
 				numeric.MustNewPrefixCodedInt64(int64(start), res),
 			}, nil
 		}
 		return nil,
 			[][]byte{
+				//nolint:gosec // G115: preserve all Morton hash bits in the signed prefix-coding API.
 				numeric.MustNewPrefixCodedInt64(int64(start), res),
 			}
 	} else if level < geoDetailLevel &&
@@ -443,9 +445,11 @@ func origRelateAndRecurse2(start, end uint64, res uint,
 		geo.RectIntersects(minLon, minLat, maxLon, maxLat,
 			sminLon, sminLat, smaxLon, smaxLat)) {
 		if !within && checkBoundaries {
+			//nolint:gosec // G115: preserve all Morton hash bits in the signed prefix-coding API.
 			onBoundary = append(onBoundary, makePrefixCoded(int64(start), res))
 			return onBoundary, notOnBoundary
 		}
+		//nolint:gosec // G115: preserve all Morton hash bits in the signed prefix-coding API.
 		notOnBoundary = append(notOnBoundary, makePrefixCoded(int64(start), res))
 		return onBoundary, notOnBoundary
 	} else if level < geoDetailLevel &&

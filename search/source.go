@@ -132,9 +132,11 @@ func (f FieldSource) GeoPoints(match *DocumentMatch) []*geo.Point {
 		if err == nil && shift == 0 {
 			i64, err := prefixCoded.Int64()
 			if err == nil {
+				//nolint:gosec // G115: restore all Morton hash bits from the signed prefix-coding API.
+				hash := uint64(i64)
 				rv = append(rv, &geo.Point{
-					Lon: geo.MortonUnhashLon(uint64(i64)),
-					Lat: geo.MortonUnhashLat(uint64(i64)),
+					Lon: geo.MortonUnhashLon(hash),
+					Lat: geo.MortonUnhashLat(hash),
 				})
 			}
 		}

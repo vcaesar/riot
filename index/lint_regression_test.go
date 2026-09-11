@@ -62,7 +62,7 @@ func TestSegmentSizesSaturate(t *testing.T) {
 		t.Fatalf("size = %d, live = %d", s.Size(), s.LiveSize())
 	}
 	s.segment.Segment = &sizeTestSegment{size: 10}
-	if uint64(s.Size()) != 10+deleted.GetSizeInBytes() {
+	if size := s.Size(); size < 0 || uint64(size) != 10+deleted.GetSizeInBytes() {
 		t.Fatalf("ordinary bitmap size = %d", s.Size())
 	}
 }
@@ -127,6 +127,26 @@ func TestPostingsAllAdvanceBeyondUint32(t *testing.T) {
 			}
 		} else if posting != nil {
 			t.Fatalf("advance to %d wrapped to %d", number, posting.Number())
+		}
+	}
+}
+
+func TestUnadornedAdvanceBeyondUint32(t *testing.T) {
+	for _, number := range []uint64{math.MaxUint32, uint64(math.MaxUint32) + 1, math.MaxUint64} {
+		i := newUnadornedPostingsIteratorFromBitmap(roaring.BitmapOf(0, math.MaxUint32))
+		posting, err := i.Advance(number)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if number == math.MaxUint32 {
+			if posting == nil || posting.Number() != number {
+				t.Fatalf("maximum document number not found: %v", posting)
+			}
+		} else if posting != nil {
+			t.Fatalf("advance to %d wrapped to %d", number, posting.Number())
+		}
+		if next, err := i.Next(); next != nil || err != nil {
+			t.Fatalf("exhausted iterator returned %v, %v", next, err)
 		}
 	}
 }

@@ -43,7 +43,11 @@ func (i *unadornedPostingsIteratorBitmap) nextAtOrAfter(atOrAfter uint64) (segme
 	return &up, nil
 }
 
-func (i *unadornedPostingsIteratorBitmap) nextDocNumAtOrAfter(atOrAfter uint64) (int, bool) {
+func (i *unadornedPostingsIteratorBitmap) nextDocNumAtOrAfter(atOrAfter uint64) (uint64, bool) {
+	if atOrAfter > math.MaxUint32 {
+		i.actual = nil
+		return 0, false
+	}
 	if i.actual == nil || !i.actual.HasNext() {
 		return 0, false
 	}
@@ -53,7 +57,7 @@ func (i *unadornedPostingsIteratorBitmap) nextDocNumAtOrAfter(atOrAfter uint64) 
 		return 0, false // couldn't find anything
 	}
 
-	return int(i.actual.Next()), true
+	return uint64(i.actual.Next()), true
 }
 
 func (i *unadornedPostingsIteratorBitmap) Size() int {

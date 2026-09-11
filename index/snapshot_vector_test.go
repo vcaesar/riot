@@ -17,7 +17,9 @@ package index
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -81,6 +83,56 @@ func TestSnapshotSearchVectors(t *testing.T) {
 	s.segment[1].segment.Segment = &segmentWrapper{}
 	if _, err = s.SearchVectors(context.Background(), "v", []float32{1}, 2, vec.DotProduct, nil); err == nil || !strings.Contains(err.Error(), "does not support vector search") {
 		t.Fatalf("unsupported plugin: %v", err)
+	}
+}
+
+func TestSnapshotSearchVectorsMergeOracle(t *testing.T) {
+	rng := rand.New(rand.NewSource(1))
+	for iter := 0; iter < 200; iter++ {
+		s := &Snapshot{}
+		var live []vec.Match
+		var running uint64
+		for segs := rng.Intn(4); segs >= 0; segs-- {
+			count := rng.Intn(6)
+			deleted := roaring.New()
+			var matches []vec.Match
+			for n := 0; n < count; n++ {
+				m := vec.Match{Number: uint64(n), Score: float64(rng.Intn(3))}
+				matches = append(matches, m)
+				if rng.Intn(3) == 0 {
+					deleted.Add(uint32(n))
+					continue
+				}
+				live = append(live, vec.Match{Number: running + m.Number, Score: m.Score})
+			}
+			sort.SliceStable(matches, func(a, b int) bool { return matches[a].Score > matches[b].Score })
+			s.segment = append(s.segment, &segmentSnapshot{
+				segment: &segmentWrapper{Segment: &vectorTestSegment{matches: matches}}, deleted: deleted,
+			})
+			s.offsets = append(s.offsets, running)
+			running += uint64(len(matches))
+		}
+		k := 1 + rng.Intn(5)
+		got, err := s.SearchVectors(context.Background(), "v", []float32{1}, k, vec.DotProduct, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sort.Slice(live, func(a, b int) bool {
+			if live[a].Score == live[b].Score {
+				return live[a].Number < live[b].Number
+			}
+			return live[a].Score > live[b].Score
+		})
+		want := live
+		if len(want) > k {
+			want = want[:k]
+		}
+		if len(want) == 0 {
+			want = nil
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("iter %d k=%d: got %v, want %v", iter, k, got, want)
+		}
 	}
 }
 

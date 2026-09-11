@@ -359,7 +359,12 @@ func TestSnapshotFilteredLoad(t *testing.T) {
 				b.WriteByte(byte(j + 1))
 				var values []uint64
 				if version == 3 {
-					values = append(values, uint64(seg.Size()), 1)
+					size := seg.Size()
+					if size < 0 {
+						t.Errorf("negative segment size: %d", size)
+						return
+					}
+					values = append(values, uint64(size), 1)
 				}
 				if version >= 2 {
 					values = append(values, timestamp, timestamp)

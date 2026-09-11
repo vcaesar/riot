@@ -40,7 +40,7 @@ type DisjunctionHeapSearcher struct {
 	options       search.SearcherOptions
 }
 
-func newDisjunctionHeapSearcher(searchers []search.Searcher, min int, scorer search.CompositeScorer, options search.SearcherOptions,
+func newDisjunctionHeapSearcher(searchers []search.Searcher, minMatches int, scorer search.CompositeScorer, options search.SearcherOptions,
 	limit bool) (
 	*DisjunctionHeapSearcher, error) {
 	if limit && tooManyClauses(len(searchers)) {
@@ -52,7 +52,7 @@ func newDisjunctionHeapSearcher(searchers []search.Searcher, min int, scorer sea
 		searchers:     searchers,
 		numSearchers:  len(searchers),
 		scorer:        scorer,
-		min:           min,
+		min:           minMatches,
 		matching:      make([]*search.DocumentMatch, len(searchers)),
 		matchingCurrs: make([]*searcherCurr, len(searchers)),
 		heap:          make([]*searcherCurr, 0, len(searchers)),

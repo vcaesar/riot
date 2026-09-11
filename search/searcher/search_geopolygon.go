@@ -81,8 +81,10 @@ func buildPolygonFilter(dvReader segment.DocumentValueReader, polygon []geo.Poin
 			if err == nil && shift == 0 {
 				i64, err := prefixCoded.Int64()
 				if err == nil {
-					lons = append(lons, geo.MortonUnhashLon(uint64(i64)))
-					lats = append(lats, geo.MortonUnhashLat(uint64(i64)))
+					//nolint:gosec // G115: restore all Morton hash bits from the signed prefix-coding API.
+					hash := uint64(i64)
+					lons = append(lons, geo.MortonUnhashLon(hash))
+					lats = append(lats, geo.MortonUnhashLat(hash))
 					found = true
 				}
 			}
