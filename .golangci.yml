@@ -1,44 +1,11 @@
-linters-settings:
-  dupl:
-    threshold: 100
-  funlen:
-    lines: 100
-    statements: 100
-  goconst:
-    min-len: 2
-    min-occurrences: 2
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - experimental
-      - opinionated
-      - performance
-      - style
-    disabled-checks:
-      - dupImport # https://github.com/go-critic/go-critic/issues/845
-      - ifElseChain
-      - octalLiteral
-      - whyNoLint
-      - wrapperFunc
-  gocyclo:
-    min-complexity: 20 # increased from 15 to get us going, but not make things worse
-  lll:
-    line-length: 140
-  misspell:
-    locale: US
-  nolintlint:
-    allow-leading-space: true # don't require machine-readable nolint directives (i.e. with no leading space)
-    allow-unused: false # report any unused nolint directives
-    require-explanation: false # don't require an explanation for nolint directives
-    require-specific: false # don't require nolint directives to be specific about which linter is being skipped
+version: "2"
 
 linters:
   # please, do not use `enable-all`: it's deprecated and will be removed soon.
   # inverted configuration with `enable-all` and `disable` is not scalable during updates of golangci-lint
-  disable-all: true
+  default: none
   enable:
     - bodyclose
-    - deadcode
     - depguard
     - dogsled
     - dupl
@@ -48,12 +15,9 @@ linters:
     - goconst
     - gocritic
     - gocyclo
-    - gofmt
-    - goimports
     - revive
     - goprintffuncname
     - gosec
-    - gosimple
     - govet
     - ineffassign
     - lll
@@ -61,15 +25,10 @@ linters:
     - nakedret
     - nolintlint
     - rowserrcheck
-    - exportloopref
     - staticcheck
-    - structcheck
-    - stylecheck
-    - typecheck
     - unconvert
     - unparam
     - unused
-    - varcheck
     - whitespace
 
   # don't enable:
@@ -85,121 +44,182 @@ linters:
   # - testpackage
   # - wsl
 
-issues:
-  # Excluding configuration per-path, per-linter, per-text and per-source
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - lll
-        - funlen
-        - goconst
-        - gocyclo
-        - dupl
-        - gochecknoinits
-    - path: cmd/bluge/cmd
-      linters:
-        - gochecknoinits
-    - path: sizes.go
-      linters:
-        - gochecknoinits
+  settings:
+    dupl:
+      threshold: 100
+    funlen:
+      lines: 100
+      statements: 100
+    goconst:
+      min-len: 2
+      min-occurrences: 2
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+      disabled-checks:
+        - dupImport # https://github.com/go-critic/go-critic/issues/845
+        - ifElseChain
+        - octalLiteral
+        - whyNoLint
+        - wrapperFunc
+    gocyclo:
+      min-complexity: 20 # increased from 15 to get us going, but not make things worse
+    lll:
+      line-length: 140
+    misspell:
+      locale: US
+    nolintlint:
+      allow-unused: false # report any unused nolint directives
+      require-explanation: false # don't require an explanation for nolint directives
+      require-specific: false # don't require nolint directives to be specific about which linter is being skipped
+    depguard:
+      rules:
+        main:
+          list-mode: lax
 
-    # we don't need secure random in test
-    - path: _test\.go
-      linters:
-        - gosec
-      text: G404
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - test/testdata_etc
+      - internal/cache
+      - internal/renameio
+      - internal/robustio
+      - third_party$
+      - builtin$
+      - examples$
+    # Excluding configuration per-path, per-linter, per-text and per-source
+    rules:
+      - path: _test\.go
+        linters:
+          - lll
+          - funlen
+          - goconst
+          - gocyclo
+          - dupl
+          - gochecknoinits
+      - path: cmd/bluge/cmd
+        linters:
+          - gochecknoinits
+      - path: sizes.go
+        linters:
+          - gochecknoinits
 
-    # allow lock test to invoke itself
-    - path: index/lock/lock_test.go
-      linters:
-        - gosec
-      text: G204
+      # we don't need secure random in test
+      - path: _test\.go
+        linters:
+          - gosec
+        text: G404
 
-    # cannot safely refactor until optimization tests are in place again
-    - path: index/optimize.go
-      linters:
-        - funlen
+      # allow lock test to invoke itself
+      - path: index/lock/lock_test.go
+        linters:
+          - gosec
+        text: G204
 
-   # FIXME refactor persister
-    - path: index/persister.go
-      linters:
-        - funlen
-      text: persisterLoop
+      # cannot safely refactor until optimization tests are in place again
+      - path: index/optimize.go
+        linters:
+          - funlen
 
-    # many analysis tests have non-english words
-    # lots of false alarms on duplicate code
-    - path: ^analysis/.*_test\.go$
-      linters:
-        - misspell
-        - dupl
+     # FIXME refactor persister
+      - path: index/persister.go
+        linters:
+          - funlen
+        text: persisterLoop
 
-    # used in some analyzers
-    - path: analysis/lang/
-      linters:
-        - stylecheck
-      text: ST1018
+      # many analysis tests have non-english words
+      # lots of false alarms on duplicate code
+      - path: ^analysis/.*_test\.go$
+        linters:
+          - misspell
+          - dupl
 
-    # many language specific analyzers have
-    # non-english words or non-word substrings
-    # lots of false alrams on duplicate code
-    - path: ^analysis/lang/.*\.go$
-      linters:
-        - misspell
-        - dupl
-        - gocyclo
-        - funlen
+      # used in some analyzers
+      - path: analysis/lang/
+        linters:
+          - staticcheck
+        text: ST1018
 
-    # allow init here
-    - path: analysis/lang/in/scripts.go
-      linters:
-        - gochecknoinits
+      # many language specific analyzers have
+      # non-english words or non-word substrings
+      # lots of false alrams on duplicate code
+      - path: ^analysis/lang/.*\.go$
+        linters:
+          - misspell
+          - dupl
+          - gocyclo
+          - funlen
 
-    # and allow init here
-    - path: analysis/freq.go
-      linters:
-        - gochecknoinits
+      # allow init here
+      - path: analysis/lang/in/scripts.go
+        linters:
+          - gochecknoinits
 
-    - path: search/searcher/search_fuzzy.go
-      linters:
-        - gochecknoinits
+      # and allow init here
+      - path: analysis/freq.go
+        linters:
+          - gochecknoinits
 
-    # has long regexp
-    - path: analysis/tokenizer/web.go
-      linters:
-        - lll
+      - path: search/searcher/search_fuzzy.go
+        linters:
+          - gochecknoinits
 
-    # needs rewrite to avoid fallthrough
-    # skipping funlen,gocyclo since ported
-    - path: analysis/char/asciifolding.go
-      linters:
-        - gocritic
-        - funlen
-        - gocyclo
+      # has long regexp
+      - path: analysis/tokenizer/web.go
+        linters:
+          - lll
 
-    # many hard-coded values
-    - path: numeric/geo/sloppy.go
-      linters:
-        - gochecknoinits
+      # needs rewrite to avoid fallthrough
+      # skipping funlen,gocyclo since ported
+      - path: analysis/char/asciifolding.go
+        linters:
+          - gocritic
+          - funlen
+          - gocyclo
 
-    # allow init methods for our size calculations
-    - path: size.go
-      linters:
-        - gochecknoinits
+      # many hard-coded values
+      - path: numeric/geo/sloppy.go
+        linters:
+          - gochecknoinits
 
-    # https://github.com/go-critic/go-critic/issues/926
-    - linters:
-        - gocritic
-      text: "unnecessaryDefer:"
+      # allow init methods for our size calculations
+      - path: size.go
+        linters:
+          - gochecknoinits
 
-    # until we make final decision on config
-    - linters:
-        - gocritic
-      text: "config is heavy"
+      # https://github.com/go-critic/go-critic/issues/926
+      - linters:
+          - gocritic
+        text: "unnecessaryDefer:"
+
+      # until we make final decision on config
+      - linters:
+          - gocritic
+        text: "config is heavy"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - test/testdata_etc
+      - internal/cache
+      - internal/renameio
+      - internal/robustio
+      - third_party$
+      - builtin$
+      - examples$
 
 run:
-  skip-dirs:
-    - test/testdata_etc
-    - internal/cache
-    - internal/renameio
-    - internal/robustio
   timeout: 5m
