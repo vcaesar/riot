@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /*
-Package bluge is a library for indexing and searching text.
+package riot is a library for indexing and searching text.
 
 Example Opening New Index, Indexing Data
 
@@ -66,4 +66,4 @@ Example Getting Index Reader, Searching Data
 			log.Fatalf("error iterator document matches: %v", err)
 		}
 */
-package bluge
+package riot
