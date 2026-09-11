@@ -18,11 +18,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/blugelabs/bluge/analysis"
+	segment "github.com/blugelabs/bluge_segment_api"
+
 	"github.com/blugelabs/bluge/analysis/analyzer"
+
+	"github.com/blugelabs/bluge/analysis"
 	"github.com/blugelabs/bluge/numeric"
 	"github.com/blugelabs/bluge/numeric/geo"
-	segment "github.com/blugelabs/bluge_segment_api"
 )
 
 type FieldOptions int
@@ -162,6 +164,11 @@ func (b *TermField) WithAnalyzer(fieldAnalyzer Analyzer) *TermField {
 }
 
 func (b *TermField) Analyze(startOffset int) (lastPos int) {
+	if !b.Index() {
+		b.analyzedLength = 0
+		b.analyzedTokenFreqs = nil
+		return startOffset
+	}
 	var tokens analysis.TokenStream
 	if b.analyzer != nil {
 		bytesToAnalyze := b.Value()
@@ -242,6 +249,9 @@ func addShiftTokens(tokens analysis.TokenStream, original int64, shiftBy uint, t
 type numericAnalyzer struct {
 	tokenType analysis.TokenType
 	shiftBy   uint
+	// emitOriginal also indexes the human-readable value, so a numeric
+	// field can be matched by a plain term query like "3.4".
+	emitOriginal bool
 }
 
 func (n *numericAnalyzer) Analyze(input []byte) analysis.TokenStream {
@@ -254,8 +264,7 @@ func (n *numericAnalyzer) Analyze(input []byte) analysis.TokenStream {
 			Type:         n.tokenType,
 		},
 	}
-
-	if n.tokenType == analysis.Numeric {
+	if n.emitOriginal {
 		if origVal, err := DecodeNumericFloat64(input); err == nil {
 			origStr := strconv.FormatFloat(origVal, 'f', -1, 64)
 			tokens = append(tokens, &analysis.Token{
@@ -267,7 +276,6 @@ func (n *numericAnalyzer) Analyze(input []byte) analysis.TokenStream {
 			})
 		}
 	}
-
 	original, err := numeric.PrefixCoded(input).Int64()
 	if err == nil {
 		tokens = addShiftTokens(tokens, original, n.shiftBy, n.tokenType)
@@ -288,8 +296,9 @@ func newNumericFieldWithIndexingOptions(name string, number float64, options Fie
 		value:             prefixCoded,
 		numPlainTextBytes: 8,
 		analyzer: &numericAnalyzer{
-			tokenType: analysis.Numeric,
-			shiftBy:   defaultNumericPrecisionStep,
+			tokenType:    analysis.Numeric,
+			shiftBy:      defaultNumericPrecisionStep,
+			emitOriginal: true,
 		},
 		positionIncrementGap: 100,
 	}

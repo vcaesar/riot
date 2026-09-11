@@ -15,7 +15,9 @@
 package bluge
 
 import (
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestIndexingOptions(t *testing.T) {
@@ -213,6 +215,7 @@ func TestNumericField(t *testing.T) {
 	nf := NewNumericField("age", 3.4)
 	_ = nf.Analyze(0)
 	numTokens := nf.AnalyzedLength()
+	// 16 prefix-coded tokens plus the original value "3.4"
 	if numTokens != 17 {
 		t.Errorf("expected 17 tokens, got %d ", numTokens)
 	}
@@ -220,17 +223,37 @@ func TestNumericField(t *testing.T) {
 	if len(tokenFreqs) != 17 {
 		t.Errorf("expected 17 token freqs, got %d", len(tokenFreqs))
 	}
+	if _, ok := tokenFreqs["3.4"]; !ok {
+		t.Errorf("expected original value token \"3.4\" to be indexed")
+	}
 }
 
 func TestGeoPointField(t *testing.T) {
 	gf := NewGeoPointField("loc", 0.0015, 0.0015)
 	_ = gf.Analyze(0)
 	numTokens := gf.analyzedLength
-	if numTokens != 9 {
-		t.Errorf("expected 9 tokens, got %d", numTokens)
+	if numTokens != 8 {
+		t.Errorf("expected 8 tokens, got %d", numTokens)
 	}
 	tokenFreqs := gf.AnalyzedTokenFrequencies()
-	if len(tokenFreqs) != 9 {
-		t.Errorf("expected 9 token freqs, got %d", len(tokenFreqs))
+	if len(tokenFreqs) != 8 {
+		t.Errorf("expected 8 token freqs, got %d", len(tokenFreqs))
+	}
+}
+
+// geo points are morton hashes, their decimal form is meaningless as a term
+func TestDateTimeAndGeoFieldsOmitOriginalValueToken(t *testing.T) {
+	df := NewDateTimeField("when", time.Unix(0, 1234567890))
+	_ = df.Analyze(0)
+	if got := df.AnalyzedLength(); got != 16 {
+		t.Errorf("expected 16 datetime tokens, got %d", got)
+	}
+
+	gf := NewGeoPointField("loc", 0.0015, 0.0015)
+	_ = gf.Analyze(0)
+	for term := range gf.AnalyzedTokenFrequencies() {
+		if _, err := strconv.ParseFloat(term, 64); err == nil {
+			t.Errorf("unexpected decimal token %q in geo field", term)
+		}
 	}
 }

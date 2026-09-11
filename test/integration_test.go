@@ -18,8 +18,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math"
+	"os"
 	"reflect"
 	"sort"
 	"testing"
@@ -110,7 +110,7 @@ func TestIntegration(t *testing.T) {
 	}
 
 	for _, intTest := range integrationTests {
-		path, err := ioutil.TempDir("", "bluge-integration-test-"+intTest.Name)
+		path, err := os.MkdirTemp("", "bluge-integration-test-"+intTest.Name)
 		if err != nil {
 			t.Fatal(err)
 		}
