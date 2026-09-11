@@ -18,8 +18,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/blugelabs/bluge/numeric"
-	"github.com/blugelabs/bluge/numeric/geo"
+	"github.com/vcaesar/riot/numeric"
+	"github.com/vcaesar/riot/numeric/geo"
 )
 
 type TextValueSource interface {

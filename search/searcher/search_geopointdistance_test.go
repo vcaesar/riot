@@ -18,10 +18,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blugelabs/bluge/search/similarity"
+	"github.com/vcaesar/riot/search/similarity"
 
-	"github.com/blugelabs/bluge/numeric/geo"
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/numeric/geo"
+	"github.com/vcaesar/riot/search"
 )
 
 func TestGeoPointDistanceSearcher(t *testing.T) {

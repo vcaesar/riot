@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 func TestExceptionsTokenizer(t *testing.T) {

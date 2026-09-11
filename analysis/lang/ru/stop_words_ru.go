@@ -1,7 +1,7 @@
 package ru
 
 import (
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 // this content was obtained from:

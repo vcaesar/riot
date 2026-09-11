@@ -17,10 +17,10 @@ package test
 import (
 	"testing"
 
-	"github.com/blugelabs/bluge/search"
-	"github.com/blugelabs/bluge/search/highlight"
+	"github.com/vcaesar/riot/search"
+	"github.com/vcaesar/riot/search/highlight"
 
-	"github.com/blugelabs/bluge"
+	bluge "github.com/vcaesar/riot"
 )
 
 type match struct {

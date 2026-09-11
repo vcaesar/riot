@@ -15,7 +15,6 @@
 package index
 
 import (
-	"io/ioutil"
 	"math"
 	"os"
 	"reflect"
@@ -24,11 +23,11 @@ import (
 	"sync"
 	"testing"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 )
 
 func CreateConfig(name string) (config Config, cleanup func() error) {
-	path, err := ioutil.TempDir("", "bluge-index-test"+name)
+	path, err := os.MkdirTemp("", "bluge-index-test"+name)
 	if err != nil {
 		panic(err)
 	}

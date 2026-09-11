@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"unicode/utf8"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 type Side bool

@@ -18,7 +18,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 func TestElisionFilter(t *testing.T) {

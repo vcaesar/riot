@@ -19,9 +19,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/blugelabs/bluge/search"
-
-	"github.com/blugelabs/bluge"
+	bluge "github.com/vcaesar/riot"
+	"github.com/vcaesar/riot/search"
 )
 
 func sortLoad(writer *bluge.Writer) error {

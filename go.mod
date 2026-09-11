@@ -1,26 +1,31 @@
-module github.com/blugelabs/bluge
+module github.com/vcaesar/riot
 
-go 1.16
+go 1.27.1
 
 require (
-	github.com/RoaringBitmap/roaring v0.9.4
-	github.com/axiomhq/hyperloglog v0.0.0-20191112132149-a4c4c47bc57f
-	github.com/bits-and-blooms/bitset v1.2.0
+	github.com/RoaringBitmap/roaring/v2 v2.27.0
+	github.com/axiomhq/hyperloglog v0.2.6
+	github.com/bits-and-blooms/bitset v1.25.0
 	github.com/blevesearch/go-porterstemmer v1.0.3
-	github.com/blevesearch/mmap-go v1.0.4
-	github.com/blevesearch/segment v0.9.0
+	github.com/blevesearch/mmap-go v1.2.0
+	github.com/blevesearch/segment v0.9.1
 	github.com/blevesearch/snowballstem v0.9.0
-	github.com/blevesearch/vellum v1.0.7
-	github.com/blugelabs/bluge_segment_api v0.2.0
-	github.com/blugelabs/ice v1.0.0
+	github.com/blevesearch/vellum v1.2.0
 	github.com/caio/go-tdigest v3.1.0+incompatible
-	github.com/leesper/go_rng v0.0.0-20190531154944-a612b043e353 // indirect
-	github.com/spf13/cobra v0.0.5
-	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f
-	golang.org/x/text v0.3.8
-	gonum.org/v1/gonum v0.7.0 // indirect
+	github.com/spf13/cobra v1.10.2
+	github.com/vcaesar/bluge_segment_api v1.1.0
+	github.com/vcaesar/ice v1.2.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/text v0.42.0
 )
 
-replace github.com/blugelabs/ice => github.com/zinclabs/ice v1.1.1
-
-replace github.com/blugelabs/bluge_segment_api => github.com/zinclabs/bluge_segment_api v1.0.0
+require (
+	github.com/dgryski/go-metro v0.0.0-20250106013310-edb8663e5e33 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/kamstrup/intmap v0.5.2 // indirect
+	github.com/klauspost/compress v1.20.0 // indirect
+	github.com/leesper/go_rng v0.0.0-20190531154944-a612b043e353 // indirect
+	github.com/mschoch/smat v0.2.0 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
+	gonum.org/v1/gonum v0.17.0 // indirect
+)

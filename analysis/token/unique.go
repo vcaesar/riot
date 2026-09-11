@@ -15,7 +15,7 @@
 package token
 
 import (
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 const initialMapFactor = 4

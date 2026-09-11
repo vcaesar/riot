@@ -15,8 +15,8 @@
 package searcher
 
 import (
-	"github.com/blugelabs/bluge/search"
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
+	"github.com/vcaesar/riot/search"
 )
 
 type MatchAllSearcher struct {

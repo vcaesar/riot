@@ -17,7 +17,7 @@ package token
 import (
 	"unicode/utf8"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 const RightSingleQuotationMark = '’'

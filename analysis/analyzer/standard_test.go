@@ -17,7 +17,7 @@ package analyzer
 import (
 	"testing"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 func BenchmarkStandardAnalyzer(b *testing.B) {

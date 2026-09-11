@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/blugelabs/bluge/search"
-	"github.com/blugelabs/bluge/search/similarity"
+	"github.com/vcaesar/riot/search"
+	"github.com/vcaesar/riot/search/similarity"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 )
 
 type thingLoc struct {

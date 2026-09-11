@@ -17,9 +17,9 @@ package searcher
 import (
 	"testing"
 
-	"github.com/blugelabs/bluge/search/similarity"
+	"github.com/vcaesar/riot/search/similarity"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 func TestConjunctionSearch(t *testing.T) {
@@ -175,7 +175,7 @@ func TestConjunctionSearch(t *testing.T) {
 	}
 
 	for testIndex, test := range tests {
-		defer func() { //nolint:gocritic
+		defer func() {
 			err := test.searcher.Close()
 			if err != nil {
 				t.Fatal(err)

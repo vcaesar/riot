@@ -17,7 +17,7 @@ package it
 import (
 	"bytes"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 type ItalianLightStemmerFilter struct {

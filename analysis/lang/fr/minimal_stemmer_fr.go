@@ -17,7 +17,7 @@ package fr
 import (
 	"bytes"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 type FrenchMinimalStemmerFilter struct {

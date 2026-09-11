@@ -17,7 +17,7 @@ package searcher
 import (
 	"testing"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 func TestMatchNoneSearch(t *testing.T) {
@@ -38,7 +38,7 @@ func TestMatchNoneSearch(t *testing.T) {
 	}
 
 	for testIndex, test := range tests {
-		defer func() { //nolint:gocritic
+		defer func() {
 			err := test.searcher.Close()
 			if err != nil {
 				t.Fatal(err)

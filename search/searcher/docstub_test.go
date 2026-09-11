@@ -17,10 +17,10 @@ package searcher
 import (
 	"strings"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/blugelabs/bluge/numeric"
-	"github.com/blugelabs/bluge/numeric/geo"
+	"github.com/vcaesar/riot/numeric"
+	"github.com/vcaesar/riot/numeric/geo"
 )
 
 type FakeDocument []*FakeField
@@ -91,12 +91,12 @@ func (f *FakeDocument) Analyze() {
 
 }
 
-func (f *FakeDocument) Len() int {
-	return len(*f)
-}
-
 func (f *FakeDocument) Timestamp() int64 {
 	return 0
+}
+
+func (f *FakeDocument) Len() int {
+	return len(*f)
 }
 
 func (f *FakeDocument) EachField(vf segment.VisitField) {

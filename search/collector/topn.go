@@ -17,7 +17,7 @@ package collector
 import (
 	"context"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type collectorStore interface {
@@ -138,19 +138,7 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 	searchContext := search.NewSearchContext(hc.backingSize+searcher.DocumentMatchPoolSize(), len(hc.sort))
 
 	// add fields needed by aggregations
-	hc.neededFields = append(hc.neededFields, aggs.Fields()...)
-	// filter repeat field
-	if len(hc.neededFields) > 1 {
-		store := make(map[string]struct{}, len(hc.neededFields))
-		for _, field := range hc.neededFields {
-			store[field] = struct{}{}
-		}
-		hc.neededFields = hc.neededFields[:0]
-		for field := range store {
-			hc.neededFields = append(hc.neededFields, field)
-		}
-	}
-
+	hc.neededFields = uniqueFields(append(hc.neededFields, aggs.Fields()...))
 	bucket := search.NewBucket("", aggs)
 
 	var hitNumber int

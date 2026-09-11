@@ -49,6 +49,15 @@ func makeLinearSegments(n int) (rv []Segment) {
 
 // ----------------------------------------
 
+func TestDefaultMaxSegmentSize(t *testing.T) {
+	if got := DefaultMergePlanOptions.MaxSegmentSize; got != 1000000 {
+		t.Fatalf("expected default max segment size 1000000, got %d", got)
+	}
+	if got := ErrMaxSegmentSizeTooLarge.Error(); got != "option MaxSegmentSize exceeds the size limit" {
+		t.Fatalf("unexpected error message: %s", got)
+	}
+}
+
 func TestSimplePlan(t *testing.T) {
 	segs := makeLinearSegments(10)
 

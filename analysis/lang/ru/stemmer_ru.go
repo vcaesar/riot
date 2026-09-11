@@ -17,7 +17,7 @@ package ru
 import (
 	"github.com/blevesearch/snowballstem"
 	"github.com/blevesearch/snowballstem/russian"
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 type RussianStemmerFilter struct {

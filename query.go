@@ -20,14 +20,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blugelabs/bluge/search/similarity"
+	"github.com/vcaesar/riot/search/similarity"
 
-	"github.com/blugelabs/bluge/analysis"
-	"github.com/blugelabs/bluge/analysis/tokenizer"
-	"github.com/blugelabs/bluge/numeric"
-	"github.com/blugelabs/bluge/numeric/geo"
-	"github.com/blugelabs/bluge/search"
-	"github.com/blugelabs/bluge/search/searcher"
+	"github.com/vcaesar/riot/analysis"
+	"github.com/vcaesar/riot/analysis/tokenizer"
+	"github.com/vcaesar/riot/numeric"
+	"github.com/vcaesar/riot/numeric/geo"
+	"github.com/vcaesar/riot/search"
+	"github.com/vcaesar/riot/search/searcher"
 )
 
 // A Query represents a description of the type
@@ -285,7 +285,9 @@ type DateRangeQuery struct {
 // NewDateRangeQuery creates a new Query for ranges
 // of date values.
 // Date strings are parsed using the DateTimeParser configured in the
-//  top-level config.QueryDateTimeParser
+//
+//	top-level config.QueryDateTimeParser
+//
 // Either, but not both endpoints can be nil.
 func NewDateRangeQuery(start, end time.Time) *DateRangeQuery {
 	return NewDateRangeInclusiveQuery(start, end, true, false)
@@ -294,7 +296,9 @@ func NewDateRangeQuery(start, end time.Time) *DateRangeQuery {
 // NewDateRangeInclusiveQuery creates a new Query for ranges
 // of date values.
 // Date strings are parsed using the DateTimeParser configured in the
-//  top-level config.QueryDateTimeParser
+//
+//	top-level config.QueryDateTimeParser
+//
 // Either, but not both endpoints can be nil.
 // startInclusive and endInclusive control inclusion of the endpoints.
 func NewDateRangeInclusiveQuery(start, end time.Time, startInclusive, endInclusive bool) *DateRangeQuery {

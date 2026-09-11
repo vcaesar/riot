@@ -22,8 +22,8 @@ import (
 	"testing"
 
 	"github.com/RoaringBitmap/roaring/v2"
-	segment "github.com/blugelabs/bluge_segment_api"
-	"github.com/blugelabs/ice/vec"
+	segment "github.com/vcaesar/bluge_segment_api"
+	"github.com/vcaesar/ice/vec"
 )
 
 type vectorTestSegment struct {

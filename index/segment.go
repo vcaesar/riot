@@ -15,8 +15,8 @@
 package index
 
 import (
-	"github.com/RoaringBitmap/roaring"
-	segment "github.com/blugelabs/bluge_segment_api"
+	"github.com/RoaringBitmap/roaring/v2"
+	segment "github.com/vcaesar/bluge_segment_api"
 )
 
 type SegmentSnapshot interface {
@@ -40,6 +40,35 @@ type segmentSnapshot struct {
 	docTimeMax     int64
 }
 
+func (s *segmentSnapshot) DocNum() uint64 {
+	if s.segment != nil {
+		return s.segment.Count()
+	}
+	return s.docNum
+}
+
+func (s *segmentSnapshot) SegmentSize() uint64 {
+	if s.segmentSize != 0 {
+		return s.segmentSize
+	}
+	if s.segment != nil {
+		return uint64(s.segment.Size())
+	}
+	return 0
+}
+
+func (s *segmentSnapshot) Timestamp() (int64, int64) {
+	if s.docTimeMin != 0 || s.docTimeMax != 0 {
+		return s.docTimeMin, s.docTimeMax
+	}
+	if s.segment != nil {
+		return s.segment.Timestamp()
+	}
+	return 0, 0
+}
+
+func (s *segmentSnapshot) Bytes() int64 { return int64(s.SegmentSize()) }
+
 func (s *segmentSnapshot) Segment() segment.Segment {
 	return s.segment
 }
@@ -56,16 +85,8 @@ func (s *segmentSnapshot) FullSize() int64 {
 	return int64(s.segment.Count())
 }
 
-func (s *segmentSnapshot) LiveSize() int64 {
+func (s segmentSnapshot) LiveSize() int64 {
 	return int64(s.Count())
-}
-
-func (s *segmentSnapshot) Bytes() int64 {
-	n := int64(s.segmentSize)
-	if n == 0 {
-		n = int64(s.segment.Size())
-	}
-	return n
 }
 
 func (s *segmentSnapshot) Close() error {
@@ -104,16 +125,4 @@ func (s *segmentSnapshot) Size() (rv int) {
 		rv += int(s.deleted.GetSizeInBytes())
 	}
 	return
-}
-
-func (s *segmentSnapshot) DocNum() uint64 {
-	return s.docNum
-}
-
-func (s *segmentSnapshot) SegmentSize() uint64 {
-	return s.segmentSize
-}
-
-func (s *segmentSnapshot) Timestamp() (int64, int64) { //nolint:gocritic
-	return s.docTimeMin, s.docTimeMax
 }

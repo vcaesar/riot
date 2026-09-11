@@ -18,13 +18,13 @@ import (
 	"strconv"
 	"time"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/blugelabs/bluge/analysis/analyzer"
+	"github.com/vcaesar/riot/analysis/analyzer"
 
-	"github.com/blugelabs/bluge/analysis"
-	"github.com/blugelabs/bluge/numeric"
-	"github.com/blugelabs/bluge/numeric/geo"
+	"github.com/vcaesar/riot/analysis"
+	"github.com/vcaesar/riot/numeric"
+	"github.com/vcaesar/riot/numeric/geo"
 )
 
 type FieldOptions int

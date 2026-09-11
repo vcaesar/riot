@@ -17,9 +17,9 @@ package searcher
 import (
 	"sort"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type DisjunctionSliceSearcher struct {

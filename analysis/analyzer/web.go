@@ -15,10 +15,10 @@
 package analyzer
 
 import (
-	"github.com/blugelabs/bluge/analysis"
-	"github.com/blugelabs/bluge/analysis/lang/en"
-	"github.com/blugelabs/bluge/analysis/token"
-	"github.com/blugelabs/bluge/analysis/tokenizer"
+	"github.com/vcaesar/riot/analysis"
+	"github.com/vcaesar/riot/analysis/lang/en"
+	"github.com/vcaesar/riot/analysis/token"
+	"github.com/vcaesar/riot/analysis/tokenizer"
 )
 
 func NewWebAnalyzer() *analysis.Analyzer {

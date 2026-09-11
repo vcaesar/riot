@@ -15,8 +15,20 @@
 package token
 
 import (
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
+
+func (p *Parser) buildTokenFromTerm(buffer []rune) *analysis.Token {
+	term := analysis.BuildTermFromRunes(buffer)
+	token := &analysis.Token{
+		Term:         term,
+		PositionIncr: 1,
+		Start:        p.index,
+		End:          p.index + len(term),
+	}
+	p.index += len(term)
+	return token
+}
 
 // Parser accepts a symbol and passes it to the current state (representing a class).
 // The state can accept it (and accumulate it). Otherwise, the parser creates a new state that
@@ -39,18 +51,6 @@ func NewParser(length, index int) *Parser {
 		tokens:    make([]*analysis.Token, 0, length),
 		index:     index,
 	}
-}
-
-func (p *Parser) buildTokenFromTerm(buffer []rune) *analysis.Token {
-	term := analysis.BuildTermFromRunes(buffer)
-	token := &analysis.Token{
-		Term:         term,
-		PositionIncr: 1,
-		Start:        p.index,
-		End:          p.index + len(term),
-	}
-	p.index += len(term)
-	return token
 }
 
 func (p *Parser) Push(sym rune, peek *rune) {

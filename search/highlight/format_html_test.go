@@ -17,7 +17,7 @@ package highlight
 import (
 	"testing"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 func TestHTMLFragmentFormatter(t *testing.T) {

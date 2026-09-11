@@ -17,11 +17,11 @@ package searcher
 import (
 	"math"
 
-	"github.com/blugelabs/bluge/search/similarity"
+	"github.com/vcaesar/riot/search/similarity"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 )
 
 var baseTestIndexReaderDirect *stubIndexReader

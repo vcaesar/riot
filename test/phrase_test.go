@@ -15,8 +15,8 @@
 package test
 
 import (
-	"github.com/blugelabs/bluge"
-	"github.com/blugelabs/bluge/analysis/lang/en"
+	bluge "github.com/vcaesar/riot"
+	"github.com/vcaesar/riot/analysis/lang/en"
 )
 
 func phraseLoad(writer *bluge.Writer) error {

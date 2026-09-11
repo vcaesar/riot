@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/RoaringBitmap/roaring"
-	segment "github.com/blugelabs/bluge_segment_api"
+	"github.com/RoaringBitmap/roaring/v2"
+	segment "github.com/vcaesar/bluge_segment_api"
 )
 
 func (s *Writer) persisterLoop(merges chan *segmentMerge, persists chan *persistIntroduction,

@@ -17,7 +17,7 @@ package ar
 import (
 	"bytes"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 // These were obtained from org.apache.lucene.analysis.ar.ArabicStemmer

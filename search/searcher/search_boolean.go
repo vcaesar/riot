@@ -15,7 +15,7 @@
 package searcher
 
 import (
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type BooleanSearcher struct {

@@ -18,11 +18,11 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
 	"github.com/blevesearch/vellum"
 	"github.com/blevesearch/vellum/levenshtein"
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 // reusable, thread-safe levenshtein builders

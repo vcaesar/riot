@@ -17,7 +17,7 @@ package aggregations
 import (
 	"time"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type DurationMetric struct{}

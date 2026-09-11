@@ -17,9 +17,9 @@ package bluge
 import (
 	"fmt"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/blugelabs/bluge/index"
+	"github.com/vcaesar/riot/index"
 )
 
 type OfflineWriter struct {

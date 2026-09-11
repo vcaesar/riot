@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"unicode"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 type FrenchLightStemmerFilter struct {

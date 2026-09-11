@@ -17,7 +17,7 @@ package ro
 import (
 	"github.com/blevesearch/snowballstem"
 	"github.com/blevesearch/snowballstem/romanian"
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 type RomanianStemmerFilter struct {

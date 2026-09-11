@@ -1,6 +1,6 @@
 package ar
 
-import "github.com/blugelabs/bluge/analysis"
+import "github.com/vcaesar/riot/analysis"
 
 // this content was obtained from:
 // lucene-4.7.2/analysis/common/src/resources/org/apache/lucene/analysis

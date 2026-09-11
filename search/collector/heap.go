@@ -17,7 +17,7 @@ package collector
 import (
 	"container/heap"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type collectStoreHeap struct {

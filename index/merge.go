@@ -19,9 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/RoaringBitmap/roaring"
-	"github.com/blugelabs/bluge/index/mergeplan"
-	segment "github.com/blugelabs/bluge_segment_api"
+	"github.com/RoaringBitmap/roaring/v2"
+	segment "github.com/vcaesar/bluge_segment_api"
+	"github.com/vcaesar/riot/index/mergeplan"
 )
 
 func (s *Writer) mergerLoop(merges chan *segmentMerge, persisterNotifier watcherChan) {

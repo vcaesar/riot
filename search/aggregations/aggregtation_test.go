@@ -18,10 +18,10 @@ import (
 	"math"
 	"testing"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/blugelabs/bluge/numeric"
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/numeric"
+	"github.com/vcaesar/riot/search"
 )
 
 func TestAggregations(t *testing.T) {

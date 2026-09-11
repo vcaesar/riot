@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"math/rand"
 	"os"
@@ -29,9 +28,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blugelabs/bluge/index"
-	"github.com/blugelabs/bluge/search"
-	segment "github.com/blugelabs/bluge_segment_api"
+	"github.com/vcaesar/riot/search"
+
+	"github.com/vcaesar/riot/index"
+
+	segment "github.com/vcaesar/bluge_segment_api"
 )
 
 type Fatalfable interface {
@@ -39,7 +40,7 @@ type Fatalfable interface {
 }
 
 func createTmpIndexPath(f Fatalfable) string {
-	tmpIndexPath, err := ioutil.TempDir("", "bluge-testidx")
+	tmpIndexPath, err := os.MkdirTemp("", "bluge-testidx")
 	if err != nil {
 		f.Fatalf("error creating temp dir: %v", err)
 	}

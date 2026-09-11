@@ -19,7 +19,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 func TestCharacterTokenizer(t *testing.T) {

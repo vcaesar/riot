@@ -15,7 +15,7 @@
 package no
 
 import (
-	"github.com/blugelabs/bluge/analysis/token"
+	"github.com/vcaesar/riot/analysis/token"
 )
 
 func StopWordsFilter() *token.StopTokensFilter {

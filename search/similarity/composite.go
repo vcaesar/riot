@@ -15,7 +15,7 @@
 package similarity
 
 import (
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type CompositeSumScorer struct {

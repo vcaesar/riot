@@ -17,7 +17,7 @@ package searcher
 import (
 	"fmt"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 func NewMultiTermSearcher(indexReader search.Reader, terms []string,

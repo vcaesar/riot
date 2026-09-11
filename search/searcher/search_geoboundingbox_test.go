@@ -18,13 +18,13 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blugelabs/bluge/search/similarity"
+	"github.com/vcaesar/riot/search/similarity"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/blugelabs/bluge/numeric"
-	"github.com/blugelabs/bluge/numeric/geo"
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/numeric"
+	"github.com/vcaesar/riot/numeric/geo"
+	"github.com/vcaesar/riot/search"
 )
 
 const testGeoPrecisionStep uint = 9

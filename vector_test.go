@@ -21,7 +21,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blugelabs/ice/vec"
+	"github.com/vcaesar/ice/vec"
 )
 
 func TestNewVectorField(t *testing.T) {

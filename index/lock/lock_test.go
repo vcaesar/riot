@@ -15,7 +15,6 @@
 package lock
 
 import (
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,7 +187,7 @@ func TestOpenExclusiveThenOpenExclusive(t *testing.T) {
 
 func createTestPath(t *testing.T) (path string, cleanup func()) {
 	// create a path to test
-	tmpDir, err := ioutil.TempDir("", "lock-test")
+	tmpDir, err := os.MkdirTemp("", "lock-test")
 	if err != nil {
 		t.Fatalf("error creating temp dir: %v", err)
 	}

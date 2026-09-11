@@ -17,7 +17,7 @@ package bluge
 import (
 	"context"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type MultiSearcherList struct {

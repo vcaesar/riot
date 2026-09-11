@@ -14,7 +14,7 @@
 
 package similarity
 
-import "github.com/blugelabs/bluge/search"
+import "github.com/vcaesar/riot/search"
 
 type ConstantScorer float64
 

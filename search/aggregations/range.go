@@ -17,7 +17,7 @@ package aggregations
 import (
 	"fmt"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type RangeAggregation struct {

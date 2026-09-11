@@ -18,11 +18,11 @@ import (
 	"fmt"
 	"math"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/blugelabs/bluge/numeric"
-	"github.com/blugelabs/bluge/numeric/geo"
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/numeric"
+	"github.com/vcaesar/riot/numeric/geo"
+	"github.com/vcaesar/riot/search"
 )
 
 const minPointsInPolygon = 3

@@ -22,7 +22,7 @@
 package token
 
 import (
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 type StopTokensFilter struct {

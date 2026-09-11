@@ -17,7 +17,7 @@ package token
 import (
 	"container/ring"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 type ShingleFilter struct {

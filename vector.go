@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/blugelabs/ice/vec"
+	"github.com/vcaesar/ice/vec"
 )
 
 // Metric specifies vector similarity, independently of text scoring.

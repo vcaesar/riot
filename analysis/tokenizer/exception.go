@@ -17,7 +17,7 @@ package tokenizer
 import (
 	"regexp"
 
-	"github.com/blugelabs/bluge/analysis"
+	"github.com/vcaesar/riot/analysis"
 )
 
 // ExceptionsTokenizer implements a Tokenizer which extracts pieces matched by a

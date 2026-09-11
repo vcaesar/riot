@@ -14,7 +14,7 @@
 
 package index
 
-import segment "github.com/blugelabs/bluge_segment_api"
+import segment "github.com/vcaesar/bluge_segment_api"
 
 type notificationChan chan struct{}
 

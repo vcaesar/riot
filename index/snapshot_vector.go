@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/blugelabs/ice/vec"
+	"github.com/vcaesar/ice/vec"
 )
 
 type vectorSearcher interface {

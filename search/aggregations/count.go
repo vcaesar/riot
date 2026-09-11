@@ -14,7 +14,7 @@
 
 package aggregations
 
-import "github.com/blugelabs/bluge/search"
+import "github.com/vcaesar/riot/search"
 
 var staticCount = []float64{1}
 

@@ -17,9 +17,9 @@ package index
 import (
 	"fmt"
 
-	segment "github.com/blugelabs/bluge_segment_api"
+	segment "github.com/vcaesar/bluge_segment_api"
 
-	"github.com/RoaringBitmap/roaring"
+	"github.com/RoaringBitmap/roaring/v2"
 )
 
 type postingsIteratorAll struct {

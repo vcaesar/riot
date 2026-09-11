@@ -17,9 +17,9 @@ package aggregations
 import (
 	"time"
 
-	"github.com/blugelabs/bluge/numeric/geo"
+	"github.com/vcaesar/riot/numeric/geo"
 
-	"github.com/blugelabs/bluge/search"
+	"github.com/vcaesar/riot/search"
 )
 
 type FilteringTextSource struct {
