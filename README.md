@@ -1,8 +1,8 @@
-# ![Riot](docs/riot.png) Riot
+# ![Riot](docs/bluge.png) Riot
 
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/vcaesar/riot)](https://pkg.go.dev/github.com/vcaesar/riot)
-[![Tests](https://github.com/vcaesar/riot/workflows/Tests/badge.svg?branch=master&event=push)](https://github.com/vcaesar/riot/actions?query=workflow%3ATests+event%3Apush+branch%3Amaster)
-[![Lint](https://github.com/vcaesar/riot/workflows/Lint/badge.svg?branch=master&event=push)](https://github.com/vcaesar/riot/actions?query=workflow%3ALint+event%3Apush+branch%3Amaster)
+[![Tests](https://github.com/vcaesar/riot/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/tests.yml?query=event%3Apush+branch%3Amain)
+[![Lint](https://github.com/vcaesar/riot/actions/workflows/lint.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/lint.yml?query=event%3Apush+branch%3Amain)
 
 The fast modern text indexing in go, fork form the [bluge](https://github.com/blugelabs/bluge)
 
