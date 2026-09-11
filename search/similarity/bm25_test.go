@@ -53,3 +53,27 @@ func TestBM25ComputeNormBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestBM25Idf(t *testing.T) {
+	sim := NewBM25Similarity()
+	tests := []struct {
+		docFreq, docCount uint64
+		want              float64
+	}{
+		{docFreq: 1, docCount: 5, want: math.Log(1 + 4.5/1.5)},
+		{docFreq: 5000, docCount: 10000, want: math.Ln2},
+		{docFreq: 0, docCount: 10, want: math.Log(1 + 10.5/0.5)},
+		// docFreq > docCount must not wrap the unsigned subtraction
+		{docFreq: 6, docCount: 5, want: math.Log(1 + (-0.5)/6.5)},
+	}
+	for _, test := range tests {
+		got := sim.Idf(test.docFreq, test.docCount)
+		if math.Abs(got-test.want) > 1e-12 {
+			t.Errorf("Idf(%d, %d) = %v, want %v", test.docFreq, test.docCount, got, test.want)
+		}
+	}
+	// rarer terms must score higher, and common terms must not dominate
+	if sim.Idf(1, 10000) <= sim.Idf(5000, 10000) || sim.Idf(5000, 10000) > 1 {
+		t.Fatalf("idf ordering broken: rare %v common %v", sim.Idf(1, 10000), sim.Idf(5000, 10000))
+	}
+}

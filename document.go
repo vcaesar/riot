@@ -90,6 +90,14 @@ type FieldConsumer interface {
 }
 
 func (d Document) Analyze() {
+	// composite fields are few; find them once instead of per analyzed field
+	var consumers []Field
+	for _, field := range d {
+		if _, ok := field.(FieldConsumer); ok {
+			consumers = append(consumers, field)
+		}
+	}
+
 	fieldOffsets := map[string]int{}
 	for _, field := range d {
 		if !field.Index() {
@@ -103,14 +111,12 @@ func (d Document) Analyze() {
 		fieldOffsets[field.Name()] = lastPos
 
 		// see if any of the composite fields need this
-		for _, otherField := range d {
-			if otherField == field {
+		for _, consumer := range consumers {
+			if consumer == field {
 				// never include yourself
 				continue
 			}
-			if fieldConsumer, ok := otherField.(FieldConsumer); ok {
-				fieldConsumer.Consume(field)
-			}
+			consumer.(FieldConsumer).Consume(field)
 		}
 	}
 }

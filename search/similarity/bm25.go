@@ -52,8 +52,12 @@ func (b *BM25Similarity) ComputeNorm(numTerms int) float32 {
 	return math.Float32frombits(uint32(numTerms))
 }
 
+// Idf computes log(1 + (N - n + 0.5) / (n + 0.5)), the Lucene BM25 idf.
+// The subtraction is done in float64 so docFreq > docCount (possible
+// transiently across segments) cannot wrap around.
 func (b *BM25Similarity) Idf(docFreq, docCount uint64) float64 {
-	return math.Log(1.0 + float64(docCount-docFreq) + 0.5/(float64(docFreq)+0.5))
+	n := float64(docFreq)
+	return math.Log(1.0 + (float64(docCount)-n+0.5)/(n+0.5))
 }
 
 func (b *BM25Similarity) IdfExplainTerm(collectionStats segment.CollectionStats, termStats segment.TermStats) *search.Explanation {

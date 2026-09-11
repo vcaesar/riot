@@ -107,13 +107,16 @@ func (tfs TokenFrequencies) Size() int {
 }
 
 func (tfs TokenFrequencies) MergeAll(remoteField string, other TokenFrequencies) {
+	// one block for every term new to tfs; bounded by len(other) so it is
+	// never grown and the pointers handed out stay valid
+	block := make([]TokenFreq, 0, len(other))
 	// walk the new token frequencies
 	for tfk, tf := range other {
-		tfs.mergeOne(remoteField, tfk, tf)
+		block = tfs.mergeOne(remoteField, tfk, tf, block)
 	}
 }
 
-func (tfs TokenFrequencies) mergeOne(remoteField, tfk string, tf *TokenFreq) {
+func (tfs TokenFrequencies) mergeOne(remoteField, tfk string, tf *TokenFreq, block []TokenFreq) []TokenFreq {
 	// set the remoteField value in incoming token freqs
 	for _, l := range tf.Locations {
 		l.FieldVal = remoteField
@@ -122,14 +125,17 @@ func (tfs TokenFrequencies) mergeOne(remoteField, tfk string, tf *TokenFreq) {
 	if exists {
 		existingTf.Locations = append(existingTf.Locations, tf.Locations...)
 		existingTf.frequency += tf.frequency
-	} else {
-		tfs[tfk] = &TokenFreq{
-			TermVal:   tf.TermVal,
-			frequency: tf.frequency,
-			Locations: make([]*TokenLocation, len(tf.Locations)),
-		}
-		copy(tfs[tfk].Locations, tf.Locations)
+		return block
 	}
+	block = append(block, TokenFreq{
+		TermVal:   tf.TermVal,
+		frequency: tf.frequency,
+		// share the source locations; the capped slice forces any later
+		// append to reallocate instead of writing into the source field
+		Locations: tf.Locations[:len(tf.Locations):len(tf.Locations)],
+	})
+	tfs[tfk] = &block[len(block)-1]
+	return block
 }
 
 func (tfs TokenFrequencies) MergeOneBytes(remoteField string, tfk []byte, tf *TokenFreq) {
@@ -154,9 +160,13 @@ func (tfs TokenFrequencies) MergeOneBytes(remoteField string, tfk []byte, tf *To
 func TokenFrequency(tokens TokenStream, includeTermVectors bool, startOffset int) (
 	tokenFreqs TokenFrequencies, position int) {
 	tokenFreqs = make(map[string]*TokenFreq, len(tokens))
+	// one block for all distinct terms; bounded by len(tokens) so it is
+	// never grown and the pointers stored in the map stay valid
+	tfs := make([]TokenFreq, 0, len(tokens))
 
 	if includeTermVectors {
 		tls := make([]TokenLocation, len(tokens))
+		tlPtrs := make([]*TokenLocation, len(tokens))
 		tlNext := 0
 
 		position = startOffset
@@ -167,17 +177,21 @@ func TokenFrequency(tokens TokenStream, includeTermVectors bool, startOffset int
 				EndVal:      token.End,
 				PositionVal: position,
 			}
+			tlPtrs[tlNext] = &tls[tlNext]
 
 			curr, ok := tokenFreqs[string(token.Term)]
 			if ok {
 				curr.Locations = append(curr.Locations, &tls[tlNext])
 				curr.frequency++
 			} else {
-				tokenFreqs[string(token.Term)] = &TokenFreq{
-					TermVal:   token.Term,
-					Locations: []*TokenLocation{&tls[tlNext]},
+				tfs = append(tfs, TokenFreq{
+					TermVal: token.Term,
+					// cap 1 so a second location reallocates rather than
+					// overwriting the next term's pointer in tlPtrs
+					Locations: tlPtrs[tlNext : tlNext+1 : tlNext+1],
 					frequency: 1,
-				}
+				})
+				tokenFreqs[string(token.Term)] = &tfs[len(tfs)-1]
 			}
 
 			tlNext++
@@ -188,10 +202,11 @@ func TokenFrequency(tokens TokenStream, includeTermVectors bool, startOffset int
 			if exists {
 				curr.frequency++
 			} else {
-				tokenFreqs[string(token.Term)] = &TokenFreq{
+				tfs = append(tfs, TokenFreq{
 					TermVal:   token.Term,
 					frequency: 1,
-				}
+				})
+				tokenFreqs[string(token.Term)] = &tfs[len(tfs)-1]
 			}
 		}
 	}

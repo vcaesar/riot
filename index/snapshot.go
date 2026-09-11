@@ -156,6 +156,11 @@ func (i *Snapshot) newDictionary(field string,
 	}
 	// after ensuring we've read all items on channel
 	if err != nil {
+		for _, cursor := range rv.cursors {
+			if cursor.itr != nil {
+				_ = cursor.itr.Close()
+			}
+		}
 		return nil, err
 	}
 

@@ -20,7 +20,7 @@ import (
 
 func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 	boost float64, scorer search.Scorer, compScorer search.CompositeScorer,
-	options search.SearcherOptions) (search.Searcher, error) {
+	options search.SearcherOptions) (rv search.Searcher, err error) {
 	// find the terms with this prefix
 	kBeg := []byte(prefix)
 	kEnd := incrementBytes(kBeg)
@@ -28,9 +28,10 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 	if err != nil {
 		return nil, err
 	}
+	// named returns so a Close error is actually reported
 	defer func() {
 		if cerr := fieldDict.Close(); cerr != nil && err == nil {
-			err = cerr
+			rv, err = nil, cerr
 		}
 	}()
 

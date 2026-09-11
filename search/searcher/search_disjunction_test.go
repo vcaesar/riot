@@ -67,11 +67,11 @@ func TestDisjunctionSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("1"),
-					Score:  0.7608983788962145,
+					Score:  0.6301338005090412,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  0.7608983788962145,
+					Score:  0.6301338005090412,
 				},
 			},
 		},
@@ -81,15 +81,15 @@ func TestDisjunctionSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("1"),
-					Score:  0.7608983788962145,
+					Score:  0.6301338005090412,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  0.7608983788962145,
+					Score:  0.6301338005090412,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("4"),
-					Score:  0.7608983788962145,
+					Score:  0.6301338005090412,
 				},
 			},
 		},

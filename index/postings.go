@@ -86,9 +86,12 @@ func (i *postingsIterator) Advance(number uint64) (segment.Posting, error) {
 		if err != nil {
 			return nil, err
 		}
-		// close the current term field reader before replacing it with a new one
-		_ = i.Close()
-		*i = *(i2.(*postingsIterator))
+		// adopt the fresh iterator's state and hand our old buffers to it
+		// before recycling it; recycling i itself would leave an iterator
+		// that is still in use sitting in the snapshot's free list
+		i2p := i2.(*postingsIterator)
+		*i, *i2p = *i2p, *i
+		_ = i2p.Close()
 	}
 	segIndex, ldocNum := i.snapshot.segmentIndexAndLocalDocNumFromGlobal(number)
 	if segIndex >= len(i.snapshot.segment) {

@@ -56,19 +56,19 @@ func TestFuzzySearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("1"),
-					Score:  0.49475996046483234,
+					Score:  0.19048558277791944,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("2"),
-					Score:  0.3660975084344048,
+					Score:  0.1409497591158223,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  0.3660975084344048,
+					Score:  0.1409497591158223,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("4"),
-					Score:  0.5275409426390048,
+					Score:  0.20310645955140216,
 				},
 			},
 		},
@@ -81,7 +81,7 @@ func TestFuzzySearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  0.6561314664250772,
+					Score:  0.5433716591324194,
 				},
 			},
 		},
@@ -90,7 +90,7 @@ func TestFuzzySearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("5"),
-					Score:  1.2329571465400413,
+					Score:  1.021066668246945,
 				},
 			},
 		},
