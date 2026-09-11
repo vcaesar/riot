@@ -107,16 +107,16 @@ func (tfs TokenFrequencies) Size() int {
 }
 
 func (tfs TokenFrequencies) MergeAll(remoteField string, other TokenFrequencies) {
-	// one block for every term new to tfs; bounded by len(other) so it is
-	// never grown and the pointers handed out stay valid
-	block := make([]TokenFreq, 0, len(other))
+	// one block for every term new to tfs, allocated on first need and
+	// bounded by len(other) so it is never grown and the pointers stay valid
+	var block []TokenFreq
 	// walk the new token frequencies
 	for tfk, tf := range other {
-		block = tfs.mergeOne(remoteField, tfk, tf, block)
+		block = tfs.mergeOne(remoteField, tfk, tf, block, len(other))
 	}
 }
 
-func (tfs TokenFrequencies) mergeOne(remoteField, tfk string, tf *TokenFreq, block []TokenFreq) []TokenFreq {
+func (tfs TokenFrequencies) mergeOne(remoteField, tfk string, tf *TokenFreq, block []TokenFreq, blockCap int) []TokenFreq {
 	// set the remoteField value in incoming token freqs
 	for _, l := range tf.Locations {
 		l.FieldVal = remoteField
@@ -126,6 +126,9 @@ func (tfs TokenFrequencies) mergeOne(remoteField, tfk string, tf *TokenFreq, blo
 		existingTf.Locations = append(existingTf.Locations, tf.Locations...)
 		existingTf.frequency += tf.frequency
 		return block
+	}
+	if block == nil {
+		block = make([]TokenFreq, 0, blockCap)
 	}
 	block = append(block, TokenFreq{
 		TermVal:   tf.TermVal,

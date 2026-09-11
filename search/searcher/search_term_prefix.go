@@ -28,9 +28,13 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 	if err != nil {
 		return nil, err
 	}
-	// named returns so a Close error is actually reported
+	// named returns so a Close error is actually reported; a searcher already
+	// built must be released rather than dropped when that happens
 	defer func() {
 		if cerr := fieldDict.Close(); cerr != nil && err == nil {
+			if rv != nil {
+				_ = rv.Close()
+			}
 			rv, err = nil, cerr
 		}
 	}()

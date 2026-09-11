@@ -230,3 +230,16 @@ func TestTokenFrequenciesMergeAllDoesNotAliasSource(t *testing.T) {
 		}
 	}
 }
+
+func TestTokenFrequenciesMergeAllExistingTermsNoAlloc(t *testing.T) {
+	src, _ := TokenFrequency(TokenStream{{Term: []byte("x"), End: 1, PositionIncr: 1}}, false, 0)
+	composite := TokenFrequencies{}
+	composite.MergeAll("f", src)
+	allocs := testing.AllocsPerRun(50, func() { composite.MergeAll("f", src) })
+	if allocs != 0 {
+		t.Fatalf("merging only known terms allocated %v times, want 0", allocs)
+	}
+	if composite["x"].Frequency() != 52 {
+		t.Fatalf("frequency = %d, want 52", composite["x"].Frequency())
+	}
+}
