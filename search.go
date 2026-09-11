@@ -15,6 +15,8 @@
 package bluge
 
 import (
+	"math"
+
 	"github.com/vcaesar/riot/search"
 	"github.com/vcaesar/riot/search/aggregations"
 	"github.com/vcaesar/riot/search/collector"
@@ -251,21 +253,24 @@ func (s *TopNSearch) AllMatches(i search.Reader, config Config) (search.Searcher
 func memNeededForSearch(
 	searcher search.Searcher,
 	coll search.Collector) uint64 {
-	numDocMatches := coll.BackingSize() + searcher.DocumentMatchPoolSize()
-
-	estimate := 0
-
-	// overhead, size in bytes from collector
-	estimate += coll.Size()
-
-	// pre-allocing DocumentMatchPool
-	estimate += searchContextEmptySize + numDocMatches*documentMatchEmptySize
-
-	// searcher overhead
-	estimate += searcher.Size()
-
-	// overhead from results, lowestMatchOutsideResults
-	estimate += (numDocMatches + 1) * documentMatchEmptySize
-
-	return uint64(estimate)
+	var estimate uint64
+	for _, part := range []struct{ size, count int }{
+		{coll.Size(), 1},
+		{searcher.Size(), 1},
+		{searchContextEmptySize, 1},
+		{documentMatchEmptySize, 1}, // lowestMatchOutsideResults
+		// Each match needs space in both the pool and the results.
+		{coll.BackingSize(), 2 * documentMatchEmptySize},
+		{searcher.DocumentMatchPoolSize(), 2 * documentMatchEmptySize},
+	} {
+		if part.size < 0 || part.count < 0 {
+			return math.MaxUint64
+		}
+		size, count := uint64(part.size), uint64(part.count)
+		if count != 0 && size > (math.MaxUint64-estimate)/count {
+			return math.MaxUint64
+		}
+		estimate += size * count
+	}
+	return estimate
 }

@@ -225,6 +225,7 @@ func init() {
 			ch := decomposition[0]
 			flags := decomposition[4]
 			if (flags & scriptData.flag) != 0 {
+				//nolint:gosec // G115: every first element in the fixed decomposition table is nonnegative.
 				scriptData.decompMask.Set(uint(ch))
 			}
 		}
@@ -248,6 +249,7 @@ func normalize(input []rune) []rune {
 		if script != nil {
 			scriptData := scripts[script]
 			ch := r - scriptData.base
+			//nolint:gosec // G115: lookupScript matched a script whose runes are at or above its base.
 			if scriptData.decompMask.Test(uint(ch)) {
 				input = compose(ch, script, scriptData, input, i, inputLen)
 				inputLen = len(input)

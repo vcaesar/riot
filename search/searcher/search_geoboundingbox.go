@@ -138,7 +138,7 @@ func buildRectFilter(dvReader segment.DocumentValueReader, minLon, minLat, maxLo
 		// check geo matches against all numeric type terms indexed
 		var lons, lats []float64
 		var found bool
-		err := dvReader.VisitDocumentValues(d.Number, func(field string, term []byte) {
+		err := dvReader.VisitDocumentValues(d.Number, func(_ string, term []byte) {
 			// only consider the values which are shifted 0
 			prefixCoded := numeric.PrefixCoded(term)
 			shift, err := prefixCoded.Shift()
@@ -146,8 +146,10 @@ func buildRectFilter(dvReader segment.DocumentValueReader, minLon, minLat, maxLo
 				var i64 int64
 				i64, err = prefixCoded.Int64()
 				if err == nil {
-					lons = append(lons, geo.MortonUnhashLon(uint64(i64)))
-					lats = append(lats, geo.MortonUnhashLat(uint64(i64)))
+					//nolint:gosec // G115: restore all Morton hash bits from the signed prefix-coding API.
+					hash := uint64(i64)
+					lons = append(lons, geo.MortonUnhashLon(hash))
+					lats = append(lats, geo.MortonUnhashLat(hash))
 					found = true
 				}
 			}
@@ -240,6 +242,7 @@ func (grc *geoRangeCompute) relateAndRecurse(start, end uint64, res uint) {
 	if within || (level == grc.geoDetailLevel &&
 		geo.RectIntersects(minLon, minLat, maxLon, maxLat,
 			grc.sminLon, grc.sminLat, grc.smaxLon, grc.smaxLat)) {
+		//nolint:gosec // G115: preserve all Morton hash bits in the signed prefix-coding API.
 		codedTerm := grc.makePrefixCoded(int64(start), res)
 		if grc.isIndexed(codedTerm) {
 			if !within && grc.checkBoundaries {

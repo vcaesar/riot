@@ -19,6 +19,7 @@ import (
 )
 
 func Float64ToInt64(f float64) int64 {
+	//nolint:gosec // G115: reinterpret the IEEE-754 sign bit, preserving all 64 bits.
 	fasint := int64(math.Float64bits(f))
 	if fasint < 0 {
 		fasint ^= 0x7fffffffffffffff
@@ -30,5 +31,6 @@ func Int64ToFloat64(i int64) float64 {
 	if i < 0 {
 		i ^= 0x7fffffffffffffff
 	}
+	//nolint:gosec // G115: restore the IEEE-754 bits, including the sign bit.
 	return math.Float64frombits(uint64(i))
 }

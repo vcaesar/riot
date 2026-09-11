@@ -83,7 +83,12 @@ func TestFileSystemDirectorySymlinkStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := NewFileSystemDirectory(path)
-	if files, size := dir.Stats(); files != 1 || size != uint64(info.Size()) {
+	linkSize := info.Size()
+	if linkSize < 0 {
+		t.Errorf("negative symlink size: %d", linkSize)
+		return
+	}
+	if files, size := dir.Stats(); files != 1 || size != uint64(linkSize) {
 		t.Fatalf("symlink stats: got %d, %d; want 1, %d", files, size, info.Size())
 	}
 	if ids, err := dir.List(".seg"); err != nil || !reflect.DeepEqual(ids, []uint64{1}) {

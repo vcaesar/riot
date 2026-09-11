@@ -83,8 +83,8 @@ type Config struct {
 
 // WithTimeRange prunes segments outside the inclusive range, not individual documents.
 // Zero bounds are unrestricted. Documents must use the same timestamp units.
-func (config Config) WithTimeRange(min, max int64) Config {
-	config.FilterTimeMin, config.FilterTimeMax = min, max
+func (config Config) WithTimeRange(timeMin, timeMax int64) Config {
+	config.FilterTimeMin, config.FilterTimeMax = timeMin, timeMax
 	return config
 }
 

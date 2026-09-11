@@ -26,7 +26,7 @@ type MatchAllSearcher struct {
 	options     search.SearcherOptions
 }
 
-func NewMatchAllSearcher(indexReader search.Reader, boost float64, scorer search.Scorer,
+func NewMatchAllSearcher(indexReader search.Reader, _ float64, scorer search.Scorer,
 	options search.SearcherOptions) (*MatchAllSearcher, error) {
 	reader, err := indexReader.PostingsIterator(nil, "",
 		false, false, false)

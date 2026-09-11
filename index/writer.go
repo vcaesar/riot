@@ -253,6 +253,7 @@ func (s *Writer) Batch(batch *Batch) (err error) {
 
 	allDocsAnalyzed.Wait()
 
+	//nolint:gosec // G115: elapsed time uses the monotonic clock from time.Now and is nonnegative.
 	atomic.AddUint64(&s.stats.TotAnalysisTime, uint64(time.Since(start)))
 
 	indexStart := time.Now()
@@ -285,6 +286,7 @@ func (s *Writer) Batch(batch *Batch) (err error) {
 	}
 
 	atomic.AddUint64(&s.stats.newSegBufBytesRemoved, bufBytes)
+	//nolint:gosec // G115: elapsed time uses the monotonic clock from time.Now and is nonnegative.
 	atomic.AddUint64(&s.stats.TotIndexTime, uint64(time.Since(indexStart)))
 
 	return err
@@ -333,6 +335,7 @@ func (s *Writer) prepareSegment(newSegment *segmentWrapper, idTerms []segment.Te
 		err = <-introduction.persisted
 	}
 
+	//nolint:gosec // G115: elapsed time uses the monotonic clock from time.Now and is nonnegative.
 	introTime := uint64(time.Since(introStartTime))
 	atomic.AddUint64(&s.stats.TotBatchIntroTime, introTime)
 	if atomic.LoadUint64(&s.stats.MaxBatchIntroTime) < introTime {
@@ -351,7 +354,7 @@ func (s *Writer) Reader() (*Snapshot, error) {
 func (s *Writer) MemoryUsed() (memUsed uint64) {
 	indexSnapshot := s.currentSnapshot()
 	if indexSnapshot == nil {
-		return
+		return 0
 	}
 
 	defer func() {
@@ -359,7 +362,7 @@ func (s *Writer) MemoryUsed() (memUsed uint64) {
 	}()
 
 	// Account for current root snapshot overhead
-	memUsed += uint64(indexSnapshot.Size())
+	memUsed += indexSnapshot.size
 
 	// Account for snapshot that the persister may be working on
 	persistEpoch := atomic.LoadUint64(&s.stats.persistEpoch)
@@ -514,15 +517,7 @@ func (s *Writer) loadSnapshot(epoch uint64) (result *Snapshot, err error) {
 				epoch, computedCRCBytes, fileCRCBytes)
 		}
 	}
-	if s.config.hasTimeRange() {
-		kept := make([]*segmentSnapshot, 0, len(snapshot.segment))
-		for _, ss := range snapshot.segment {
-			if !s.config.excludes(ss) {
-				kept = append(kept, ss)
-			}
-		}
-		snapshot.segment = kept
-	}
+	snapshot.filterTimeRange(&s.config)
 
 	var running uint64
 	for _, segSnapshot := range snapshot.segment {

@@ -26,7 +26,7 @@ var listCmd = &cobra.Command{
 	Use:   "list [path]",
 	Short: "lists the contents of the bluge index",
 	Long:  `The list command will list the contents of the Bluge index.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 
 		if len(args) < 1 {
 			return fmt.Errorf("must specify path to index")

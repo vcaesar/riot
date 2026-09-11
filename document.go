@@ -60,6 +60,7 @@ func (d *Document) AddField(f Field) *Document {
 // The units are caller-defined and must match Config.WithTimeRange.
 func (d *Document) SetTimestamp(v int64) *Document {
 	value := make([]byte, 8)
+	//nolint:gosec // G115: encode the signed timestamp's complete two's-complement bit pattern.
 	binary.BigEndian.PutUint64(value, uint64(v))
 	field := NewStoredOnlyField(index.TimestampField, value)
 	for j, f := range *d {
@@ -74,6 +75,7 @@ func (d *Document) SetTimestamp(v int64) *Document {
 func (d Document) Timestamp() int64 {
 	for _, f := range d {
 		if f.Name() == index.TimestampField && len(f.Value()) == 8 {
+			//nolint:gosec // G115: recover the signed timestamp from its stored two's-complement bits.
 			return int64(binary.BigEndian.Uint64(f.Value()))
 		}
 	}

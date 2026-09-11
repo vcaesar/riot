@@ -83,13 +83,8 @@ func init() {
 		cosAngle := math.Cos(angle)
 		// For indexes corresponding to null cosine or sine, we make sure the value is zero
 		// and not an epsilon. This allows for a much better accuracy for results close to zero.
-		if i == sinCosPiIndex {
-			sinAngle = 0.0
-		} else if i == sinCosPiMul2Index {
-			sinAngle = 0.0
-		} else if i == sinCosPiMul05Index {
-			sinAngle = 0.0
-		} else if i == sinCosPiMul15Index {
+		switch i {
+		case sinCosPiIndex, sinCosPiMul2Index, sinCosPiMul05Index, sinCosPiMul15Index:
 			sinAngle = 0.0
 		}
 		sinTab[i] = sinAngle

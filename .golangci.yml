@@ -6,7 +6,6 @@ linters:
   default: none
   enable:
     - bodyclose
-    - depguard
     - dogsled
     - dupl
     - errcheck
@@ -76,10 +75,6 @@ linters:
       allow-unused: false # report any unused nolint directives
       require-explanation: false # don't require an explanation for nolint directives
       require-specific: false # don't require nolint directives to be specific about which linter is being skipped
-    depguard:
-      rules:
-        main:
-          list-mode: lax
 
   exclusions:
     generated: lax

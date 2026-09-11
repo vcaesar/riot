@@ -52,8 +52,8 @@ func (config Config) WithVirtualField(field Field) Config {
 
 // WithTimeRange prunes segments outside inclusive bounds when opening a reader.
 // Zero is unrestricted; unknown timestamps are retained. Writers reject ranges.
-func (config Config) WithTimeRange(min, max int64) Config {
-	config.indexConfig = config.indexConfig.WithTimeRange(min, max)
+func (config Config) WithTimeRange(minTime, maxTime int64) Config {
+	config.indexConfig = config.indexConfig.WithTimeRange(minTime, maxTime)
 	return config
 }
 
@@ -89,25 +89,27 @@ func (config Config) WithSearchStartFunc(f func(size uint64) error) Config {
 
 func DefaultConfig(path string) Config {
 	indexConfig := index.DefaultConfig(path)
-	return defaultConfig(indexConfig)
+	return defaultConfig(&indexConfig)
 }
 
 func InMemoryOnlyConfig() Config {
 	indexConfig := index.InMemoryOnlyConfig()
-	return defaultConfig(indexConfig)
+	return defaultConfig(&indexConfig)
 }
 
 func DefaultConfigWithDirectory(df func() index.Directory) Config {
 	indexConfig := index.DefaultConfigWithDirectory(df)
-	return defaultConfig(indexConfig)
+	return defaultConfig(&indexConfig)
 }
 
 // DefaultConfigWithIndexConfig builds a search configuration using the supplied index settings.
+//
+//nolint:gocritic // Preserve the public value API and independent configuration copy.
 func DefaultConfigWithIndexConfig(indexConfig index.Config) Config {
-	return defaultConfig(indexConfig)
+	return defaultConfig(&indexConfig)
 }
 
-func defaultConfig(indexConfig index.Config) Config {
+func defaultConfig(indexConfig *index.Config) Config {
 	rv := Config{
 		Logger:                log.New(io.Discard, "bluge", log.LstdFlags),
 		DefaultSearchField:    "_all",
@@ -118,14 +120,14 @@ func defaultConfig(indexConfig index.Config) Config {
 
 	allDocsFields := NewKeywordField("", "")
 	_ = allDocsFields.Analyze(0)
-	indexConfig = indexConfig.WithVirtualField(allDocsFields)
-	indexConfig = indexConfig.WithNormCalc(func(field string, length int) float32 {
+	*indexConfig = indexConfig.WithVirtualField(allDocsFields)
+	*indexConfig = indexConfig.WithNormCalc(func(field string, length int) float32 {
 		if pfs, ok := rv.PerFieldSimilarity[field]; ok {
 			return pfs.ComputeNorm(length)
 		}
 		return rv.DefaultSimilarity.ComputeNorm(length)
 	})
-	rv.indexConfig = indexConfig
+	rv.indexConfig = *indexConfig
 
 	return rv
 }

@@ -70,7 +70,7 @@ OUTER:
 				s.rootPersisted = nil
 				ourPersistedCallbacks = s.persistedCallbacks
 				s.persistedCallbacks = nil
-				atomic.StoreUint64(&s.stats.persistSnapshotSize, uint64(ourSnapshot.Size()))
+				atomic.StoreUint64(&s.stats.persistSnapshotSize, ourSnapshot.size)
 				atomic.StoreUint64(&s.stats.persistEpoch, ourSnapshot.epoch)
 			}
 			s.rootLock.Unlock()
@@ -160,7 +160,8 @@ func (s *Writer) pausePersisterForMergerCatchUp(persisterNotifier watcherChan,
 	// On finding fewer files on disk, persister takes a short pause
 	// for sufficient in-memory segments to pile up for the next
 	// memory merge cum persist loop.
-	if numFilesOnDisk < uint64(s.config.PersisterNapUnderNumFiles) &&
+	if s.config.PersisterNapUnderNumFiles > 0 &&
+		numFilesOnDisk < uint64(s.config.PersisterNapUnderNumFiles) &&
 		s.config.PersisterNapTimeMSec > 0 && s.numEventsBlocking() == 0 {
 		select {
 		case <-s.closeCh:
@@ -180,7 +181,7 @@ func (s *Writer) pausePersisterForMergerCatchUp(persisterNotifier watcherChan,
 	// Finding too many files on disk could be due to two reasons.
 	// 1. Too many older snapshots awaiting the clean up.
 	// 2. The merger could be lagging behind on merging the disk files.
-	if numFilesOnDisk > uint64(s.config.PersisterNapUnderNumFiles) {
+	if s.config.PersisterNapUnderNumFiles >= 0 && numFilesOnDisk > uint64(s.config.PersisterNapUnderNumFiles) {
 		err := s.deletionPolicy.Cleanup(s.directory)
 		if err != nil {
 			s.config.AsyncError(err)
@@ -310,19 +311,19 @@ func (s *Writer) persistSnapshotMaybeMerge(merges chan *segmentMerge, persists c
 
 func (s *Writer) persistSnapshotDirect(persists chan *persistIntroduction, snapshot *Snapshot) (err error) {
 	// first ensure that each segment in this snapshot has been persisted
-	var newSegmentIds []uint64
+	var newSegmentIDs []uint64
 	for _, segmentSnapshot := range snapshot.segment {
 		if !segmentSnapshot.segment.Persisted() {
 			err = s.directory.Persist(ItemKindSegment, segmentSnapshot.id, segmentSnapshot.segment.Segment, s.closeCh)
 			if err != nil {
 				return fmt.Errorf("error persisting segment: %v", err)
 			}
-			newSegmentIds = append(newSegmentIds, segmentSnapshot.id)
+			newSegmentIDs = append(newSegmentIDs, segmentSnapshot.id)
 		}
 	}
 
-	if len(newSegmentIds) > 0 {
-		err = s.prepareIntroducePersist(persists, newSegmentIds)
+	if len(newSegmentIDs) > 0 {
+		err = s.prepareIntroducePersist(persists, newSegmentIDs)
 		if err != nil {
 			return err
 		}
@@ -338,7 +339,7 @@ func (s *Writer) persistSnapshotDirect(persists chan *persistIntroduction, snaps
 	return nil
 }
 
-func (s *Writer) prepareIntroducePersist(persists chan *persistIntroduction, newSegmentIds []uint64) error {
+func (s *Writer) prepareIntroducePersist(persists chan *persistIntroduction, newSegmentIDs []uint64) error {
 	// now try to open all the new snapshots
 	newSegments := make(map[uint64]*segmentWrapper)
 	defer func() {
@@ -351,7 +352,7 @@ func (s *Writer) prepareIntroducePersist(persists chan *persistIntroduction, new
 		}
 	}()
 	var err error
-	for _, segmentID := range newSegmentIds {
+	for _, segmentID := range newSegmentIDs {
 		newSegments[segmentID], err = s.loadSegment(segmentID, s.segPlugin)
 		if err != nil {
 			return fmt.Errorf("error opening new segment %d, %v", segmentID, err)

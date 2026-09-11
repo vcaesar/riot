@@ -54,7 +54,7 @@ func (r *fieldTrackingReader) DocumentValueReader(fields []string) (segment.Docu
 	return r, nil
 }
 
-func (r *fieldTrackingReader) VisitDocumentValues(number uint64, visitor segment.DocumentValueVisitor) error {
+func (r *fieldTrackingReader) VisitDocumentValues(_ uint64, visitor segment.DocumentValueVisitor) error {
 	for _, field := range r.fields {
 		for _, value := range []float64{2, 3} {
 			encoded, err := numeric.NewPrefixCodedInt64(numeric.Float64ToInt64(value), 0)
@@ -67,7 +67,7 @@ func (r *fieldTrackingReader) VisitDocumentValues(number uint64, visitor segment
 	return nil
 }
 
-func (r *fieldTrackingReader) VisitStoredFields(number uint64, visitor segment.StoredFieldVisitor) error {
+func (r *fieldTrackingReader) VisitStoredFields(_ uint64, _ segment.StoredFieldVisitor) error {
 	return nil
 }
 

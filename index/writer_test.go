@@ -34,6 +34,7 @@ func CreateConfig(name string) (config Config, cleanup func() error) {
 	rv := DefaultConfig(path).
 		WithPersisterNapTimeMSec(1).
 		WithNormCalc(func(_ string, numTerms int) float32 {
+			//nolint:gosec // G115: encode the low 32 norm bits, matching the Float32bits decoder.
 			return math.Float32frombits(uint32(numTerms))
 		}).
 		WithVirtualField(NewFakeField("", "", false, false, false))
@@ -706,11 +707,12 @@ func TestIndexInsertWithStore(t *testing.T) {
 	var storedFieldCount int
 	err = indexReader.VisitStoredFields(docNum1, func(field string, value []byte) bool {
 		storedFieldCount++
-		if field == "name" {
+		switch field {
+		case "name":
 			if string(value) != "test" {
 				t.Errorf("expected name to be 'test', got '%s'", string(value))
 			}
-		} else if field == "_id" {
+		case "_id":
 			if string(value) != "1" {
 				t.Errorf("expected _id to be 1, got '%s'", string(value))
 			}
@@ -882,6 +884,9 @@ func TestIndexBatchWithCallbacks(t *testing.T) {
 	}
 	batch.Update(testIdentifier("3"), doc)
 	batch.SetPersistedCallback(func(e error) {
+		if e != nil {
+			t.Error(e)
+		}
 		wg.Done()
 	})
 
@@ -1188,7 +1193,7 @@ func TestConcurrentUpdate(t *testing.T) {
 	}
 
 	var fieldCount int
-	err = r.VisitStoredFields(docNum1, func(field string, value []byte) bool {
+	err = r.VisitStoredFields(docNum1, func(_ string, _ []byte) bool {
 		fieldCount++
 		return true
 	})

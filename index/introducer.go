@@ -23,6 +23,12 @@ import (
 	"github.com/RoaringBitmap/roaring/v2"
 )
 
+const (
+	creatorIntroduceSegment = "introduceSegment"
+	creatorIntroducePersist = "introducePersist"
+	creatorIntroduceMerge   = "introduceMerge"
+)
+
 type segmentIntroduction struct {
 	id        uint64
 	data      *segmentWrapper
@@ -97,7 +103,7 @@ func (s *Writer) introduceSegment(next *segmentIntroduction, introduceSnapshotEp
 		segment: make([]*segmentSnapshot, 0, nsegs+1),
 		offsets: make([]uint64, 0, nsegs+1),
 		refs:    1,
-		creator: "introduceSegment",
+		creator: creatorIntroduceSegment,
 	}
 
 	// iterate through current segments
@@ -158,7 +164,7 @@ func (s *Writer) introduceSegment(next *segmentIntroduction, introduceSnapshotEp
 		newSegmentSnapshot := &segmentSnapshot{
 			id:      next.id,
 			segment: next.data, // take ownership of next.data's ref-count
-			creator: "introduceSegment",
+			creator: creatorIntroduceSegment,
 		}
 		newSnapshot.segment = append(newSnapshot.segment, newSegmentSnapshot)
 		newSnapshot.offsets = append(newSnapshot.offsets, running)
@@ -191,7 +197,7 @@ func (s *Writer) introducePersist(persist *persistIntroduction, introduceSnapsho
 		segment: make([]*segmentSnapshot, len(root.segment)),
 		offsets: make([]uint64, len(root.offsets)),
 		refs:    1,
-		creator: "introducePersist",
+		creator: creatorIntroducePersist,
 	}
 
 	var docsToPersistCount uint64
@@ -203,7 +209,7 @@ func (s *Writer) introducePersist(persist *persistIntroduction, introduceSnapsho
 				id:      segSnapshot.id,
 				segment: replacement,
 				deleted: segSnapshot.deleted,
-				creator: "introducePersist",
+				creator: creatorIntroducePersist,
 			}
 			newIndexSnapshot.segment[i] = newSegmentSnapshot
 			delete(persist.persisted, segSnapshot.id)
@@ -249,7 +255,7 @@ func (s *Writer) introduceMerge(nextMerge *segmentMerge, introduceSnapshotEpoch 
 		parent:  s,
 		epoch:   introduceSnapshotEpoch,
 		refs:    1,
-		creator: "introduceMerge",
+		creator: creatorIntroduceMerge,
 	}
 
 	// iterate through current segments
@@ -290,6 +296,7 @@ func (s *Writer) introduceMerge(nextMerge *segmentMerge, introduceSnapshotEpoch 
 			for obsoletedIter.HasNext() {
 				oldDocNum := obsoletedIter.Next()
 				newDocNum := nextMerge.oldNewDocNums[segID][oldDocNum]
+				//nolint:gosec // G115: ICE bounds merged doc IDs to uint32; these docs were live at merge time.
 				newSegmentDeleted.Add(uint32(newDocNum))
 			}
 		}
@@ -304,7 +311,7 @@ func (s *Writer) introduceMerge(nextMerge *segmentMerge, introduceSnapshotEpoch 
 			id:      nextMerge.id,
 			segment: nextMerge.new, // take ownership for nextMerge.new's ref-count
 			deleted: newSegmentDeleted,
-			creator: "introduceMerge",
+			creator: creatorIntroduceMerge,
 		})
 		newSnapshot.offsets = append(newSnapshot.offsets, running)
 		atomic.AddUint64(&s.stats.TotIntroducedSegmentsMerge, 1)

@@ -47,7 +47,7 @@ func (d *DurationCalculator) Finish() {
 	d.since = time.Since(d.origin)
 }
 
-func (d *DurationCalculator) Merge(other search.Calculator) {}
+func (d *DurationCalculator) Merge(search.Calculator) {}
 
 func (d *DurationCalculator) Duration() time.Duration {
 	return d.since

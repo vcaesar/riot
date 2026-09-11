@@ -38,37 +38,39 @@ func TestMatchNoneSearch(t *testing.T) {
 	}
 
 	for testIndex, test := range tests {
-		defer func() {
-			err := test.searcher.Close()
+		func() {
+			defer func() {
+				err := test.searcher.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}()
+
+			ctx := &search.Context{
+				DocumentMatchPool: search.NewDocumentMatchPool(test.searcher.DocumentMatchPoolSize(), 0),
+			}
+			next, err := test.searcher.Next(ctx)
+			i := 0
+			for err == nil && next != nil {
+				if i < len(test.results) {
+					if next.Number != test.results[i].Number {
+						t.Errorf("expected result %d to have number %d got %d for test %d", i, test.results[i].Number, next.Number, testIndex)
+					}
+					if !scoresCloseEnough(next.Score, test.results[i].Score) {
+						t.Errorf("expected result %d to have score %v got  %v for test %d", i, test.results[i].Score, next.Score, testIndex)
+						t.Logf("scoring explanation: %s", next.Explanation)
+					}
+				}
+				ctx.DocumentMatchPool.Put(next)
+				next, err = test.searcher.Next(ctx)
+				i++
+			}
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("error iterating searcher: %v for test %d", err, testIndex)
+			}
+			if len(test.results) != i {
+				t.Errorf("expected %d results got %d for test %d", len(test.results), i, testIndex)
 			}
 		}()
-
-		ctx := &search.Context{
-			DocumentMatchPool: search.NewDocumentMatchPool(test.searcher.DocumentMatchPoolSize(), 0),
-		}
-		next, err := test.searcher.Next(ctx)
-		i := 0
-		for err == nil && next != nil {
-			if i < len(test.results) {
-				if next.Number != test.results[i].Number {
-					t.Errorf("expected result %d to have number %d got %d for test %d", i, test.results[i].Number, next.Number, testIndex)
-				}
-				if !scoresCloseEnough(next.Score, test.results[i].Score) {
-					t.Errorf("expected result %d to have score %v got  %v for test %d", i, test.results[i].Score, next.Score, testIndex)
-					t.Logf("scoring explanation: %s", next.Explanation)
-				}
-			}
-			ctx.DocumentMatchPool.Put(next)
-			next, err = test.searcher.Next(ctx)
-			i++
-		}
-		if err != nil {
-			t.Fatalf("error iterating searcher: %v for test %d", err, testIndex)
-		}
-		if len(test.results) != i {
-			t.Errorf("expected %d results got %d for test %d", len(test.results), i, testIndex)
-		}
 	}
 }

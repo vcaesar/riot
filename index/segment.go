@@ -15,6 +15,8 @@
 package index
 
 import (
+	"math"
+
 	"github.com/RoaringBitmap/roaring/v2"
 	segment "github.com/vcaesar/bluge_segment_api"
 )
@@ -52,12 +54,14 @@ func (s *segmentSnapshot) SegmentSize() uint64 {
 		return s.segmentSize
 	}
 	if s.segment != nil {
-		return uint64(s.segment.Size())
+		if size := s.segment.Size(); size > 0 {
+			return uint64(size)
+		}
 	}
 	return 0
 }
 
-func (s *segmentSnapshot) Timestamp() (int64, int64) {
+func (s *segmentSnapshot) Timestamp() (timeMin, timeMax int64) {
 	if s.docTimeMin != 0 || s.docTimeMax != 0 {
 		return s.docTimeMin, s.docTimeMax
 	}
@@ -67,7 +71,13 @@ func (s *segmentSnapshot) Timestamp() (int64, int64) {
 	return 0, 0
 }
 
-func (s *segmentSnapshot) Bytes() int64 { return int64(s.SegmentSize()) }
+func (s *segmentSnapshot) Bytes() int64 {
+	size := s.SegmentSize()
+	if size > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(size)
+}
 
 func (s *segmentSnapshot) Segment() segment.Segment {
 	return s.segment
@@ -82,11 +92,19 @@ func (s *segmentSnapshot) ID() uint64 {
 }
 
 func (s *segmentSnapshot) FullSize() int64 {
-	return int64(s.segment.Count())
+	count := s.segment.Count()
+	if count > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(count)
 }
 
-func (s segmentSnapshot) LiveSize() int64 {
-	return int64(s.Count())
+func (s *segmentSnapshot) LiveSize() int64 {
+	count := s.Count()
+	if count > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(count)
 }
 
 func (s *segmentSnapshot) Close() error {
@@ -122,7 +140,14 @@ func (s *segmentSnapshot) Fields() []string {
 func (s *segmentSnapshot) Size() (rv int) {
 	rv = s.segment.Size()
 	if s.deleted != nil {
-		rv += int(s.deleted.GetSizeInBytes())
+		deletedSize := s.deleted.GetSizeInBytes()
+		if deletedSize > uint64(math.MaxInt) {
+			return math.MaxInt
+		}
+		if rv > math.MaxInt-int(deletedSize) {
+			return math.MaxInt
+		}
+		rv += int(deletedSize)
 	}
 	return
 }

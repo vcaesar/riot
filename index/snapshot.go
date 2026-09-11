@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -90,13 +91,19 @@ func (i *Snapshot) Close() error {
 }
 
 func (i *Snapshot) Size() int {
+	if i.size > uint64(math.MaxInt) {
+		return math.MaxInt
+	}
 	return int(i.size)
 }
 
 func (i *Snapshot) updateSize() {
+	//nolint:gosec // G115: sizes.go initializes this to the nonnegative reflected size of Snapshot.
 	i.size += uint64(reflectStaticSizeIndexSnapshot)
 	for _, s := range i.segment {
-		i.size += uint64(s.Size())
+		if size := s.Size(); size > 0 {
+			i.size += uint64(size)
+		}
 	}
 }
 
@@ -531,14 +538,15 @@ func recordSegment(w io.Writer, snapshot *segmentSnapshot, id uint64, typ string
 	}
 	bytesWritten += sz
 
-	min, max := snapshot.Timestamp()
+	timeMin, timeMax := snapshot.Timestamp()
 	if snapshot.segment != nil {
 		snapshot.segment.Timestamp()
 		if snapshot.segment.timeErr != nil {
 			return bytesWritten, snapshot.segment.timeErr
 		}
 	}
-	for _, value := range []uint64{snapshot.SegmentSize(), snapshot.DocNum(), uint64(min), uint64(max)} {
+	//nolint:gosec // G115: timestamps are serialized as their raw two's-complement 64-bit representation.
+	for _, value := range []uint64{snapshot.SegmentSize(), snapshot.DocNum(), uint64(timeMin), uint64(timeMax)} {
 		binary.BigEndian.PutUint64(intBuf, value)
 		sz, err = w.Write(intBuf[:8])
 		bytesWritten += sz

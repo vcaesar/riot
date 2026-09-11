@@ -30,7 +30,7 @@ type State interface {
 
 type LowerCaseState struct{}
 
-func (s *LowerCaseState) Member(sym rune, peek *rune) bool {
+func (s *LowerCaseState) Member(sym rune, _ *rune) bool {
 	return unicode.IsLower(sym)
 }
 
@@ -44,7 +44,7 @@ type UpperCaseState struct {
 }
 
 func (s *UpperCaseState) Member(sym rune, peek *rune) bool {
-	if !(unicode.IsLower(sym) || unicode.IsUpper(sym)) {
+	if !unicode.IsLower(sym) && !unicode.IsUpper(sym) {
 		return false
 	}
 
@@ -68,7 +68,7 @@ func (s *UpperCaseState) StartSym(sym rune) bool {
 
 type NumberCaseState struct{}
 
-func (s *NumberCaseState) Member(sym rune, peek *rune) bool {
+func (s *NumberCaseState) Member(sym rune, _ *rune) bool {
 	return unicode.IsNumber(sym)
 }
 
@@ -78,7 +78,7 @@ func (s *NumberCaseState) StartSym(sym rune) bool {
 
 type NonAlphaNumericCaseState struct{}
 
-func (s *NonAlphaNumericCaseState) Member(sym rune, peek *rune) bool {
+func (s *NonAlphaNumericCaseState) Member(sym rune, _ *rune) bool {
 	return !unicode.IsLower(sym) && !unicode.IsUpper(sym) && !unicode.IsNumber(sym)
 }
 

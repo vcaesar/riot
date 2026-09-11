@@ -505,12 +505,12 @@ func TestBooleanMustNotSearcher(t *testing.T) {
 		if err2 != nil {
 			return fmt.Errorf("error left: %v", err2)
 		}
-		lresIds := map[string]struct{}{}
+		lresIDs := map[string]struct{}{}
 		lresNext, err2 := lres.Next()
 		for err2 == nil && lresNext != nil {
 			err2 = lresNext.VisitStoredFields(func(field string, value []byte) bool {
 				if field == "_id" {
-					lresIds[string(value)] = struct{}{}
+					lresIDs[string(value)] = struct{}{}
 				}
 				return true
 			})
@@ -528,12 +528,12 @@ func TestBooleanMustNotSearcher(t *testing.T) {
 		if err2 != nil {
 			return fmt.Errorf("error right: %v", err2)
 		}
-		rresIds := map[string]struct{}{}
+		rresIDs := map[string]struct{}{}
 		rresNext, err2 := rres.Next()
 		for err2 == nil && rresNext != nil {
 			err2 = rresNext.VisitStoredFields(func(field string, value []byte) bool {
 				if field == "_id" {
-					rresIds[string(value)] = struct{}{}
+					rresIDs[string(value)] = struct{}{}
 				}
 				return true
 			})
@@ -567,8 +567,8 @@ func TestBooleanMustNotSearcher(t *testing.T) {
 				t.Fatalf("error visitng stored fields: %v", err2)
 			}
 
-			if _, ok := lresIds[theID]; ok {
-				if _, ok := rresIds[theID]; !ok {
+			if _, ok := lresIDs[theID]; ok {
+				if _, ok := rresIDs[theID]; !ok {
 					return fmt.Errorf("error id %s missing from right", theID)
 				}
 			} else {
@@ -1263,7 +1263,7 @@ func TestSearchHighlightingWithRegexpReplacement(t *testing.T) {
 	}
 }
 
-func TestAllMatchesWithAggregationIssue31(t *testing.T) {
+func TestAllMatchesWithAggregationIssue31(_ *testing.T) {
 	query := NewMatchQuery("bluge").SetField("name")
 	request := NewAllMatches(query)
 

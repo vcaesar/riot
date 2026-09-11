@@ -20,7 +20,7 @@ import "encoding/binary"
 const TimestampField = "_bluge_timestamp"
 
 // Timestamp returns inclusive segment bounds. (0, 0) means unknown.
-func (s *segmentWrapper) Timestamp() (int64, int64) {
+func (s *segmentWrapper) Timestamp() (timeMin, timeMax int64) {
 	s.timeOnce.Do(s.loadTimestamp)
 	return s.timeMin, s.timeMax
 }
@@ -30,11 +30,12 @@ func (s *segmentWrapper) loadTimestamp() {
 		s.timeMin, s.timeMax = timed.Timestamp()
 		return
 	}
-	var min, max int64
+	var timeMin, timeMax int64
 	for doc := uint64(0); doc < s.Count(); doc++ {
 		var timestamp int64
 		err := s.VisitStoredFields(doc, func(name string, value []byte) bool {
 			if name == TimestampField && len(value) == 8 {
+				//nolint:gosec // G115: stored timestamps contain the raw two's-complement bits of an int64.
 				timestamp = int64(binary.BigEndian.Uint64(value))
 				return false
 			}
@@ -48,23 +49,36 @@ func (s *segmentWrapper) loadTimestamp() {
 		if timestamp == 0 {
 			return
 		}
-		if doc == 0 || timestamp < min {
-			min = timestamp
+		if doc == 0 || timestamp < timeMin {
+			timeMin = timestamp
 		}
-		if doc == 0 || timestamp > max {
-			max = timestamp
+		if doc == 0 || timestamp > timeMax {
+			timeMax = timestamp
 		}
 	}
-	s.timeMin, s.timeMax = min, max
+	s.timeMin, s.timeMax = timeMin, timeMax
 }
 
-func (c Config) hasTimeRange() bool { return c.FilterTimeMin != 0 || c.FilterTimeMax != 0 }
+func (s *Snapshot) filterTimeRange(c *Config) {
+	if !c.hasTimeRange() {
+		return
+	}
+	kept := make([]*segmentSnapshot, 0, len(s.segment))
+	for _, ss := range s.segment {
+		if !c.excludes(ss) {
+			kept = append(kept, ss)
+		}
+	}
+	s.segment = kept
+}
 
-func (c Config) excludes(s *segmentSnapshot) bool {
-	min, max := s.Timestamp()
-	if min == 0 && max == 0 {
+func (c *Config) hasTimeRange() bool { return c.FilterTimeMin != 0 || c.FilterTimeMax != 0 }
+
+func (c *Config) excludes(s *segmentSnapshot) bool {
+	timeMin, timeMax := s.Timestamp()
+	if timeMin == 0 && timeMax == 0 {
 		return false
 	}
-	return (c.FilterTimeMin != 0 && max < c.FilterTimeMin) ||
-		(c.FilterTimeMax != 0 && min > c.FilterTimeMax)
+	return (c.FilterTimeMin != 0 && timeMax < c.FilterTimeMin) ||
+		(c.FilterTimeMax != 0 && timeMin > c.FilterTimeMax)
 }

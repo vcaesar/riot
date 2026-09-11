@@ -29,7 +29,7 @@ type DocumentMatchPool struct {
 	TooSmall DocumentMatchPoolTooSmall
 }
 
-func defaultDocumentMatchPoolTooSmall(p *DocumentMatchPool) *DocumentMatch {
+func defaultDocumentMatchPoolTooSmall(_ *DocumentMatchPool) *DocumentMatch {
 	return &DocumentMatch{}
 }
 

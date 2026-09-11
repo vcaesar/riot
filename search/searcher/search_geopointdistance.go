@@ -101,15 +101,17 @@ func buildDistFilter(dvReader segment.DocumentValueReader, centerLon, centerLat,
 		var lons, lats []float64
 		var found bool
 
-		err := dvReader.VisitDocumentValues(d.Number, func(field string, term []byte) {
+		err := dvReader.VisitDocumentValues(d.Number, func(_ string, term []byte) {
 			// only consider the values which are shifted 0
 			prefixCoded := numeric.PrefixCoded(term)
 			shift, err := prefixCoded.Shift()
 			if err == nil && shift == 0 {
 				i64, err := prefixCoded.Int64()
 				if err == nil {
-					lons = append(lons, geo.MortonUnhashLon(uint64(i64)))
-					lats = append(lats, geo.MortonUnhashLat(uint64(i64)))
+					//nolint:gosec // G115: restore all Morton hash bits from the signed prefix-coding API.
+					hash := uint64(i64)
+					lons = append(lons, geo.MortonUnhashLon(hash))
+					lats = append(lats, geo.MortonUnhashLat(hash))
 					found = true
 				}
 			}

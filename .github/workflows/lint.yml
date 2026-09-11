@@ -6,6 +6,8 @@ on:
 name: Lint
 permissions:
   contents: read
+env:
+  GOTOOLCHAIN: local
 jobs:
   golangci:
     name: lint
@@ -20,3 +22,5 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.2
+          # Build with the module's Go version so the analyzer supports it.
+          install-mode: goinstall

@@ -1,10 +1,10 @@
-# ![Bluge](docs/bluge.png) Bluge
+# ![Riot](docs/riot.png) Riot
 
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/vcaesar/riot)](https://pkg.go.dev/github.com/vcaesar/riot)
 [![Tests](https://github.com/vcaesar/riot/workflows/Tests/badge.svg?branch=master&event=push)](https://github.com/vcaesar/riot/actions?query=workflow%3ATests+event%3Apush+branch%3Amaster)
 [![Lint](https://github.com/vcaesar/riot/workflows/Lint/badge.svg?branch=master&event=push)](https://github.com/vcaesar/riot/actions?query=workflow%3ALint+event%3Apush+branch%3Amaster)
 
-modern text indexing in go - [blugelabs.com](https://www.blugelabs.com/)
+The fast modern text indexing in go, fork form the [bluge](https://github.com/blugelabs/bluge)
 
 ## Features
 
@@ -30,15 +30,15 @@ modern text indexing in go - [blugelabs.com](https://www.blugelabs.com/)
 ## Indexing
 
 ```go
-    config := bluge.DefaultConfig(path)
-    writer, err := bluge.OpenWriter(config)
+    config := riot.DefaultConfig(path)
+    writer, err := riot.OpenWriter(config)
     if err != nil {
         log.Fatalf("error opening writer: %v", err)
     }
     defer writer.Close()
 
-    doc := bluge.NewDocument("example").
-        AddField(bluge.NewTextField("name", "bluge"))
+    doc := riot.NewDocument("example").
+        AddField(riot.NewTextField("name", "bluge"))
 
     err = writer.Update(doc.ID(), doc)
     if err != nil {
@@ -55,8 +55,8 @@ modern text indexing in go - [blugelabs.com](https://www.blugelabs.com/)
     }
     defer reader.Close()
 
-    query := bluge.NewMatchQuery("bluge").SetField("name")
-    request := bluge.NewTopNSearch(10, query).
+    query := riot.NewMatchQuery("bluge").SetField("name")
+    request := riot.NewTopNSearch(10, query).
         WithStandardAggregations()
     documentMatchIterator, err := reader.Search(context.Background(), request)
     if err != nil {
@@ -80,9 +80,9 @@ modern text indexing in go - [blugelabs.com](https://www.blugelabs.com/)
     }
 ```
 
-## Repobeats
+<!-- ## Repobeats
 
-![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image")
+![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
 
 ## License
 

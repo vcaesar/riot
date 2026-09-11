@@ -106,6 +106,7 @@ func (s *stubIndexReader) add(d segment.Document) {
 		if field.Index() {
 			fieldLength := field.Length()
 			fieldsSeen[field.Name()] = struct{}{}
+			//nolint:gosec // G115: fixture fields derive nonnegative lengths from len or sums of lengths.
 			s.fieldFreqs[field.Name()] += uint64(fieldLength)
 			fd := s.field(field.Name())
 			field.EachTerm(func(term segment.FieldTerm) {
@@ -192,7 +193,7 @@ func (s *stubTermFieldReader) Next() (segment.Posting, error) {
 	}
 	rv.number = s.list[s.i].num
 	if s.includeFreq {
-		rv.freq = uint64(s.list[s.i].freq.freq)
+		rv.freq = s.list[s.i].freq.freq
 	}
 	if s.includeNorm {
 		tmp := s.similarity.ComputeNorm(s.list[s.i].length)
@@ -389,7 +390,7 @@ func (s *stubIndexReader) DictionaryLookup(field string) (segment.DictionaryLook
 	return fd, nil
 }
 
-func (s *stubIndexReader) DocumentVisitFieldTerms(number int, fields []string, visitor segment.DocumentValueVisitor) error {
+func (s *stubIndexReader) DocumentVisitFieldTerms(_ int, _ []string, _ segment.DocumentValueVisitor) error {
 	return nil
 }
 
@@ -428,7 +429,7 @@ func (s *stubIndexReader) Fields() ([]string, error) {
 	return fnames, nil
 }
 
-func (s *stubIndexReader) GetInternal(key []byte) ([]byte, error) {
+func (s *stubIndexReader) GetInternal(_ []byte) ([]byte, error) {
 	return nil, nil
 }
 
@@ -471,7 +472,7 @@ func (tfv *stubTermFieldVector) Size() int {
 type stubTermFieldDoc struct {
 	term    string
 	number  uint64
-	freq    uint64
+	freq    int
 	norm    float64
 	vectors []segment.Location
 }
@@ -486,7 +487,7 @@ func (tfd *stubTermFieldDoc) SetNumber(n uint64) {
 	tfd.number = n
 }
 func (tfd *stubTermFieldDoc) Frequency() int {
-	return int(tfd.freq)
+	return tfd.freq
 }
 func (tfd *stubTermFieldDoc) Norm() float64 {
 	return tfd.norm

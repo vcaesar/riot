@@ -127,11 +127,11 @@ func TestTimestampPersistenceAndMerge(t *testing.T) {
 					t.Fatalf("reopen count=%d err=%v", count, err)
 				}
 				for _, ss := range r.Segments() {
-					min, max := ss.Timestamp()
-					if !unknown && (min != 10 || max != 30) {
-						t.Fatalf("merged range=[%d,%d]", min, max)
+					minTime, maxTime := ss.Timestamp()
+					if !unknown && (minTime != 10 || maxTime != 30) {
+						t.Fatalf("merged range=[%d,%d]", minTime, maxTime)
 					}
-					if unknown && (min != 0 || max != 0) {
+					if unknown && (minTime != 0 || maxTime != 0) {
 						t.Fatal("mixed unknown must retain segment")
 					}
 					if ss.DocNum() != 3 || ss.SegmentSize() == 0 {
