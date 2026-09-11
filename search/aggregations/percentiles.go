@@ -17,7 +17,7 @@ package aggregations
 import (
 	"fmt"
 
-	"github.com/caio/go-tdigest"
+	"github.com/caio/go-tdigest/v5"
 	"github.com/vcaesar/riot/search"
 )
 

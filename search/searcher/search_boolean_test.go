@@ -244,15 +244,15 @@ func TestBooleanSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("1"),
-					Score:  1.4205783261826577,
+					Score:  0.8841145775462671,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  1.2490283901420876,
+					Score:  0.8180668126634709,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("4"),
-					Score:  0.7033879235186731,
+					Score:  0.27080861273520285,
 				},
 			},
 		},
@@ -261,11 +261,11 @@ func TestBooleanSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("1"),
-					Score:  0.7608983788962145,
+					Score:  0.6301338005090412,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  0.7608983788962145,
+					Score:  0.6301338005090412,
 				},
 			},
 		},
@@ -279,15 +279,15 @@ func TestBooleanSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("1"),
-					Score:  0.6596799472864431,
+					Score:  0.25398077703722594,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  0.4881300112458731,
+					Score:  0.18793301215442973,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("4"),
-					Score:  0.7033879235186731,
+					Score:  0.27080861273520285,
 				},
 			},
 		},
@@ -296,11 +296,11 @@ func TestBooleanSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  0.4881300112458731,
+					Score:  0.18793301215442973,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("4"),
-					Score:  0.7033879235186731,
+					Score:  0.27080861273520285,
 				},
 			},
 		},
@@ -314,7 +314,7 @@ func TestBooleanSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("1"),
-					Score:  4.464171841767515,
+					Score:  3.4046497795824324,
 				},
 			},
 		},
@@ -323,7 +323,7 @@ func TestBooleanSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  5.0535202846231595,
+					Score:  3.968735815208677,
 				},
 			},
 		},

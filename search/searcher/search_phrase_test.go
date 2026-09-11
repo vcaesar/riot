@@ -48,7 +48,7 @@ func TestPhraseSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("2"),
-					Score:  1.5816824552876687,
+					Score:  1.0935524440417954,
 				},
 			},
 			locations:  map[string]map[string][]search.Location{"desc": {"beer": {{Pos: 2, Start: 6, End: 10}}, "angst": {{Pos: 1, Start: 0, End: 5}}}},

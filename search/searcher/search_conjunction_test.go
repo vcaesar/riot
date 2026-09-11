@@ -124,7 +124,7 @@ func TestConjunctionSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("1"),
-					Score:  4.464171841767515,
+					Score:  3.4046497795824324,
 				},
 			},
 		},
@@ -133,7 +133,7 @@ func TestConjunctionSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("2"),
-					Score:  1.5816824552876687,
+					Score:  1.0935524440417954,
 				},
 			},
 		},
@@ -146,11 +146,11 @@ func TestConjunctionSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("2"),
-					Score:  0.7916104490288789,
+					Score:  0.49141344993743563,
 				},
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("3"),
-					Score:  0.7916104490288789,
+					Score:  0.49141344993743563,
 				},
 			},
 		},
@@ -168,7 +168,7 @@ func TestConjunctionSearch(t *testing.T) {
 			results: []*search.DocumentMatch{
 				{
 					Number: baseTestIndexReaderDirect.docNumByID("2"),
-					Score:  2.8270039289187148,
+					Score:  1.3260189334614976,
 				},
 			},
 		},

@@ -133,29 +133,41 @@ func (i *Snapshot) newDictionary(field string,
 	}
 	for count := 0; count < len(i.segment); count++ {
 		asr := <-results
-		if asr.err != nil && err == nil {
-			err = asr.err
-		} else {
-			if !randomLookup {
-				next, err2 := asr.dictItr.Next()
-				if err2 != nil && err == nil {
-					err = err2
-				}
-				if next != nil {
-					rv.cursors = append(rv.cursors, &segmentDictCursor{
-						itr:  asr.dictItr,
-						curr: next,
-					})
-				}
-			} else {
-				rv.cursors = append(rv.cursors, &segmentDictCursor{
-					dict: asr.dict,
-				})
+		if asr.err != nil {
+			// keep draining the channel so the goroutines can exit
+			if err == nil {
+				err = asr.err
 			}
+			continue
 		}
+		if randomLookup {
+			rv.cursors = append(rv.cursors, &segmentDictCursor{dict: asr.dict})
+			continue
+		}
+		next, err2 := asr.dictItr.Next()
+		if err2 != nil || next == nil {
+			// failed or empty: this iterator will never join the heap
+			cerr := asr.dictItr.Close()
+			if err == nil {
+				err = err2
+			}
+			if err == nil {
+				err = cerr
+			}
+			continue
+		}
+		rv.cursors = append(rv.cursors, &segmentDictCursor{
+			itr:  asr.dictItr,
+			curr: next,
+		})
 	}
 	// after ensuring we've read all items on channel
 	if err != nil {
+		for _, cursor := range rv.cursors {
+			if cursor.itr != nil {
+				_ = cursor.itr.Close() // already returning err
+			}
+		}
 		return nil, err
 	}
 

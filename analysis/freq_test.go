@@ -171,3 +171,75 @@ func TestTokenFrequenciesMergeAllLeftEmpty(t *testing.T) {
 		t.Errorf("expected %#v, got %#v", expectedResult, tf1)
 	}
 }
+
+// TestTokenFrequencyBlockAllocation checks a second location for a repeated
+// term does not clobber the neighbouring term's location pointer, which
+// would happen if the shared pointer block were appended to in place.
+func TestTokenFrequencyBlockAllocation(t *testing.T) {
+	tokens := TokenStream{
+		{Term: []byte("a"), Start: 0, End: 1, PositionIncr: 1},
+		{Term: []byte("b"), Start: 2, End: 3, PositionIncr: 1},
+		{Term: []byte("a"), Start: 4, End: 5, PositionIncr: 1},
+		{Term: []byte("c"), Start: 6, End: 7, PositionIncr: 1},
+	}
+	tfs, pos := TokenFrequency(tokens, true, 0)
+	if pos != 4 || len(tfs) != 3 {
+		t.Fatalf("got pos %d, %d terms", pos, len(tfs))
+	}
+	want := map[string][]int{"a": {1, 3}, "b": {2}, "c": {4}}
+	for term, positions := range want {
+		tf := tfs[term]
+		if tf.Frequency() != len(positions) || len(tf.Locations) != len(positions) {
+			t.Fatalf("term %q: freq %d, %d locations, want %d", term, tf.Frequency(), len(tf.Locations), len(positions))
+		}
+		for i, p := range positions {
+			if tf.Locations[i].Pos() != p {
+				t.Fatalf("term %q location %d: pos %d, want %d", term, i, tf.Locations[i].Pos(), p)
+			}
+		}
+	}
+}
+
+// TestTokenFrequenciesMergeAllDoesNotAliasSource checks that appending to a
+// merged term never writes into the source field's location slice.
+func TestTokenFrequenciesMergeAllDoesNotAliasSource(t *testing.T) {
+	src, _ := TokenFrequency(TokenStream{
+		{Term: []byte("x"), Start: 0, End: 1, PositionIncr: 1},
+		{Term: []byte("x"), Start: 2, End: 3, PositionIncr: 1},
+		{Term: []byte("x"), Start: 4, End: 5, PositionIncr: 1},
+	}, true, 0)
+	srcLocs := src["x"].Locations
+	if cap(srcLocs) <= len(srcLocs) {
+		t.Skip("source slice has no spare capacity; aliasing cannot be observed")
+	}
+
+	composite := TokenFrequencies{}
+	composite.MergeAll("f1", src)
+	other, _ := TokenFrequency(TokenStream{{Term: []byte("x"), Start: 9, End: 10, PositionIncr: 1}}, true, 0)
+	composite.MergeAll("f2", other)
+
+	if got := len(composite["x"].Locations); got != 4 {
+		t.Fatalf("composite has %d locations, want 4", got)
+	}
+	if len(src["x"].Locations) != 3 || srcLocs[:cap(srcLocs)][3] != nil {
+		t.Fatal("merge wrote into the source field's spare capacity")
+	}
+	for _, l := range src["x"].Locations {
+		if l.Field() != "f1" {
+			t.Fatalf("source location field = %q, want f1", l.Field())
+		}
+	}
+}
+
+func TestTokenFrequenciesMergeAllExistingTermsNoAlloc(t *testing.T) {
+	src, _ := TokenFrequency(TokenStream{{Term: []byte("x"), End: 1, PositionIncr: 1}}, false, 0)
+	composite := TokenFrequencies{}
+	composite.MergeAll("f", src)
+	allocs := testing.AllocsPerRun(50, func() { composite.MergeAll("f", src) })
+	if allocs != 0 {
+		t.Fatalf("merging only known terms allocated %v times, want 0", allocs)
+	}
+	if composite["x"].Frequency() != 52 {
+		t.Fatalf("frequency = %d, want 52", composite["x"].Frequency())
+	}
+}
