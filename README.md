@@ -35,23 +35,23 @@ go get -u github.com/vcaesar/riot
 
 ## Usage
 
-Save as `main.go` and run with `go run main.go`:
+Runnable versions of both programs live in [`test/readme_demo`](test/readme_demo).
+
+### Indexing
+
+Save as `write/main.go` and run with `go run ./write`:
 
 ```go
 package main
 
 import (
-	"context"
-	"fmt"
 	"log"
 
 	riot "github.com/vcaesar/riot"
 )
 
 func main() {
-	// Indexing
 	config := riot.DefaultConfig("./riot_index")
-	// Or use riot.InMemoryOnlyConfig() for an in-memory index
 	writer, err := riot.OpenWriter(config)
 	if err != nil {
 		log.Fatalf("error opening writer: %v", err)
@@ -65,11 +65,32 @@ func main() {
 	if err != nil {
 		log.Fatalf("error updating document: %v", err)
 	}
+	log.Printf("indexed: %s", doc.ID())
+}
+```
 
-	// Querying
-	reader, err := writer.Reader()
+### Querying
+
+Save as `read/main.go` and run with `go run ./read` against the index written above.
+If you index and search in the same process, use `writer.Reader()` instead of `riot.OpenReader`
+(or `riot.InMemoryOnlyConfig()` for an in-memory index):
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	riot "github.com/vcaesar/riot"
+)
+
+func main() {
+	config := riot.DefaultConfig("./riot_index")
+	reader, err := riot.OpenReader(config)
 	if err != nil {
-		log.Fatalf("error getting index reader: %v", err)
+		log.Fatalf("error opening reader: %v", err)
 	}
 	defer reader.Close()
 
