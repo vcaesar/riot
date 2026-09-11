@@ -27,57 +27,83 @@ The fast modern text indexing in go, fork form the [bluge](https://github.com/bl
     - Cardinality Estimation ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
     - Quantile Approximation ([T-Digest](https://github.com/caio/go-tdigest))
 
-## Indexing
+## Installation
 
-```go
-    config := riot.DefaultConfig(path)
-    writer, err := riot.OpenWriter(config)
-    if err != nil {
-        log.Fatalf("error opening writer: %v", err)
-    }
-    defer writer.Close()
-
-    doc := riot.NewDocument("example").
-        AddField(riot.NewTextField("name", "bluge"))
-
-    err = writer.Update(doc.ID(), doc)
-    if err != nil {
-        log.Fatalf("error updating document: %v", err)
-    }
+```sh
+go get -u github.com/vcaesar/riot
 ```
 
-## Querying
+## Usage
+
+Save as `main.go` and run with `go run main.go`:
 
 ```go
-    reader, err := writer.Reader()
-    if err != nil {
-        log.Fatalf("error getting index reader: %v", err)
-    }
-    defer reader.Close()
+package main
 
-    query := riot.NewMatchQuery("bluge").SetField("name")
-    request := riot.NewTopNSearch(10, query).
-        WithStandardAggregations()
-    documentMatchIterator, err := reader.Search(context.Background(), request)
-    if err != nil {
-        log.Fatalf("error executing search: %v", err)
-    }
-    match, err := documentMatchIterator.Next()
-    for err == nil && match != nil {
-        err = match.VisitStoredFields(func(field string, value []byte) bool {
-            if field == "_id" {
-                fmt.Printf("match: %s\n", string(value))
-            }
-            return true
-        })
-        if err != nil {
-            log.Fatalf("error loading stored fields: %v", err)
-        }
-        match, err = documentMatchIterator.Next()
-    }
-    if err != nil {
-        log.Fatalf("error iterator document matches: %v", err)
-    }
+import (
+	"context"
+	"fmt"
+	"log"
+
+	riot "github.com/vcaesar/riot"
+)
+
+func main() {
+	// Indexing
+	config := riot.DefaultConfig("./riot_index")
+	// Or use riot.InMemoryOnlyConfig() for an in-memory index
+	writer, err := riot.OpenWriter(config)
+	if err != nil {
+		log.Fatalf("error opening writer: %v", err)
+	}
+	defer writer.Close()
+
+	doc := riot.NewDocument("example").
+		AddField(riot.NewTextField("name", "riot"))
+
+	err = writer.Update(doc.ID(), doc)
+	if err != nil {
+		log.Fatalf("error updating document: %v", err)
+	}
+
+	// Querying
+	reader, err := writer.Reader()
+	if err != nil {
+		log.Fatalf("error getting index reader: %v", err)
+	}
+	defer reader.Close()
+
+	query := riot.NewMatchQuery("riot").SetField("name")
+	request := riot.NewTopNSearch(10, query).
+		WithStandardAggregations()
+	documentMatchIterator, err := reader.Search(context.Background(), request)
+	if err != nil {
+		log.Fatalf("error executing search: %v", err)
+	}
+
+	match, err := documentMatchIterator.Next()
+	for err == nil && match != nil {
+		err = match.VisitStoredFields(func(field string, value []byte) bool {
+			if field == "_id" {
+				fmt.Printf("match: %s\n", string(value))
+			}
+			return true
+		})
+		if err != nil {
+			log.Fatalf("error loading stored fields: %v", err)
+		}
+		match, err = documentMatchIterator.Next()
+	}
+	if err != nil {
+		log.Fatalf("error iterator document matches: %v", err)
+	}
+}
+```
+
+Output:
+
+```
+match: example
 ```
 
 <!-- ## Repobeats
