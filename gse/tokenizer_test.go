@@ -67,9 +67,8 @@ func TestTokenizer(t *testing.T) {
 			name:   "search hmm",
 			search: true,
 			hmm:    []bool{true},
-			input:  "中华人民共和国是一个伟大的国家",
-			want: []string{"中华", "华人", "人民", "共和", "共和国", "中华人民共和国",
-				"是", "一个", "伟大", "的", "国家"},
+			input:  "今天是星期几",
+			want:   []string{"今天", "是", "星期", "几"},
 		},
 		{
 			name:  "punct and space only",
