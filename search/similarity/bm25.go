@@ -44,7 +44,11 @@ func NewBM25SimilarityBK1(b, k1 float64) *BM25Similarity {
 
 // fixme chec normbits1hit in zap
 
+// ComputeNorm encodes the term count as norm bits. It panics if the count does not fit in uint32.
 func (b *BM25Similarity) ComputeNorm(numTerms int) float32 {
+	if numTerms < 0 || uint64(numTerms) > math.MaxUint32 {
+		panic("term count outside uint32 range")
+	}
 	return math.Float32frombits(uint32(numTerms))
 }
 

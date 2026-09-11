@@ -25,7 +25,7 @@ import (
 
 func TestPhraseSearch(t *testing.T) {
 	soptions := search.SearcherOptions{
-		SimilarityForField: func(field string) search.Similarity {
+		SimilarityForField: func(_ string) search.Similarity {
 			return similarity.NewBM25Similarity()
 		},
 		Explain:            true,
@@ -57,58 +57,60 @@ func TestPhraseSearch(t *testing.T) {
 	}
 
 	for testIndex, test := range tests {
-		defer func() {
-			err := test.searcher.Close()
-			if err != nil {
-				t.Fatal(err)
-			}
-		}()
+		func() {
+			defer func() {
+				err := test.searcher.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}()
 
-		ctx := &search.Context{
-			DocumentMatchPool: search.NewDocumentMatchPool(test.searcher.DocumentMatchPoolSize(), 0),
-		}
-		next, err := test.searcher.Next(ctx)
-		i := 0
-		for err == nil && next != nil {
-			next.Complete(nil)
-			if i < len(test.results) {
-				if next.Number != test.results[i].Number {
-					t.Errorf("expected result %d to have number %d got %d for test %d\n", i, test.results[i].Number, next.Number, testIndex)
-				}
-				if next.Score != test.results[i].Score {
-					t.Errorf("expected result %d to have score %v got %v for test %d\n", i, test.results[i].Score, next.Score, testIndex)
-					t.Logf("scoring explanation: %s\n", next.Explanation)
-				}
-				for _, ft := range test.fieldterms {
-					locs := next.Locations[ft[0]][ft[1]]
-					explocs := test.locations[ft[0]][ft[1]]
-					if len(explocs) != len(locs) {
-						t.Fatalf("expected result %d to have %d Locations (%#v) but got %d (%#v) for test %d with field %q and term %q\n", i, len(explocs), explocs, len(locs), locs, testIndex, ft[0], ft[1])
+			ctx := &search.Context{
+				DocumentMatchPool: search.NewDocumentMatchPool(test.searcher.DocumentMatchPoolSize(), 0),
+			}
+			next, err := test.searcher.Next(ctx)
+			i := 0
+			for err == nil && next != nil {
+				next.Complete(nil)
+				if i < len(test.results) {
+					if next.Number != test.results[i].Number {
+						t.Errorf("expected result %d to have number %d got %d for test %d\n", i, test.results[i].Number, next.Number, testIndex)
 					}
-					for ind, exploc := range explocs {
-						if !reflect.DeepEqual(*locs[ind], exploc) {
-							t.Errorf("expected result %d to have Location %v got %v for test %d\n", i, exploc, locs[ind], testIndex)
+					if next.Score != test.results[i].Score {
+						t.Errorf("expected result %d to have score %v got %v for test %d\n", i, test.results[i].Score, next.Score, testIndex)
+						t.Logf("scoring explanation: %s\n", next.Explanation)
+					}
+					for _, ft := range test.fieldterms {
+						locs := next.Locations[ft[0]][ft[1]]
+						explocs := test.locations[ft[0]][ft[1]]
+						if len(explocs) != len(locs) {
+							t.Fatalf("expected result %d to have %d Locations (%#v) but got %d (%#v) for test %d with field %q and term %q\n", i, len(explocs), explocs, len(locs), locs, testIndex, ft[0], ft[1])
+						}
+						for ind, exploc := range explocs {
+							if !reflect.DeepEqual(*locs[ind], exploc) {
+								t.Errorf("expected result %d to have Location %v got %v for test %d\n", i, exploc, locs[ind], testIndex)
+							}
 						}
 					}
 				}
-			}
 
-			ctx.DocumentMatchPool.Put(next)
-			next, err = test.searcher.Next(ctx)
-			i++
-		}
-		if err != nil {
-			t.Fatalf("error iterating searcher: %v for test %d", err, testIndex)
-		}
-		if len(test.results) != i {
-			t.Errorf("expected %d results got %d for test %d", len(test.results), i, testIndex)
-		}
+				ctx.DocumentMatchPool.Put(next)
+				next, err = test.searcher.Next(ctx)
+				i++
+			}
+			if err != nil {
+				t.Fatalf("error iterating searcher: %v for test %d", err, testIndex)
+			}
+			if len(test.results) != i {
+				t.Errorf("expected %d results got %d for test %d", len(test.results), i, testIndex)
+			}
+		}()
 	}
 }
 
 func TestMultiPhraseSearch(t *testing.T) {
 	soptions := search.SearcherOptions{
-		SimilarityForField: func(field string) search.Similarity {
+		SimilarityForField: func(_ string) search.Similarity {
 			return similarity.NewBM25Similarity()
 		},
 		Explain:            true,
@@ -134,17 +136,17 @@ func TestMultiPhraseSearch(t *testing.T) {
 			DocumentMatchPool: search.NewDocumentMatchPool(searcher.DocumentMatchPoolSize(), 0),
 		}
 		next, err := searcher.Next(ctx)
-		var actualIds []uint64
+		var actualIDs []uint64
 		for err == nil && next != nil {
-			actualIds = append(actualIds, next.Number)
+			actualIDs = append(actualIDs, next.Number)
 			ctx.DocumentMatchPool.Put(next)
 			next, err = searcher.Next(ctx)
 		}
 		if err != nil {
 			t.Fatalf("error iterating searcher: %v for test %d", err, i)
 		}
-		if !reflect.DeepEqual(test.docids, actualIds) {
-			t.Fatalf("expected ids: %v, got %v", test.docids, actualIds)
+		if !reflect.DeepEqual(test.docids, actualIDs) {
+			t.Fatalf("expected ids: %v, got %v", test.docids, actualIDs)
 		}
 
 		err = searcher.Close()
@@ -161,7 +163,7 @@ func TestMultiPhraseSearch(t *testing.T) {
 
 func TestSloppyMultiPhraseSearch(t *testing.T) {
 	soptions := search.SearcherOptions{
-		SimilarityForField: func(field string) search.Similarity {
+		SimilarityForField: func(_ string) search.Similarity {
 			return similarity.NewBM25Similarity()
 		},
 		Explain:            true,
@@ -216,17 +218,17 @@ func TestSloppyMultiPhraseSearch(t *testing.T) {
 			DocumentMatchPool: search.NewDocumentMatchPool(searcher.DocumentMatchPoolSize(), 0),
 		}
 		next, err := searcher.Next(ctx)
-		actualIds := []uint64{}
+		actualIDs := []uint64{}
 		for err == nil && next != nil {
-			actualIds = append(actualIds, next.Number)
+			actualIDs = append(actualIDs, next.Number)
 			ctx.DocumentMatchPool.Put(next)
 			next, err = searcher.Next(ctx)
 		}
 		if err != nil {
 			t.Fatalf("error iterating searcher: %v for test %d", err, i)
 		}
-		if !reflect.DeepEqual(test.docids, actualIds) {
-			t.Fatalf("test case %d: expected ids: %v, got %v", i, test.docids, actualIds)
+		if !reflect.DeepEqual(test.docids, actualIDs) {
+			t.Fatalf("test case %d: expected ids: %v, got %v", i, test.docids, actualIDs)
 		}
 
 		err = searcher.Close()

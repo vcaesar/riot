@@ -428,7 +428,7 @@ func (s *stubIndexReader) Fields() ([]string, error) {
 	return fnames, nil
 }
 
-func (s *stubIndexReader) GetInternal(key []byte) ([]byte, error) {
+func (s *stubIndexReader) GetInternal(_ []byte) ([]byte, error) {
 	return nil, nil
 }
 

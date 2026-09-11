@@ -46,7 +46,7 @@ OUTER:
 		case <-ew.notifyCh:
 			// check to see if there is a new snapshot to persist
 			ourSnapshot := s.currentSnapshot()
-			atomic.StoreUint64(&s.stats.mergeSnapshotSize, uint64(ourSnapshot.Size()))
+			atomic.StoreUint64(&s.stats.mergeSnapshotSize, ourSnapshot.size)
 			atomic.StoreUint64(&s.stats.mergeEpoch, ourSnapshot.epoch)
 
 			if ourSnapshot.epoch != lastEpochMergePlanned {
@@ -144,6 +144,7 @@ func (s *Writer) executeMergeTask(merges chan *segmentMerge, task *mergeplan.Mer
 		newDocNums, err := s.merge(segmentsToMerge, docsToDrop, newSegmentID)
 		atomic.AddUint64(&s.stats.TotFileMergeZapEnd, 1)
 
+		//nolint:gosec // G115: elapsed time uses the monotonic clock from time.Now and is nonnegative.
 		fileMergeZapTime := uint64(time.Since(fileMergeZapStartTime))
 		atomic.AddUint64(&s.stats.TotFileMergeZapTime, fileMergeZapTime)
 		if atomic.LoadUint64(&s.stats.MaxFileMergeZapTime) < fileMergeZapTime {
@@ -194,6 +195,7 @@ func (s *Writer) executeMergeTask(merges chan *segmentMerge, task *mergeplan.Mer
 	// it is safe to blockingly wait for the merge introduction
 	// here as the introducer is bound to handle the notify channel.
 	mergeTaskIntroStatus := <-sm.notifyCh
+	//nolint:gosec // G115: elapsed time uses the monotonic clock from time.Now and is nonnegative.
 	introTime := uint64(time.Since(introStartTime))
 	atomic.AddUint64(&s.stats.TotFileMergeZapIntroductionTime, introTime)
 	if atomic.LoadUint64(&s.stats.MaxFileMergeZapIntroductionTime) < introTime {
@@ -270,6 +272,7 @@ func (s *segmentMerge) ProcessSegmentNow(segmentID uint64, segSnapNow *segmentSn
 			for deletedSinceItr.HasNext() {
 				oldDocNum := deletedSinceItr.Next()
 				newDocNum := s.oldNewDocNums[segmentID][oldDocNum]
+				//nolint:gosec // G115: ICE bounds merged doc IDs to uint32; deletedSince excludes docs dropped by the merge.
 				newSegmentDeleted.Add(uint32(newDocNum))
 			}
 		}
@@ -302,6 +305,7 @@ func (s *Writer) mergeSegmentBases(merges chan *segmentMerge, snapshot *Snapshot
 
 	atomic.AddUint64(&s.stats.TotMemMergeZapEnd, 1)
 
+	//nolint:gosec // G115: elapsed time uses the monotonic clock from time.Now and is nonnegative.
 	memMergeZapTime := uint64(time.Since(memMergeZapStartTime))
 	atomic.AddUint64(&s.stats.TotMemMergeZapTime, memMergeZapTime)
 	if atomic.LoadUint64(&s.stats.MaxMemMergeZapTime) < memMergeZapTime {

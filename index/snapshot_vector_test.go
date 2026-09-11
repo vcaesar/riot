@@ -32,8 +32,8 @@ type vectorTestSegment struct {
 	err     error
 }
 
-func (s *vectorTestSegment) SearchVectors(ctx context.Context, field string, query []float32, k int,
-	metric vec.Metric, accept func(uint64) bool) ([]vec.Match, error) {
+func (s *vectorTestSegment) SearchVectors(_ context.Context, _ string, _ []float32, k int,
+	_ vec.Metric, accept func(uint64) bool) ([]vec.Match, error) {
 	if s.err != nil {
 		return nil, s.err
 	}

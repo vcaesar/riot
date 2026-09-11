@@ -79,6 +79,7 @@ func (d *snapshotDecoder) segment(version uint64, typ string) (*segmentSnapshot,
 	if err != nil {
 		return nil, err
 	}
+	//nolint:gosec // G115: fixed(4) returns a big-endian uint32 widened to uint64.
 	ss := &segmentSnapshot{id: id, segmentType: typ, segmentVersion: uint32(ver)}
 	if version >= blugeSnapshotFormatVersion3 {
 		ss.segmentSize, err = d.fixed(8)
@@ -91,15 +92,16 @@ func (d *snapshotDecoder) segment(version uint64, typ string) (*segmentSnapshot,
 		}
 	}
 	if version >= blugeSnapshotFormatVersion2 {
-		min, err := d.fixed(8)
+		timeMin, err := d.fixed(8)
 		if err != nil {
 			return nil, err
 		}
-		max, err := d.fixed(8)
+		timeMax, err := d.fixed(8)
 		if err != nil {
 			return nil, err
 		}
-		ss.docTimeMin, ss.docTimeMax = int64(min), int64(max)
+		//nolint:gosec // G115: restore signed timestamps from their raw two's-complement representation.
+		ss.docTimeMin, ss.docTimeMax = int64(timeMin), int64(timeMax)
 		if ss.docTimeMin > ss.docTimeMax {
 			return nil, fmt.Errorf("invalid segment timestamp range")
 		}

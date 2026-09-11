@@ -76,6 +76,7 @@ func TestOpenExclusiveThenOpenShared(t *testing.T) {
 	defer f.Close()
 
 	// invoke another process to get an shared lock on this path (expect error)
+	//nolint:gosec // G702: re-execute this test binary with fixed arguments, without a shell.
 	cmd := exec.Command(os.Args[0], "-test.run", "TestSubProcessHelper")
 	cmd.Env = append(os.Environ(),
 		pathEnv+"="+testPath,
@@ -111,6 +112,7 @@ func TestOpenSharedThenOpenShared(t *testing.T) {
 	}
 
 	// invoke another process to get an shared lock on this path
+	//nolint:gosec // G702: re-execute this test binary with fixed arguments, without a shell.
 	cmd := exec.Command(os.Args[0], "-test.run", "TestSubProcessHelper")
 	cmd.Env = append(os.Environ(),
 		pathEnv+"="+testPath)
@@ -149,6 +151,7 @@ func TestOpenExclusiveThenOpenExclusive(t *testing.T) {
 	}
 
 	// invoke another process to get an exclusive lock on this path
+	//nolint:gosec // G702: re-execute this test binary with fixed arguments, without a shell.
 	cmd := exec.Command(os.Args[0], "-test.run", "TestSubProcessHelper")
 	cmd.Env = append(
 		os.Environ(),

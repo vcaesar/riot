@@ -30,7 +30,7 @@ func Ranges(src search.NumericValuesSource) *RangeAggregation {
 	return &RangeAggregation{
 		src: src,
 		aggregations: map[string]search.Aggregation{
-			"count": CountMatches(),
+			countAggregation: CountMatches(),
 		},
 	}
 }

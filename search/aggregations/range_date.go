@@ -31,7 +31,7 @@ func DateRanges(src search.DateValuesSource) *DateRangeAggregation {
 	return &DateRangeAggregation{
 		src: src,
 		aggregations: map[string]search.Aggregation{
-			"count": CountMatches(),
+			countAggregation: CountMatches(),
 		},
 	}
 }

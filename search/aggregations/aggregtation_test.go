@@ -84,18 +84,18 @@ type matchReader struct {
 	docVals map[string][]byte
 }
 
-func (mr *matchReader) DocumentValueReader(fields []string) (segment.DocumentValueReader, error) {
+func (mr *matchReader) DocumentValueReader(_ []string) (segment.DocumentValueReader, error) {
 	return mr, nil
 }
 
-func (mr *matchReader) VisitDocumentValues(number uint64, visitor segment.DocumentValueVisitor) error {
+func (mr *matchReader) VisitDocumentValues(_ uint64, visitor segment.DocumentValueVisitor) error {
 	for k, v := range mr.docVals {
 		visitor(k, v)
 	}
 	return nil
 }
 
-func (mr *matchReader) VisitStoredFields(number uint64, visitor segment.StoredFieldVisitor) error {
+func (mr *matchReader) VisitStoredFields(_ uint64, _ segment.StoredFieldVisitor) error {
 	return nil
 }
 

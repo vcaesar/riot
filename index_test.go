@@ -821,7 +821,7 @@ func TestBug408(t *testing.T) {
 	numToTest := 10
 	matchUserID := "match"
 	noMatchUserID := "no_match"
-	matchingDocIds := make(map[string]struct{})
+	matchingDocIDs := make(map[string]struct{})
 
 	for i := 0; i < numToTest; i++ {
 		id := strconv.Itoa(i)
@@ -830,7 +830,7 @@ func TestBug408(t *testing.T) {
 			doc.AddField(NewKeywordField("user_id", noMatchUserID))
 		} else {
 			doc.AddField(NewKeywordField("user_id", matchUserID))
-			matchingDocIds[id] = struct{}{}
+			matchingDocIDs[id] = struct{}{}
 		}
 		err = indexWriter.Update(doc.ID(), doc)
 		if err != nil {
@@ -863,7 +863,7 @@ func TestBug408(t *testing.T) {
 	for err == nil && next != nil {
 		err = next.VisitStoredFields(func(field string, value []byte) bool {
 			if field == "_id" {
-				if _, found := matchingDocIds[string(value)]; !found {
+				if _, found := matchingDocIDs[string(value)]; !found {
 					t.Fatalf("document with ID %s not in results as expected", string(value))
 				}
 			}
@@ -1025,7 +1025,7 @@ func TestSearchQueryCallback(t *testing.T) {
 	defer cleanupTmpIndexPath(t, tmpIndexPath)
 
 	expErr := fmt.Errorf("MEM_LIMIT_EXCEEDED")
-	f := func(size uint64) error {
+	f := func(_ uint64) error {
 		// the intended usage of this callback is to see the estimated
 		// memory usage before executing, and possibly abort early
 		// in this test we simulate returning such an error
@@ -1114,12 +1114,12 @@ func TestBug1096(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var matchIds []string
+	var matchIDs []string
 	next, err := dmi.Next()
 	for err == nil && next != nil {
 		err = next.VisitStoredFields(func(field string, value []byte) bool {
 			if field == "_id" {
-				matchIds = append(matchIds, string(value))
+				matchIDs = append(matchIDs, string(value))
 			}
 			return true
 		})
@@ -1134,7 +1134,7 @@ func TestBug1096(t *testing.T) {
 
 	// we expect only 2 hits, for docs 9 and 90
 	if dmi.Aggregations().Count() > 2 {
-		t.Fatalf("expected only 2 hits '9' and '90', got %v", matchIds)
+		t.Fatalf("expected only 2 hits '9' and '90', got %v", matchIDs)
 	}
 
 	err = indexReader.Close()

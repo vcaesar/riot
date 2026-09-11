@@ -32,9 +32,9 @@ func TestICEDocumentWithoutTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	min, max := seg.(*ice.Segment).Timestamp()
-	if min != 0 || max != 0 {
-		t.Fatalf("document without timestamp: bounds=(%d,%d), want=(0,0)", min, max)
+	timeMin, timeMax := seg.(*ice.Segment).Timestamp()
+	if timeMin != 0 || timeMax != 0 {
+		t.Fatalf("document without timestamp: bounds=(%d,%d), want=(0,0)", timeMin, timeMax)
 	}
 }
 

@@ -340,6 +340,7 @@ func findPhrasePaths(prevPos int, phraseTerms [][]string,
 				}
 
 				// this location works, add it to the path (but not for empty term)
+				//nolint:gocritic // Branch-local length; completed paths are copied above.
 				px := append(p, phrasePart{term: carTerm, loc: loc})
 				rv = findPhrasePaths(loc.Pos, cdr, tlm, px, remainingSlop-dist, rv)
 			}

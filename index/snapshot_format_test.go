@@ -156,11 +156,11 @@ func TestSnapshotFormats(t *testing.T) {
 			if ss.ID() != 7 || !ss.Deleted().Equals(roaring.BitmapOf(2, 5)) {
 				t.Fatal("identity or deletions lost")
 			}
-			min, max := ss.Timestamp()
-			if version == 1 && (min != 0 || max != 0) {
+			timeMin, timeMax := ss.Timestamp()
+			if version == 1 && (timeMin != 0 || timeMax != 0) {
 				t.Fatal("legacy time is not unknown")
 			}
-			if version >= 2 && (min != 20 || max != 40) {
+			if version >= 2 && (timeMin != 20 || timeMax != 40) {
 				t.Fatal("time lost")
 			}
 			if version == 3 && (ss.DocNum() != 10 || ss.SegmentSize() != 1234) {
@@ -183,7 +183,7 @@ func TestSnapshotFormats(t *testing.T) {
 			if err != nil || read != written-4 {
 				t.Fatalf("roundtrip read %d: %v", read, err)
 			}
-			if lo, hi := again.Segments()[0].Timestamp(); lo != min || hi != max {
+			if lo, hi := again.Segments()[0].Timestamp(); lo != timeMin || hi != timeMax {
 				t.Fatal("roundtrip time lost")
 			}
 			for end := 0; end < len(data); end++ {
@@ -445,9 +445,9 @@ type failingTimestampSegment struct {
 	min, max int64
 }
 
-func (s failingTimestampSegment) Size() int                 { return 0 }
-func (s failingTimestampSegment) Count() uint64             { return 1 }
-func (s failingTimestampSegment) Timestamp() (int64, int64) { return s.min, s.max }
+func (s failingTimestampSegment) Size() int                           { return 0 }
+func (s failingTimestampSegment) Count() uint64                       { return 1 }
+func (s failingTimestampSegment) Timestamp() (timeMin, timeMax int64) { return s.min, s.max }
 func (s failingTimestampSegment) VisitStoredFields(uint64, segment.StoredFieldVisitor) error {
 	return io.ErrClosedPipe
 }
@@ -466,8 +466,8 @@ func TestSnapshotNativeTimestamp(t *testing.T) {
 		ss := &segmentSnapshot{segment: &segmentWrapper{Segment: failingTimestampSegment{
 			min: bounds[0], max: bounds[1],
 		}}}
-		if min, max := ss.Timestamp(); min != bounds[0] || max != bounds[1] {
-			t.Fatalf("timestamp = (%d, %d), want %v", min, max, bounds)
+		if timeMin, timeMax := ss.Timestamp(); timeMin != bounds[0] || timeMax != bounds[1] {
+			t.Fatalf("timestamp = (%d, %d), want %v", timeMin, timeMax, bounds)
 		}
 		var b bytes.Buffer
 		if _, err := recordSegment(&b, ss, 1, "ice", 1); err != nil {

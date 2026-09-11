@@ -206,7 +206,7 @@ func (d *FileSystemDirectory) Lock() error {
 	if err != nil {
 		return fmt.Errorf("error truncating pid file: %w", err)
 	}
-	_, err = d.pid.File().Write([]byte(fmt.Sprintf("%d\n", os.Getpid())))
+	_, err = fmt.Fprintf(d.pid.File(), "%d\n", os.Getpid())
 	if err != nil {
 		return fmt.Errorf("error writing pid: %w", err)
 	}
@@ -246,7 +246,9 @@ func (d *FileSystemDirectory) Stats() (numFilesOnDisk, numBytesUsedDisk uint64) 
 		}
 		if !fileInfo.IsDir() {
 			numFilesOnDisk++
-			numBytesUsedDisk += uint64(fileInfo.Size())
+			if size := fileInfo.Size(); size > 0 {
+				numBytesUsedDisk += uint64(size)
+			}
 		}
 	}
 	return numFilesOnDisk, numBytesUsedDisk

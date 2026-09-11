@@ -15,6 +15,7 @@
 package index
 
 import (
+	"math"
 	"sync/atomic"
 )
 
@@ -244,5 +245,9 @@ type Stats struct {
 func (s *Writer) numEventsBlocking() int {
 	eventsReturned := atomic.LoadUint64(&s.stats.TotEventReturned)
 	eventsFired := atomic.LoadUint64(&s.stats.TotEventFired)
-	return int(eventsFired - eventsReturned)
+	blocking := eventsFired - eventsReturned
+	if blocking > uint64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(blocking)
 }

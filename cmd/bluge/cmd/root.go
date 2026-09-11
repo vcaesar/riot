@@ -26,10 +26,10 @@ var RootCmd = &cobra.Command{
 	Use:   "bluge",
 	Short: "command-line tool to interact with a bluge index",
 	Long:  `Bluge is a command-line tool to interact with a bluge index.`,
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 		return nil
 	},
-	PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
+	PersistentPostRunE: func(_ *cobra.Command, _ []string) error {
 		return nil
 	},
 }

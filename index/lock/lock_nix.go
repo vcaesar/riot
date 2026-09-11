@@ -24,6 +24,7 @@ import (
 )
 
 func open(path string, flag int, perm os.FileMode, exclusive bool) (LockedFile, error) {
+	//nolint:gosec // G703: this filesystem library opens caller-selected paths; it is not a sandbox.
 	f, err := os.OpenFile(path, flag, perm)
 	if err != nil {
 		return nil, err

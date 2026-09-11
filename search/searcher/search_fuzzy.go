@@ -30,13 +30,13 @@ var levAutomatonBuilders map[int]*levenshtein.LevenshteinAutomatonBuilder
 
 func init() {
 	levAutomatonBuilders = map[int]*levenshtein.LevenshteinAutomatonBuilder{}
-	supportedFuzziness := []int{1, 2}
+	supportedFuzziness := []uint8{1, 2}
 	for _, fuzziness := range supportedFuzziness {
-		lb, err := levenshtein.NewLevenshteinAutomatonBuilder(uint8(fuzziness), true)
+		lb, err := levenshtein.NewLevenshteinAutomatonBuilder(fuzziness, true)
 		if err != nil {
 			panic(fmt.Errorf("levenshtein automaton ed1 builder err: %v", err))
 		}
-		levAutomatonBuilders[fuzziness] = lb
+		levAutomatonBuilders[int(fuzziness)] = lb
 	}
 }
 
@@ -131,6 +131,7 @@ func boostFromDistance(fuzziness int, automatons []segment.Automaton, dictTerm s
 
 func getLevAutomaton(term string, fuzziness int) (segment.Automaton, error) {
 	if levAutomatonBuilder, ok := levAutomatonBuilders[fuzziness]; ok {
+		//nolint:gosec // G115: the builder map is initialized only with keys 1 and 2.
 		return levAutomatonBuilder.BuildDfa(term, uint8(fuzziness))
 	}
 	return nil, fmt.Errorf("unsupported fuzziness: %d", fuzziness)

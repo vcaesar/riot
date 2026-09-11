@@ -16,6 +16,7 @@ package index
 
 import (
 	"fmt"
+	"math"
 	"sync/atomic"
 
 	"github.com/RoaringBitmap/roaring/v2"
@@ -341,6 +342,9 @@ func (o *optimizeDisjunctionUnadorned) Finish() (rv segment.PostingsIterator, er
 
 			docNum, ok := itr.DocNum1Hit()
 			if ok {
+				if docNum > math.MaxUint32 {
+					return nil, nil
+				}
 				docNums = append(docNums, uint32(docNum))
 				continue
 			}

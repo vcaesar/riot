@@ -16,6 +16,7 @@ package bluge
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/vcaesar/riot/index"
@@ -23,7 +24,7 @@ import (
 
 func TestDefaultConfigWithIndexConfig(t *testing.T) {
 	for _, version := range []uint32{index.DefaultConfig("").SegmentVersion} {
-		t.Run(string(rune('0'+version)), func(t *testing.T) {
+		t.Run(strconv.FormatUint(uint64(version), 10), func(t *testing.T) {
 			directory := index.NewInMemoryDirectory()
 			indexConfig := index.DefaultConfigWithDirectory(func() index.Directory { return directory }).
 				WithSegmentVersion(version).WithPersisterNapTimeMSec(10).DisableOptimizeConjunction()

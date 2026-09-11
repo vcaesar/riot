@@ -36,7 +36,7 @@ func NewInMemoryDirectory() *InMemoryDirectory {
 	}
 }
 
-func (d *InMemoryDirectory) Setup(readOnly bool) error {
+func (d *InMemoryDirectory) Setup(_ bool) error {
 	return nil
 }
 

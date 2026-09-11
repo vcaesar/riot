@@ -20,6 +20,8 @@ import (
 	"github.com/vcaesar/riot/search"
 )
 
+const countAggregation = "count"
+
 type TermsAggregation struct {
 	src  search.TextValuesSource
 	size int
@@ -37,12 +39,13 @@ func NewTermsAggregation(src search.TextValuesSource, size int) *TermsAggregatio
 		size: size,
 		desc: true,
 		lessFunc: func(a, b *search.Bucket) bool {
-			return a.Aggregations()["count"].(search.MetricCalculator).Value() < b.Aggregations()["count"].(search.MetricCalculator).Value()
+			return a.Aggregations()[countAggregation].(search.MetricCalculator).Value() <
+				b.Aggregations()[countAggregation].(search.MetricCalculator).Value()
 		},
 		aggregations: make(map[string]search.Aggregation),
 		sortFunc:     sort.Sort,
 	}
-	rv.aggregations["count"] = CountMatches()
+	rv.aggregations[countAggregation] = CountMatches()
 	return rv
 }
 
@@ -142,7 +145,7 @@ func (a *TermsCalculator) Finish() {
 
 	var notOther int
 	for _, bucket := range a.bucketsList {
-		notOther += int(bucket.Aggregations()["count"].(search.MetricCalculator).Value())
+		notOther += int(bucket.Aggregations()[countAggregation].(search.MetricCalculator).Value())
 	}
 	a.other = a.total - notOther
 }

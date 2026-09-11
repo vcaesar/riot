@@ -25,7 +25,7 @@ type statsDirectory struct {
 	Directory
 }
 
-func (d *statsDirectory) Stats() (uint64, uint64) { return 7, 1234 }
+func (d *statsDirectory) Stats() (files, bytes uint64) { return 7, 1234 }
 
 func statsFieldPointers(s *Stats) []*uint64 {
 	fields := []*uint64{

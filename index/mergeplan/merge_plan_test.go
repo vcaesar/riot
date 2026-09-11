@@ -438,7 +438,7 @@ func TestManySameSizedSegmentsWithDeletesBetweenMerges(t *testing.T) {
 				spec.nextSegmentID++
 			}
 		},
-		afterPlan: func(spec *testCyclesSpec, plan *MergePlan) {
+		afterPlan: func(_ *testCyclesSpec, plan *MergePlan) {
 			if plan != nil && len(plan.Tasks) > 0 {
 				numPlansWithTasks++
 			}
@@ -478,10 +478,10 @@ func TestPlanMaxSegmentSizeLimit(t *testing.T) {
 	s := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(s)
 
-	max := 20
-	min := 5
+	sizeMax := 20
+	sizeMin := 5
 	randomInRange := func() int64 {
-		return int64(r.Intn(max-min) + min)
+		return int64(r.Intn(sizeMax-sizeMin) + sizeMin)
 	}
 	for i := 1; i < 20; i++ {
 		o.MaxSegmentSize = randomInRange()

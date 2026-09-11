@@ -74,7 +74,7 @@ func buildPolygonFilter(dvReader segment.DocumentValueReader, polygon []geo.Poin
 		var lons, lats []float64
 		var found bool
 
-		err := dvReader.VisitDocumentValues(d.Number, func(field string, term []byte) {
+		err := dvReader.VisitDocumentValues(d.Number, func(_ string, term []byte) {
 			// only consider the values which are shifted 0
 			prefixCoded := numeric.PrefixCoded(term)
 			shift, err := prefixCoded.Shift()

@@ -20,7 +20,7 @@ import (
 
 type MatchNoneSearcher struct{}
 
-func NewMatchNoneSearcher(indexReader search.Reader, options search.SearcherOptions) (*MatchNoneSearcher, error) {
+func NewMatchNoneSearcher(_ search.Reader, _ search.SearcherOptions) (*MatchNoneSearcher, error) {
 	return &MatchNoneSearcher{}, nil
 }
 
@@ -38,11 +38,11 @@ func (s *MatchNoneSearcher) Weight() float64 {
 
 func (s *MatchNoneSearcher) SetQueryNorm(_ float64) {}
 
-func (s *MatchNoneSearcher) Next(ctx *search.Context) (*search.DocumentMatch, error) {
+func (s *MatchNoneSearcher) Next(_ *search.Context) (*search.DocumentMatch, error) {
 	return nil, nil
 }
 
-func (s *MatchNoneSearcher) Advance(ctx *search.Context, number uint64) (*search.DocumentMatch, error) {
+func (s *MatchNoneSearcher) Advance(_ *search.Context, _ uint64) (*search.DocumentMatch, error) {
 	return nil, nil
 }
 

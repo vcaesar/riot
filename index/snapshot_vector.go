@@ -17,6 +17,7 @@ package index
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 
 	"github.com/vcaesar/ice/vec"
@@ -52,7 +53,7 @@ func (i *Snapshot) SearchVectors(ctx context.Context, field string, query []floa
 		}
 		offset := i.offsets[index]
 		matches, err := searcher.SearchVectors(ctx, field, query, k, metric, func(number uint64) bool {
-			if seg.deleted != nil && seg.deleted.Contains(uint32(number)) {
+			if seg.deleted != nil && number <= math.MaxUint32 && seg.deleted.Contains(uint32(number)) {
 				return false
 			}
 			return accept == nil || accept(offset+number)

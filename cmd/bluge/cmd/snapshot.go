@@ -29,7 +29,7 @@ var snapshotCmd = &cobra.Command{
 	Use:   "snapshot [path] [epoch]",
 	Short: "snapshot prints the details of the snapshot with the specified epoch",
 	Long:  `The snapshot command will print the details of the snapshot with the specified epoch.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 
 		if len(args) < 1 {
 			return fmt.Errorf("must specify path to index")

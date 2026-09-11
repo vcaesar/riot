@@ -18,18 +18,6 @@ import (
 	"github.com/vcaesar/riot/analysis"
 )
 
-func (p *Parser) buildTokenFromTerm(buffer []rune) *analysis.Token {
-	term := analysis.BuildTermFromRunes(buffer)
-	token := &analysis.Token{
-		Term:         term,
-		PositionIncr: 1,
-		Start:        p.index,
-		End:          p.index + len(term),
-	}
-	p.index += len(term)
-	return token
-}
-
 // Parser accepts a symbol and passes it to the current state (representing a class).
 // The state can accept it (and accumulate it). Otherwise, the parser creates a new state that
 // starts with the pushed symbol.
@@ -42,6 +30,18 @@ type Parser struct {
 	current   State
 	tokens    []*analysis.Token
 	index     int
+}
+
+func (p *Parser) buildTokenFromTerm(buffer []rune) *analysis.Token {
+	term := analysis.BuildTermFromRunes(buffer)
+	token := &analysis.Token{
+		Term:         term,
+		PositionIncr: 1,
+		Start:        p.index,
+		End:          p.index + len(term),
+	}
+	p.index += len(term)
+	return token
 }
 
 func NewParser(length, index int) *Parser {

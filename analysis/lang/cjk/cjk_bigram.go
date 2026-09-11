@@ -150,7 +150,8 @@ func (s *BigramFilter) outputBigram(r *ring.Ring, itemsInRing *int) *analysis.To
 }
 
 func (s *BigramFilter) buildUnigram(r *ring.Ring, itemsInRing *int) *analysis.Token {
-	if *itemsInRing == 2 {
+	switch *itemsInRing {
+	case 2:
 		thisShingleRing := r.Move(-1)
 		// do first token
 		prev := thisShingleRing.Value.(*analysis.Token)
@@ -162,7 +163,7 @@ func (s *BigramFilter) buildUnigram(r *ring.Ring, itemsInRing *int) *analysis.To
 			End:          prev.End,
 		}
 		return &token
-	} else if *itemsInRing == 1 {
+	case 1:
 		// do first token
 		prev := r.Value.(*analysis.Token)
 		token := analysis.Token{

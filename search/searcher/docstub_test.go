@@ -150,7 +150,7 @@ func addShiftTokens(terms []numeric.PrefixCoded, original int64, shiftBy uint) [
 	return terms
 }
 
-func NewFakeField(name, data string, store, termVec, docVals bool, ap []int) *FakeField {
+func NewFakeField(name, data string, store, termVec, docVals bool, _ []int) *FakeField {
 	rv := &FakeField{
 		N:  name,
 		V:  []byte(data),

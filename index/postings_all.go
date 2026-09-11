@@ -16,6 +16,7 @@ package index
 
 import (
 	"fmt"
+	"math"
 
 	segment "github.com/vcaesar/bluge_segment_api"
 
@@ -59,7 +60,11 @@ func (i *postingsIteratorAll) Advance(number uint64) (segment.Posting, error) {
 	i.segmentOffset = segIndex
 
 	// now advance within this segment
-	i.iterators[i.segmentOffset].AdvanceIfNeeded(uint32(localDocNum))
+	if localDocNum > math.MaxUint32 {
+		i.segmentOffset++
+	} else {
+		i.iterators[i.segmentOffset].AdvanceIfNeeded(uint32(localDocNum))
+	}
 
 	// let next do the rest of the work for us
 	return i.Next()
