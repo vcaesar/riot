@@ -27,6 +27,12 @@ type TextValueSource interface {
 	Value(match *DocumentMatch) []byte
 }
 
+// TextValueAppender is optionally implemented by a TextValueSource that can
+// write its value into buf (which may be reused) instead of allocating.
+type TextValueAppender interface {
+	AppendValue(match *DocumentMatch, buf []byte) []byte
+}
+
 type TextValuesSource interface {
 	Fields() []string
 	Values(match *DocumentMatch) [][]byte
@@ -158,6 +164,12 @@ func (n *ScoreSource) Value(d *DocumentMatch) []byte {
 	return numeric.MustNewPrefixCodedInt64(numeric.Float64ToInt64(d.Score), 0)
 }
 
+func (n *ScoreSource) AppendValue(d *DocumentMatch, buf []byte) []byte {
+	// shift 0 never fails; the prealloc is only used when large enough
+	rv, _, _ := numeric.NewPrefixCodedInt64Prealloc(numeric.Float64ToInt64(d.Score), 0, buf[:cap(buf)])
+	return rv
+}
+
 func (n *ScoreSource) Values(d *DocumentMatch) [][]byte {
 	return [][]byte{numeric.MustNewPrefixCodedInt64(numeric.Float64ToInt64(d.Score), 0)}
 }
@@ -191,6 +203,16 @@ func (f *MissingTextValueSource) Value(match *DocumentMatch) []byte {
 		return f.replacement.Value(match)
 	}
 	return primaryValue
+}
+
+func (f *MissingTextValueSource) AppendValue(match *DocumentMatch, buf []byte) []byte {
+	if a, ok := f.primary.(TextValueAppender); ok {
+		if v := a.AppendValue(match, buf); v != nil {
+			return v
+		}
+		return append(buf[:0], f.replacement.Value(match)...)
+	}
+	return append(buf[:0], f.Value(match)...)
 }
 
 type MissingNumericSource struct {

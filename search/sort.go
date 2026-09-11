@@ -41,12 +41,16 @@ func (o SortOrder) Reverse() {
 	}
 }
 
+// Compute fills match.SortValue, reusing the byte buffers a pooled
+// DocumentMatch already owns from a previous use so steady-state is
+// allocation free.
 func (o SortOrder) Compute(match *DocumentMatch) {
-	for _, sort := range o {
-		sortVal := sort.Value(match)
-		sortValCopy := make([]byte, len(sortVal))
-		copy(sortValCopy, sortVal)
-		match.SortValue = append(match.SortValue, sortValCopy)
+	for i, sort := range o {
+		var buf []byte
+		if i < cap(match.SortValue) {
+			buf = match.SortValue[:i+1][i][:0]
+		}
+		match.SortValue = append(match.SortValue[:i], sort.appendValue(match, buf))
 	}
 }
 
@@ -110,6 +114,13 @@ func (s *Sort) Fields() []string {
 
 func (s *Sort) Value(match *DocumentMatch) []byte {
 	return s.source.Value(match)
+}
+
+func (s *Sort) appendValue(match *DocumentMatch, buf []byte) []byte {
+	if a, ok := s.source.(TextValueAppender); ok {
+		return a.AppendValue(match, buf)
+	}
+	return append(buf, s.source.Value(match)...)
 }
 
 func ParseSearchSortString(input string) *Sort {

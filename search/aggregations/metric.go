@@ -85,6 +85,11 @@ type SingleValueCalculator struct {
 }
 
 func (s *SingleValueCalculator) Consume(d *search.DocumentMatch) {
+	// the score is single valued; skip the []float64 Numbers allocates per hit
+	if score, ok := s.src.(*search.ScoreSource); ok {
+		s.compute(s, score.Number(d))
+		return
+	}
 	for _, val := range s.src.Numbers(d) {
 		s.compute(s, val)
 	}
