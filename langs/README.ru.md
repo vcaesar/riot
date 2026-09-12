@@ -1,48 +1,48 @@
-# ![Riot](docs/bluge.png) Riot
+# ![Riot](../docs/bluge.png) Riot
 
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/vcaesar/riot)](https://pkg.go.dev/github.com/vcaesar/riot)
 [![Tests](https://github.com/vcaesar/riot/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/tests.yml?query=event%3Apush+branch%3Amain)
 [![Lint](https://github.com/vcaesar/riot/actions/workflows/lint.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/lint.yml?query=event%3Apush+branch%3Amain)
 
-English | [简体中文](langs/README.zh.md) | [繁體中文](langs/README.zht.md) | [日本語](langs/README.ja.md) | [한국어](langs/README.ko.md) | [Français](langs/README.fr.md) | [Deutsch](langs/README.de.md) | [Español](langs/README.es.md) | [Русский](langs/README.ru.md) | [Português](langs/README.pt.md)
+[English](../README.md) | [简体中文](README.zh.md) | [繁體中文](README.zht.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Español](README.es.md) | Русский | [Português](README.pt.md)
 
-The fast modern text indexing in go, fork form the [bluge](https://github.com/blugelabs/bluge)
+Быстрая современная библиотека полнотекстового индексирования на Go, форк [bluge](https://github.com/blugelabs/bluge)
 
-## Features
+## Возможности
 
-- Supported field types:
+- Поддерживаемые типы полей:
   - Text, Numeric, Date, Boolean, IP, Geo Point, Vector
-- Supported query types:
+- Поддерживаемые типы запросов:
   - Term, Phrase, Match, Match Phrase, Prefix, Regexp, Wildcard, Fuzzy
   - Conjunction, Disjunction, Boolean
   - Numeric Range, Date Range, Term Range, IP Range
   - Geo Bounding Box, Geo Distance, Geo Polygon, KNN
-- BM25 Similarity/Scoring with pluggable interfaces
-- Search result match highlighting
-- Extendable Aggregations:
-  - Bucketing
+- Ранжирование BM25 с подключаемыми интерфейсами
+- Подсветка совпадений в результатах поиска
+- Расширяемые агрегации:
+  - Бакетинг
     - Terms
     - Numeric Range
     - Date Range
-  - Metrics
+  - Метрики
     - Min/Max/Count/Sum
     - Avg/Weighted Avg
-    - Cardinality Estimation ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
-    - Quantile Approximation ([T-Digest](https://github.com/caio/go-tdigest))
+    - Оценка кардинальности ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
+    - Приближённые квантили ([T-Digest](https://github.com/caio/go-tdigest))
 
-## Installation
+## Установка
 
 ```sh
 go get -u github.com/vcaesar/riot
 ```
 
-## Usage
+## Использование
 
-Runnable versions of all three programs live in [`test/readme_demo`](test/readme_demo).
+Запускаемые версии всех трёх программ находятся в [`test/readme_demo`](../test/readme_demo).
 
-### Indexing
+### Индексирование
 
-Save as `write/main.go` and run with `go run ./write`:
+Сохраните как `write/main.go` и запустите `go run ./write`:
 
 ```go
 package main
@@ -72,11 +72,11 @@ func main() {
 }
 ```
 
-### Querying
+### Поиск
 
-Save as `read/main.go` and run with `go run ./read` against the index written above.
-If you index and search in the same process, use `writer.Reader()` instead of `riot.OpenReader`
-(or `riot.InMemoryOnlyConfig()` for an in-memory index):
+Сохраните как `read/main.go` и запустите `go run ./read` для индекса, созданного выше.
+Если индексирование и поиск выполняются в одном процессе, используйте `writer.Reader()` вместо `riot.OpenReader`
+(или `riot.InMemoryOnlyConfig()` для индекса в памяти):
 
 ```go
 package main
@@ -124,16 +124,16 @@ func main() {
 }
 ```
 
-Output:
+Вывод:
 
 ```
 match: example
 ```
 
-### Chinese / Japanese with gse
+### Китайский / японский с gse
 
-The [`gse`](gse) package wraps riot with a [gse](https://github.com/go-ego/gse) tokenizer for
-CJK text, plus query-string search and highlighting. Save as `gse/main.go` and run with
+Пакет [`gse`](../gse) оборачивает riot токенизатором [gse](https://github.com/go-ego/gse) для
+CJK-текста и добавляет поиск по строке запроса и подсветку. Сохраните как `gse/main.go` и запустите
 `go run ./gse`:
 
 ```go
@@ -191,7 +191,7 @@ func main() {
 }
 ```
 
-Output:
+Вывод:
 
 ```
 query "運命の犠牲者": 2 hits in 14.5µs
@@ -203,10 +203,6 @@ query "vaudevillian": 1 hits in 1.958µs
   4 (0.657) [In view, humble <mark>vaudevillian</mark> veteran cast vicariously as both victim and villain vicissitudes of fate.]
 ```
 
-<!-- ## Repobeats
-
-![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
-
-## License
+## Лицензия
 
 Apache License Version 2.0

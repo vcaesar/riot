@@ -1,48 +1,48 @@
-# ![Riot](docs/bluge.png) Riot
+# ![Riot](../docs/bluge.png) Riot
 
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/vcaesar/riot)](https://pkg.go.dev/github.com/vcaesar/riot)
 [![Tests](https://github.com/vcaesar/riot/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/tests.yml?query=event%3Apush+branch%3Amain)
 [![Lint](https://github.com/vcaesar/riot/actions/workflows/lint.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/lint.yml?query=event%3Apush+branch%3Amain)
 
-English | [简体中文](langs/README.zh.md) | [繁體中文](langs/README.zht.md) | [日本語](langs/README.ja.md) | [한국어](langs/README.ko.md) | [Français](langs/README.fr.md) | [Deutsch](langs/README.de.md) | [Español](langs/README.es.md) | [Русский](langs/README.ru.md) | [Português](langs/README.pt.md)
+[English](../README.md) | [简体中文](README.zh.md) | [繁體中文](README.zht.md) | [日本語](README.ja.md) | 한국어 | [Français](README.fr.md) | [Deutsch](README.de.md) | [Español](README.es.md) | [Русский](README.ru.md) | [Português](README.pt.md)
 
-The fast modern text indexing in go, fork form the [bluge](https://github.com/blugelabs/bluge)
+Go로 작성된 빠르고 현대적인 전문 색인 라이브러리. [bluge](https://github.com/blugelabs/bluge)에서 포크했습니다.
 
-## Features
+## 기능
 
-- Supported field types:
+- 지원하는 필드 타입:
   - Text, Numeric, Date, Boolean, IP, Geo Point, Vector
-- Supported query types:
+- 지원하는 쿼리 타입:
   - Term, Phrase, Match, Match Phrase, Prefix, Regexp, Wildcard, Fuzzy
   - Conjunction, Disjunction, Boolean
   - Numeric Range, Date Range, Term Range, IP Range
   - Geo Bounding Box, Geo Distance, Geo Polygon, KNN
-- BM25 Similarity/Scoring with pluggable interfaces
-- Search result match highlighting
-- Extendable Aggregations:
-  - Bucketing
+- 교체 가능한 인터페이스 기반의 BM25 유사도/스코어링
+- 검색 결과 매치 하이라이팅
+- 확장 가능한 집계:
+  - 버킷팅
     - Terms
     - Numeric Range
     - Date Range
-  - Metrics
+  - 메트릭
     - Min/Max/Count/Sum
     - Avg/Weighted Avg
-    - Cardinality Estimation ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
-    - Quantile Approximation ([T-Digest](https://github.com/caio/go-tdigest))
+    - 카디널리티 추정 ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
+    - 분위수 근사 ([T-Digest](https://github.com/caio/go-tdigest))
 
-## Installation
+## 설치
 
 ```sh
 go get -u github.com/vcaesar/riot
 ```
 
-## Usage
+## 사용법
 
-Runnable versions of all three programs live in [`test/readme_demo`](test/readme_demo).
+아래 세 프로그램의 실행 가능한 버전은 [`test/readme_demo`](../test/readme_demo)에 있습니다.
 
-### Indexing
+### 색인 생성
 
-Save as `write/main.go` and run with `go run ./write`:
+`write/main.go`로 저장한 뒤 `go run ./write`로 실행합니다:
 
 ```go
 package main
@@ -72,11 +72,11 @@ func main() {
 }
 ```
 
-### Querying
+### 검색
 
-Save as `read/main.go` and run with `go run ./read` against the index written above.
-If you index and search in the same process, use `writer.Reader()` instead of `riot.OpenReader`
-(or `riot.InMemoryOnlyConfig()` for an in-memory index):
+`read/main.go`로 저장한 뒤 위에서 만든 색인을 대상으로 `go run ./read`로 실행합니다.
+같은 프로세스에서 색인과 검색을 함께 수행한다면 `riot.OpenReader` 대신 `writer.Reader()`를 사용하세요
+(인메모리 색인은 `riot.InMemoryOnlyConfig()`를 사용합니다):
 
 ```go
 package main
@@ -124,17 +124,16 @@ func main() {
 }
 ```
 
-Output:
+출력:
 
 ```
 match: example
 ```
 
-### Chinese / Japanese with gse
+### gse를 이용한 중국어 / 일본어
 
-The [`gse`](gse) package wraps riot with a [gse](https://github.com/go-ego/gse) tokenizer for
-CJK text, plus query-string search and highlighting. Save as `gse/main.go` and run with
-`go run ./gse`:
+[`gse`](../gse) 패키지는 CJK 텍스트를 위해 [gse](https://github.com/go-ego/gse) 토크나이저로 riot을 감싸며,
+쿼리 문자열 검색과 하이라이팅도 제공합니다. `gse/main.go`로 저장한 뒤 `go run ./gse`로 실행합니다:
 
 ```go
 package main
@@ -191,7 +190,7 @@ func main() {
 }
 ```
 
-Output:
+출력:
 
 ```
 query "運命の犠牲者": 2 hits in 14.5µs
@@ -203,10 +202,6 @@ query "vaudevillian": 1 hits in 1.958µs
   4 (0.657) [In view, humble <mark>vaudevillian</mark> veteran cast vicariously as both victim and villain vicissitudes of fate.]
 ```
 
-<!-- ## Repobeats
-
-![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
-
-## License
+## 라이선스
 
 Apache License Version 2.0
