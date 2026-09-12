@@ -86,7 +86,8 @@ func TestDocumentMatchPoolPreallocatesSortKeys(t *testing.T) {
 	if &a.SortValue[0][0] != slot0 {
 		t.Fatal("Complete on a fresh pooled match did not reuse its preallocated slot")
 	}
-	allocs := testing.AllocsPerRun(1, func() {
+	// enough runs that a stray runtime allocation cannot show as 1
+	allocs := testing.AllocsPerRun(100, func() {
 		order.Complete(a)
 		order.Complete(b)
 	})
