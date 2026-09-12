@@ -16,9 +16,11 @@ package riot
 
 import (
 	"context"
+	"errors"
 	"math"
 	"os"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/vcaesar/ice/vec"
@@ -183,5 +185,180 @@ func TestVectorReaderLifecycle(t *testing.T) {
 	checkVectorIDs(t, reopened, []string{"a"}, []float64{-1})
 	if _, err := reopened.SearchVectors(context.Background(), "v", []float32{1}, 1, L2, nil); err == nil {
 		t.Fatal("accepted dimension mismatch")
+	}
+}
+
+func knnIDs(t *testing.T, r *Reader, q Query, explain bool) (ids []string, scores []float64) {
+	t.Helper()
+	req := NewTopNSearch(10, q)
+	if explain {
+		req = req.ExplainScores()
+	}
+	itr, err := r.Search(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		m, err := itr.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m == nil {
+			return ids, scores
+		}
+		if explain && m.Explanation == nil {
+			t.Fatal("missing explanation")
+		}
+		var id string
+		if err := m.VisitStoredFields(func(name string, value []byte) bool {
+			if name == "_id" {
+				id = string(value)
+			}
+			return true
+		}); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+		scores = append(scores, m.Score)
+	}
+}
+
+func TestKNNQuery(t *testing.T) {
+	w, err := OpenWriter(InMemoryOnlyConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	for _, tc := range []struct {
+		id, color string
+		vector    []float32
+	}{
+		{"a", "red", []float32{1, 0}},
+		{"b", "blue", []float32{3, 0}},
+		{"c", "red", []float32{2, 0}},
+		{"d", "blue", []float32{-1, 0}},
+	} {
+		d := vectorDocument(t, tc.id, tc.vector).AddField(NewTextField("color", tc.color))
+		if err := w.Update(d.ID(), d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	t.Run("top k by dot product with boost", func(t *testing.T) {
+		q := NewKNNQuery("v", []float32{1, 0}, 2).SetMetric(DotProduct).SetBoost(2)
+		ids, scores := knnIDs(t, r, q, true)
+		if !reflect.DeepEqual(ids, []string{"b", "c"}) || !reflect.DeepEqual(scores, []float64{6, 4}) {
+			t.Fatalf("got %v %v", ids, scores)
+		}
+	})
+	t.Run("hybrid must with text query", func(t *testing.T) {
+		q := NewBooleanQuery().
+			AddMust(NewKNNQuery("v", []float32{1, 0}, 3).SetMetric(DotProduct)).
+			AddMust(NewTermQuery("red").SetField("color"))
+		ids, _ := knnIDs(t, r, q, false)
+		if !reflect.DeepEqual(ids, []string{"c", "a"}) {
+			t.Fatalf("got %v", ids)
+		}
+	})
+	t.Run("should with text query sums scores", func(t *testing.T) {
+		q := NewBooleanQuery().
+			AddShould(NewKNNQuery("v", []float32{1, 0}, 1).SetMetric(DotProduct)).
+			AddShould(NewTermQuery("red").SetField("color"))
+		ids, _ := knnIDs(t, r, q, false)
+		if len(ids) != 3 || ids[0] != "b" {
+			t.Fatalf("got %v", ids)
+		}
+	})
+	t.Run("cosine default", func(t *testing.T) {
+		ids, scores := knnIDs(t, r, NewKNNQuery("v", []float32{1, 0}, 4), false)
+		if len(ids) != 4 {
+			t.Fatalf("got %v %v", ids, scores)
+		}
+		// a, b, c are collinear with the query: a three-way tie at 1, order unspecified.
+		tied := append([]string(nil), ids[:3]...)
+		sort.Strings(tied)
+		if !reflect.DeepEqual(tied, []string{"a", "b", "c"}) || ids[3] != "d" ||
+			!reflect.DeepEqual(scores, []float64{1, 1, 1, -1}) {
+			t.Fatalf("got %v %v", ids, scores)
+		}
+	})
+	t.Run("validate", func(t *testing.T) {
+		for name, q := range map[string]*KNNQuery{
+			"empty field":  NewKNNQuery("", []float32{1}, 1),
+			"zero k":       NewKNNQuery("v", []float32{1}, 0),
+			"empty vector": NewKNNQuery("v", nil, 1),
+			"bad metric":   NewKNNQuery("v", []float32{1}, 1).SetMetric("manhattan"),
+			"cosine zero":  NewKNNQuery("v", []float32{0, 0}, 1),
+			"nonfinite":    NewKNNQuery("v", []float32{float32(math.NaN())}, 1),
+		} {
+			if q.Validate() == nil {
+				t.Errorf("%s: expected validation error", name)
+			}
+			if _, err := r.Search(context.Background(), NewTopNSearch(1, q)); err == nil {
+				t.Errorf("%s: expected search error", name)
+			}
+		}
+		if _, err := r.Search(context.Background(), NewTopNSearch(1, NewKNNQuery("v", []float32{1}, 1))); err == nil {
+			t.Error("expected dimension mismatch error")
+		}
+	})
+}
+
+func openKNNReader(t *testing.T, config Config) *Reader {
+	t.Helper()
+	w, err := OpenWriter(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	d := vectorDocument(t, "a", []float32{1, 0})
+	if err := w.Update(d.ID(), d); err != nil {
+		t.Fatal(err)
+	}
+	r, err := w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return r
+}
+
+func TestKNNQueryAdmissionBeforeScan(t *testing.T) {
+	rejected := errors.New("rejected")
+	r := openKNNReader(t, InMemoryOnlyConfig().WithSearchStartFunc(func(uint64) error { return rejected }))
+	q := NewKNNQuery("v", []float32{1}, 1) // dimension mismatch: only fails if the scan runs
+	if _, err := r.Search(context.Background(), NewTopNSearch(1, q)); !errors.Is(err, rejected) {
+		t.Fatalf("admission must reject before the vector scan runs, got %v", err)
+	}
+}
+
+func TestKNNQueryCancelled(t *testing.T) {
+	r := openKNNReader(t, InMemoryOnlyConfig())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := r.Search(ctx, NewTopNSearch(1, NewKNNQuery("v", []float32{1, 0}, 1)))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }

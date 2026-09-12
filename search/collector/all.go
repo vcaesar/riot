@@ -29,12 +29,14 @@ func NewAllCollector() *AllCollector {
 
 func (a *AllCollector) Collect(ctx context.Context, aggs search.Aggregations,
 	searcher search.Collectible) (search.DocumentMatchIterator, error) {
+	searchContext := search.NewSearchContext(searcher.DocumentMatchPoolSize(), 0)
+	searchContext.Ctx = ctx
 	return &AllIterator{
 		ctx:           ctx,
 		neededFields:  uniqueFields(aggs.Fields()),
 		bucket:        search.NewBucket("", aggs),
 		searcher:      searcher,
-		searchContext: search.NewSearchContext(searcher.DocumentMatchPoolSize(), 0),
+		searchContext: searchContext,
 	}, nil
 }
 

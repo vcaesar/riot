@@ -15,6 +15,7 @@
 package search
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -274,12 +275,15 @@ type SearcherOptions struct {
 type Context struct {
 	DocumentMatchPool *DocumentMatchPool
 	dvReaders         map[DocumentValueReadable]segment.DocumentValueReader
+	// Ctx is the caller's cancellation context; collectors set it from Collect.
+	Ctx context.Context
 }
 
 func NewSearchContext(size, sortSize int) *Context {
 	return &Context{
 		DocumentMatchPool: NewDocumentMatchPool(size, sortSize),
 		dvReaders:         make(map[DocumentValueReadable]segment.DocumentValueReader),
+		Ctx:               context.Background(),
 	}
 }
 

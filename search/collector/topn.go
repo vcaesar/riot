@@ -72,6 +72,7 @@ func NewTopNCollectorAfter(size int, sort search.SortOrder, after [][]byte, reve
 	rv.searchAfter = &search.DocumentMatch{
 		SortValue: after,
 	}
+	sort.DecodeScore(rv.searchAfter)
 
 	return rv
 }
@@ -136,6 +137,7 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 	}()
 
 	searchContext := search.NewSearchContext(hc.backingSize+searcher.DocumentMatchPoolSize(), len(hc.sort))
+	searchContext.Ctx = ctx
 
 	// add fields needed by aggregations
 	hc.neededFields = uniqueFields(append(hc.neededFields, aggs.Fields()...))
@@ -250,6 +252,7 @@ func (hc *TopNCollector) collectSingle(ctx *search.Context, d *search.DocumentMa
 func (hc *TopNCollector) finalizeResults() error {
 	var err error
 	hc.results, err = hc.store.Final(hc.skip, func(doc *search.DocumentMatch) error {
+		hc.sort.Complete(doc)
 		doc.Complete(nil)
 		return nil
 	})
