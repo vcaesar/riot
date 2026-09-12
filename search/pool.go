@@ -33,6 +33,10 @@ func defaultDocumentMatchPoolTooSmall(_ *DocumentMatchPool) *DocumentMatch {
 	return &DocumentMatch{}
 }
 
+// sortSlotBytes is the size of a prefix-coded int64, which is what score
+// and numeric sorts encode; longer text keys grow their slot on demand.
+const sortSlotBytes = 10
+
 // NewDocumentMatchPool will build a DocumentMatchPool with memory
 // pre-allocated to accommodate the requested number of DocumentMatch
 // instances
@@ -41,6 +45,10 @@ func NewDocumentMatchPool(size, sortSize int) *DocumentMatchPool {
 	// pre-allocate the expected number of instances
 	startBlock := make([]DocumentMatch, size)
 	startSorts := make([][]byte, size*sortSize)
+	startKeys := make([]byte, len(startSorts)*sortSlotBytes)
+	for k := range startSorts {
+		startSorts[k] = startKeys[k*sortSlotBytes : k*sortSlotBytes : (k+1)*sortSlotBytes]
+	}
 	// make these initial instances available
 	i, j := 0, 0
 	for i < size {

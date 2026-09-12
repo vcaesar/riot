@@ -195,7 +195,40 @@ func (q *BooleanQuery) initPrimarySearchers(i search.Reader, options search.Sear
 	return mustSearcher, shouldSearcher, mustNotSearcher, nil
 }
 
+// unwrapped returns the searcher a must-only or should-only query with
+// default scoring reduces to: its conjunction/disjunction (sum × boost 1),
+// or the single clause itself. It skips the wrapper layers so each hit is
+// not built two or three times; ok is false when the full BooleanSearcher
+// is needed.
+func (q *BooleanQuery) unwrapped(i search.Reader, options search.SearcherOptions) (
+	rv search.Searcher, ok bool, err error) {
+	if len(q.mustNots) > 0 || q.scorer != nil || q.boost.Value() != 1 || options.Explain {
+		return nil, false, nil
+	}
+	switch {
+	case len(q.musts) > 0 && len(q.shoulds) == 0:
+		if len(q.musts) == 1 {
+			rv, err = q.musts[0].Searcher(i, options)
+		} else {
+			rv, err = q.musts.conjunction(i, options)
+		}
+	case len(q.musts) == 0 && len(q.shoulds) > 0:
+		if len(q.shoulds) == 1 && q.minShould <= 1 {
+			rv, err = q.shoulds[0].Searcher(i, options)
+		} else {
+			rv, err = q.shoulds.disjunction(i, options, q.minShould)
+		}
+	default:
+		return nil, false, nil
+	}
+	return rv, true, err
+}
+
 func (q *BooleanQuery) Searcher(i search.Reader, options search.SearcherOptions) (rv search.Searcher, err error) {
+	if rv, ok, err := q.unwrapped(i, options); ok {
+		return rv, err
+	}
+
 	mustSearcher, shouldSearcher, mustNotSearcher, err := q.initPrimarySearchers(i, options)
 	if err != nil {
 		return nil, err

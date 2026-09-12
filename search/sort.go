@@ -17,6 +17,8 @@ package search
 import (
 	"bytes"
 	"strings"
+
+	"github.com/vcaesar/riot/numeric"
 )
 
 type SortOrder []*Sort
@@ -43,29 +45,87 @@ func (o SortOrder) Reverse() {
 
 // Compute fills match.SortValue, reusing the byte buffers a pooled
 // DocumentMatch already owns from a previous use so steady-state is
-// allocation free.
+// allocation free. Score sorts are compared on DocumentMatch.Score, so
+// their key is left empty until Complete encodes it for the final hits.
 func (o SortOrder) Compute(match *DocumentMatch) {
+	if o.scoreOnly() {
+		return
+	}
 	for i, sort := range o {
-		var buf []byte
-		if i < cap(match.SortValue) {
-			buf = match.SortValue[:i+1][i][:0]
+		buf := sortSlot(match, i)
+		if !sort.score {
+			buf = sort.appendValue(match, buf)
 		}
-		match.SortValue = append(match.SortValue[:i], sort.appendValue(match, buf))
+		match.SortValue = append(match.SortValue[:i], buf)
+	}
+}
+
+// Complete encodes the score sort keys Compute deferred, so a returned
+// hit's SortValue is a valid search-after key.
+func (o SortOrder) Complete(match *DocumentMatch) {
+	if len(match.SortValue) < len(o) { // Compute skipped a score-only order
+		for i := range o {
+			match.SortValue = append(match.SortValue[:i], sortSlot(match, i))
+		}
+	}
+	for i, sort := range o {
+		if sort.score {
+			match.SortValue[i] = sort.appendValue(match, match.SortValue[i][:0])
+		}
+	}
+}
+
+func (o SortOrder) scoreOnly() bool {
+	for _, sort := range o {
+		if !sort.score {
+			return false
+		}
+	}
+	return true
+}
+
+// sortSlot returns the byte buffer a pooled match still holds for sort i
+// beyond its current length, or nil.
+func sortSlot(match *DocumentMatch, i int) []byte {
+	if i < cap(match.SortValue) {
+		return match.SortValue[:i+1][i][:0]
+	}
+	return nil
+}
+
+// DecodeScore restores match.Score from the prefix-coded key of the
+// first score sort, so a DocumentMatch built from a search-after key
+// compares like a live hit. Keys that fail to decode leave Score at 0.
+func (o SortOrder) DecodeScore(match *DocumentMatch) {
+	for i, sort := range o {
+		if !sort.score || i >= len(match.SortValue) {
+			continue
+		}
+		if v, err := numeric.PrefixCoded(match.SortValue[i]).Int64(); err == nil {
+			match.Score = numeric.Int64ToFloat64(v)
+		}
+		return
 	}
 }
 
 func (o SortOrder) Compare(i, j *DocumentMatch) int {
 	// compare the documents on all search sorts until a differences is found
-	for x := range o {
-		c := 0
-
-		iVal := i.SortValue[x]
-		jVal := j.SortValue[x]
-		c = bytes.Compare(iVal, jVal)
+	for x, sort := range o {
+		var c int
+		if sort.score {
+			// NaN scores compare equal and fall through to the hit number
+			if i.Score > j.Score {
+				c = 1
+			} else if i.Score < j.Score {
+				c = -1
+			}
+		} else {
+			c = bytes.Compare(i.SortValue[x], j.SortValue[x])
+		}
 		if c == 0 {
 			continue
 		}
-		if o[x].desc {
+		if sort.desc {
 			c = -c
 		}
 		return c
@@ -85,10 +145,14 @@ type Sort struct {
 	source       TextValueSource
 	desc         bool
 	missingFirst bool
+	// score: source is the document score, compared as a float64 instead
+	// of through its prefix-coded key
+	score bool
 }
 
 func SortBy(source TextValueSource) *Sort {
 	rv := &Sort{}
+	_, rv.score = source.(*ScoreSource)
 
 	rv.source = MissingTextValue(source, &sortFirstLast{
 		desc:  &rv.desc,
