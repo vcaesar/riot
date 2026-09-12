@@ -19,6 +19,9 @@ import (
 	"fmt"
 
 	"github.com/vcaesar/ice/vec"
+
+	"github.com/vcaesar/riot/search"
+	"github.com/vcaesar/riot/search/knn"
 )
 
 // Metric specifies vector similarity, independently of text scoring.
@@ -60,4 +63,71 @@ func NewVectorField(name string, vector []float32) (*TermField, error) {
 func (r *Reader) SearchVectors(ctx context.Context, field string, query []float32, k int,
 	metric Metric, accept func(uint64) bool) ([]VectorMatch, error) {
 	return r.reader.SearchVectors(ctx, field, query, k, metric, accept)
+}
+
+// KNNQuery matches the k nearest documents to a vector, scored by
+// boost * similarity, so it composes with BooleanQuery, sorting and
+// aggregations. The vector search runs when the Searcher is built, using
+// context.Background; use Reader.SearchVectors for cancellation.
+type KNNQuery struct {
+	field  string
+	vector []float32
+	k      int
+	metric Metric
+	boost  *boost
+}
+
+// NewKNNQuery creates a cosine KNNQuery over field.
+func NewKNNQuery(field string, vector []float32, k int) *KNNQuery {
+	return &KNNQuery{field: field, vector: vector, k: k, metric: Cosine}
+}
+
+func (q *KNNQuery) SetField(f string) *KNNQuery {
+	q.field = f
+	return q
+}
+
+func (q *KNNQuery) Field() string {
+	return q.field
+}
+
+func (q *KNNQuery) SetMetric(m Metric) *KNNQuery {
+	q.metric = m
+	return q
+}
+
+func (q *KNNQuery) Metric() Metric {
+	return q.metric
+}
+
+func (q *KNNQuery) SetBoost(b float64) *KNNQuery {
+	boostVal := boost(b)
+	q.boost = &boostVal
+	return q
+}
+
+func (q *KNNQuery) Boost() float64 {
+	return q.boost.Value()
+}
+
+func (q *KNNQuery) K() int {
+	return q.k
+}
+
+func (q *KNNQuery) Vector() []float32 {
+	return q.vector
+}
+
+func (q *KNNQuery) Searcher(i search.Reader, options search.SearcherOptions) (search.Searcher, error) {
+	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+	return knn.NewSearcher(context.Background(), i, q.field, q.vector, q.k, q.metric, q.boost.Value(), nil, options)
+}
+
+func (q *KNNQuery) Validate() error {
+	if q.field == "" || q.k <= 0 {
+		return fmt.Errorf("knn query requires a non-empty field and positive k")
+	}
+	return vec.Validate(q.vector, q.metric)
 }
