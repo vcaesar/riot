@@ -192,6 +192,9 @@ func TestPostingsIteratorRecycledOnStaleAndReadOnlySnapshots(t *testing.T) {
 // shared stats objects, so merging across segments must not write into them.
 func TestSnapshotCollectionStatsDoesNotMutateSegmentStats(t *testing.T) {
 	cfg, cleanup := CreateConfig("TestSnapshotCollectionStats")
+	// keep both batches as separate segments: no in-memory merge, and the
+	// default merge plan budget (10 per tier) never merges two
+	cfg.MinSegmentsForInMemoryMerge = 3
 	defer func() {
 		if err := cleanup(); err != nil {
 			t.Log(err)
@@ -228,7 +231,7 @@ func TestSnapshotCollectionStatsDoesNotMutateSegmentStats(t *testing.T) {
 		}
 	}()
 	if len(reader.segment) < 2 {
-		t.Skipf("expected at least 2 segments, got %d", len(reader.segment))
+		t.Fatalf("expected at least 2 segments, got %d", len(reader.segment))
 	}
 	for i := 0; i < 3; i++ {
 		stats, err := reader.CollectionStats("name")
@@ -239,5 +242,42 @@ func TestSnapshotCollectionStatsDoesNotMutateSegmentStats(t *testing.T) {
 			t.Fatalf("call %d: stats = (%d, %d, %d), want (2, 2, 2)", i,
 				stats.TotalDocumentCount(), stats.DocumentCount(), stats.SumTotalTermFrequency())
 		}
+	}
+}
+
+// TestSnapshotCollectionStatsEmpty: with no segments there are no stats,
+// and the result must be a nil interface (similarity treats nil as "no
+// field"), not a typed nil pointer.
+func TestSnapshotCollectionStatsEmpty(t *testing.T) {
+	cfg, cleanup := CreateConfig("TestSnapshotCollectionStatsEmpty")
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Log(err)
+		}
+	}()
+	idx, err := OpenWriter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := idx.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	reader, err := idx.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	stats, err := reader.CollectionStats("name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != nil {
+		t.Fatalf("empty snapshot stats = %#v, want nil", stats)
 	}
 }

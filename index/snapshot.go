@@ -218,13 +218,22 @@ func (i *Snapshot) CollectionStats(field string) (segment.CollectionStats, error
 	}
 
 	// segments may hand out shared, immutable stats: merge into our own value
-	rv := &collectionStats{}
+	var rv *collectionStats
 	for _, seg := range i.segment {
 		segStats, err := seg.segment.CollectionStats(field)
 		if err != nil {
 			return nil, err
 		}
+		if segStats == nil {
+			continue
+		}
+		if rv == nil {
+			rv = &collectionStats{}
+		}
 		rv.Merge(segStats)
+	}
+	if rv == nil { // no segment contributed: nil, not a typed nil pointer
+		return nil, nil
 	}
 	return rv, nil
 }

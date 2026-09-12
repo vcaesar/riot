@@ -179,4 +179,14 @@ func TestBooleanShouldOnlyShortcut(t *testing.T) {
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// the wrapped (explain) build must not leave a default scorer behind
+	// that disables the shortcut for later default searches
+	if s, err = should2.Searcher(r.reader, opts); err != nil {
+		t.Fatal(err)
+	} else if _, ok := s.(*searcher.BooleanSearcher); ok {
+		t.Fatal("should-only boolean was not unwrapped after an explain search")
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
 }

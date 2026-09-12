@@ -95,13 +95,18 @@ func sortSlot(match *DocumentMatch, i int) []byte {
 
 // DecodeScore restores match.Score from the prefix-coded key of the
 // first score sort, so a DocumentMatch built from a search-after key
-// compares like a live hit. Keys that fail to decode leave Score at 0.
+// compares like a live hit. Keys that are not a full shift-0 encoding
+// (as ScoreSource writes) leave Score at 0.
 func (o SortOrder) DecodeScore(match *DocumentMatch) {
 	for i, sort := range o {
 		if !sort.score || i >= len(match.SortValue) {
 			continue
 		}
-		if v, err := numeric.PrefixCoded(match.SortValue[i]).Int64(); err == nil {
+		key := match.SortValue[i]
+		if valid, shift := numeric.ValidPrefixCodedTermBytes(key); !valid || shift != 0 {
+			return
+		}
+		if v, err := numeric.PrefixCoded(key).Int64(); err == nil {
 			match.Score = numeric.Int64ToFloat64(v)
 		}
 		return
@@ -113,10 +118,12 @@ func (o SortOrder) Compare(i, j *DocumentMatch) int {
 	for x, sort := range o {
 		var c int
 		if sort.score {
-			// NaN scores compare equal and fall through to the hit number
-			if i.Score > j.Score {
+			// compare the sortable bits so NaN and signed zero keep the
+			// total order the prefix-coded key had, without encoding it
+			si, sj := numeric.Float64ToInt64(i.Score), numeric.Float64ToInt64(j.Score)
+			if si > sj {
 				c = 1
-			} else if i.Score < j.Score {
+			} else if si < sj {
 				c = -1
 			}
 		} else {

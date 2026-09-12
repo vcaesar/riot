@@ -256,11 +256,14 @@ func (q *BooleanQuery) Searcher(i search.Reader, options search.SearcherOptions)
 		}
 	}
 
-	if q.scorer == nil {
-		q.scorer = similarity.NewCompositeSumScorerWithBoost(q.boost.Value())
+	// keep the default scorer local so unwrapped still sees q.scorer == nil
+	// on the next search
+	scorer := q.scorer
+	if scorer == nil {
+		scorer = similarity.NewCompositeSumScorerWithBoost(q.boost.Value())
 	}
 
-	return searcher.NewBooleanSearcher(mustSearcher, shouldSearcher, mustNotSearcher, q.scorer, options)
+	return searcher.NewBooleanSearcher(mustSearcher, shouldSearcher, mustNotSearcher, scorer, options)
 }
 
 func replaceMatchNoneWithNil(s search.Searcher) search.Searcher {

@@ -25,16 +25,18 @@ import (
 	"github.com/vcaesar/riot/search/similarity"
 )
 
-// multiTermIndex indexes numDocs documents whose "tag" field holds the
-// unique term "tNNN" plus "shared" so a prefix expands to numDocs terms.
-func multiTermIndex(t *testing.T, numDocs int) *Reader {
+// multiTermIndex indexes multiTermDocs documents whose "tag" field holds the
+// unique term "tNNN" plus "shared", so a prefix expands to multiTermDocs terms.
+const multiTermDocs = 40
+
+func multiTermIndex(t *testing.T) *Reader {
 	t.Helper()
 	w, err := OpenWriter(InMemoryOnlyConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	b := NewBatch()
-	for i := 0; i < numDocs; i++ {
+	for i := 0; i < multiTermDocs; i++ {
 		doc := NewDocument(fmt.Sprintf("%d", i)).
 			AddField(NewTextField("tag", fmt.Sprintf("t%03d shared", i)).SearchTermPositions())
 		b.Update(doc.ID(), doc)
@@ -80,13 +82,12 @@ func collectHits(t *testing.T, r *Reader, req SearchRequest) []*search.DocumentM
 // bitmap union: same hits, score == boost, exact count; and that the
 // scored disjunction is kept when locations are requested.
 func TestPrefixQueryConstantScore(t *testing.T) {
-	const numDocs = 40
-	r := multiTermIndex(t, numDocs)
+	r := multiTermIndex(t)
 
 	q := NewPrefixQuery("t").SetField("tag").SetBoost(2.5)
-	hits := collectHits(t, r, NewTopNSearch(numDocs, q).WithStandardAggregations())
-	if len(hits) != numDocs {
-		t.Fatalf("got %d hits, want %d", len(hits), numDocs)
+	hits := collectHits(t, r, NewTopNSearch(multiTermDocs, q).WithStandardAggregations())
+	if len(hits) != multiTermDocs {
+		t.Fatalf("got %d hits, want %d", len(hits), multiTermDocs)
 	}
 	for _, hit := range hits {
 		if hit.Score != 2.5 {
@@ -96,7 +97,7 @@ func TestPrefixQueryConstantScore(t *testing.T) {
 
 	// below the threshold every expanded term is scored
 	q = NewPrefixQuery("t00").SetField("tag")
-	hits = collectHits(t, r, NewTopNSearch(numDocs, q))
+	hits = collectHits(t, r, NewTopNSearch(multiTermDocs, q))
 	if len(hits) != 10 {
 		t.Fatalf("got %d hits, want 10", len(hits))
 	}
@@ -106,9 +107,9 @@ func TestPrefixQueryConstantScore(t *testing.T) {
 
 	// requesting locations needs the per-term searchers
 	q = NewPrefixQuery("t").SetField("tag")
-	hits = collectHits(t, r, NewTopNSearch(numDocs, q).IncludeLocations())
-	if len(hits) != numDocs {
-		t.Fatalf("got %d hits, want %d", len(hits), numDocs)
+	hits = collectHits(t, r, NewTopNSearch(multiTermDocs, q).IncludeLocations())
+	if len(hits) != multiTermDocs {
+		t.Fatalf("got %d hits, want %d", len(hits), multiTermDocs)
 	}
 	if len(hits[0].Locations) == 0 || hits[0].Score == 1 {
 		t.Fatalf("expected scored hit with locations, got score %v locations %v", hits[0].Score, hits[0].Locations)
@@ -118,20 +119,19 @@ func TestPrefixQueryConstantScore(t *testing.T) {
 	prev := searcher.MultiTermConstantScoreThreshold
 	searcher.MultiTermConstantScoreThreshold = 0
 	defer func() { searcher.MultiTermConstantScoreThreshold = prev }()
-	hits = collectHits(t, r, NewTopNSearch(numDocs, q))
-	if len(hits) != numDocs || hits[0].Score == 1 {
-		t.Fatalf("got %d hits, first score %v; want %d scored hits", len(hits), hits[0].Score, numDocs)
+	hits = collectHits(t, r, NewTopNSearch(multiTermDocs, q))
+	if len(hits) != multiTermDocs || hits[0].Score == 1 {
+		t.Fatalf("got %d hits, first score %v; want %d scored hits", len(hits), hits[0].Score, multiTermDocs)
 	}
 }
 
 // TestTermRangeQueryConstantScore covers the [][]byte multi-term entry
 // point through a term range wider than the threshold.
 func TestTermRangeQueryConstantScore(t *testing.T) {
-	const numDocs = 40
-	r := multiTermIndex(t, numDocs)
+	r := multiTermIndex(t)
 
 	q := NewTermRangeInclusiveQuery("t000", "t029", true, true).SetField("tag")
-	hits := collectHits(t, r, NewTopNSearch(numDocs, q).WithStandardAggregations())
+	hits := collectHits(t, r, NewTopNSearch(multiTermDocs, q).WithStandardAggregations())
 	if len(hits) != 30 {
 		t.Fatalf("got %d hits, want 30", len(hits))
 	}
@@ -142,13 +142,72 @@ func TestTermRangeQueryConstantScore(t *testing.T) {
 	}
 }
 
+// maxCompositeScorer is a non-default composite scorer: the constant-score
+// rewrite must not silently replace it.
+type maxCompositeScorer struct{}
+
+func (maxCompositeScorer) ScoreComposite(constituents []*search.DocumentMatch) float64 {
+	var rv float64
+	for _, c := range constituents {
+		if c.Score > rv {
+			rv = c.Score
+		}
+	}
+	return rv
+}
+
+func (maxCompositeScorer) ExplainComposite([]*search.DocumentMatch) *search.Explanation {
+	return nil
+}
+
+// TestMultiTermKeepsCustomCompositeScorer: a caller-provided composite
+// scorer disables the constant-score rewrite in both entry points.
+func TestMultiTermKeepsCustomCompositeScorer(t *testing.T) {
+	r := multiTermIndex(t)
+	opts := searchOptionsFromConfig(r.config, SearchOptions{})
+	terms := make([]string, multiTermDocs)
+	bterms := make([][]byte, multiTermDocs)
+	for i := range terms {
+		terms[i] = fmt.Sprintf("t%03d", i)
+		bterms[i] = []byte(terms[i])
+	}
+
+	for name, build := range map[string]func(search.CompositeScorer) (search.Searcher, error){
+		"string": func(cs search.CompositeScorer) (search.Searcher, error) {
+			return searcher.NewMultiTermSearcher(r.reader, terms, "tag", 1, nil, cs, opts, true)
+		},
+		"bytes": func(cs search.CompositeScorer) (search.Searcher, error) {
+			return searcher.NewMultiTermSearcherBytes(r.reader, bterms, "tag", 1, nil, cs, opts, true)
+		},
+	} {
+		s, err := build(similarity.NewCompositeSumScorer())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := s.(*searcher.TermSearcher); !ok {
+			t.Fatalf("%s: default composite scorer got %T, want constant-score *searcher.TermSearcher", name, s)
+		}
+		if err = s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if s, err = build(maxCompositeScorer{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := s.(*searcher.TermSearcher); ok {
+			t.Fatalf("%s: custom composite scorer was replaced by the constant-score rewrite", name)
+		}
+		if err = s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // TestMultiTermConstantScoreBatches drives the constant-score path with
 // DisjunctionMaxClauseCount smaller than the expansion and limit=false,
 // so the bitmap union is folded batch by batch through the previous
 // batch's unadorned searcher.
 func TestMultiTermConstantScoreBatches(t *testing.T) {
-	const numDocs = 40
-	r := multiTermIndex(t, numDocs)
+	r := multiTermIndex(t)
 
 	prevMax, prevThreshold := searcher.DisjunctionMaxClauseCount, searcher.MultiTermConstantScoreThreshold
 	searcher.DisjunctionMaxClauseCount, searcher.MultiTermConstantScoreThreshold = 7, 4
@@ -167,8 +226,8 @@ func TestMultiTermConstantScoreBatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if got := s.Count(); got != numDocs {
-		t.Fatalf("Count = %d, want exact union %d", got, numDocs)
+	if got := s.Count(); got != multiTermDocs {
+		t.Fatalf("Count = %d, want exact union %d", got, multiTermDocs)
 	}
 	ctx := search.NewSearchContext(s.DocumentMatchPoolSize(), 0)
 	var n int
@@ -184,8 +243,8 @@ func TestMultiTermConstantScoreBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != numDocs {
-		t.Fatalf("iterated %d hits, want %d", n, numDocs)
+	if n != multiTermDocs {
+		t.Fatalf("iterated %d hits, want %d", n, multiTermDocs)
 	}
 }
 

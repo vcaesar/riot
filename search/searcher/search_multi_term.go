@@ -44,7 +44,7 @@ func NewMultiTermSearcher(indexReader search.Reader, terms []string,
 		}
 	}
 
-	if score, ok := constantScoreMultiTerm(len(terms), boost, scorer, options); ok {
+	if score, ok := constantScoreMultiTerm(len(terms), boost, scorer, compScorer, options); ok {
 		bterms := make([][]byte, len(terms))
 		for i, term := range terms {
 			bterms[i] = []byte(term)
@@ -98,7 +98,7 @@ func NewMultiTermSearcherBytes(indexReader search.Reader, terms [][]byte,
 		}
 	}
 
-	if score, ok := constantScoreMultiTerm(len(terms), boost, scorer, options); ok {
+	if score, ok := constantScoreMultiTerm(len(terms), boost, scorer, compScorer, options); ok {
 		rv, err := newConstantScoreMultiTermSearcher(indexReader, terms, field, score, options)
 		if err != nil || rv != nil {
 			return rv, err
@@ -249,12 +249,15 @@ func optimizeMultiTermSearcherBytes(indexReader search.Reader, terms [][]byte,
 
 // constantScoreMultiTerm reports whether a multi-term searcher over
 // numTerms expansions should be built as a constant-score bitmap union,
-// and the score to use. Term vectors and custom (non-constant) scorers
-// need the per-term searchers.
+// and the score to use. Term vectors, custom (non-constant) scorers and
+// custom composite scorers need the per-term searchers.
 func constantScoreMultiTerm(numTerms int, boost float64, scorer search.Scorer,
-	options search.SearcherOptions) (float64, bool) {
+	compScorer search.CompositeScorer, options search.SearcherOptions) (float64, bool) {
 	if MultiTermConstantScoreThreshold <= 0 || numTerms <= MultiTermConstantScoreThreshold ||
 		options.IncludeTermVectors {
+		return 0, false
+	}
+	if _, ok := compScorer.(*similarity.CompositeSumScorer); !ok && compScorer != nil {
 		return 0, false
 	}
 	switch s := scorer.(type) {

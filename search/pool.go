@@ -33,9 +33,10 @@ func defaultDocumentMatchPoolTooSmall(_ *DocumentMatchPool) *DocumentMatch {
 	return &DocumentMatch{}
 }
 
-// sortSlotBytes is the size of a prefix-coded int64, which is what score
-// and numeric sorts encode; longer text keys grow their slot on demand.
-const sortSlotBytes = 10
+// sortSlotBytes is the size of a shift-0 prefix-coded int64 (shift byte
+// plus ten 7-bit payload bytes), which is what score and numeric sorts
+// encode; longer text keys grow their slot on demand.
+const sortSlotBytes = 11
 
 // NewDocumentMatchPool will build a DocumentMatchPool with memory
 // pre-allocated to accommodate the requested number of DocumentMatch

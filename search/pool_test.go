@@ -79,6 +79,13 @@ func TestDocumentMatchPoolPreallocatesSortKeys(t *testing.T) {
 	dmp := NewDocumentMatchPool(3, len(order))
 	a, b := dmp.Get(), dmp.Get()
 	a.Score, b.Score = 1, 2
+	// the very first Complete must land in the preallocated slot: AllocsPerRun
+	// warms up once, which would hide a too-small slot being grown
+	slot0 := &sortSlot(a, 0)[:1][0]
+	order.Complete(a)
+	if &a.SortValue[0][0] != slot0 {
+		t.Fatal("Complete on a fresh pooled match did not reuse its preallocated slot")
+	}
 	allocs := testing.AllocsPerRun(1, func() {
 		order.Complete(a)
 		order.Complete(b)

@@ -16,7 +16,10 @@ package search
 
 import (
 	"bytes"
+	"math"
 	"testing"
+
+	"github.com/vcaesar/riot/numeric"
 )
 
 // scratchSource returns a value backed by a buffer it overwrites on every
@@ -140,6 +143,51 @@ func TestSortOrderCompareScore(t *testing.T) {
 	order.DecodeScore(bad)
 	if bad.Score != 0 {
 		t.Fatalf("invalid key: Score = %v, want 0", bad.Score)
+	}
+	// a shift-4 key (numeric range term) or a truncated shift-0 key is
+	// not a score key: never decode bits from it
+	for name, key := range map[string][]byte{
+		"shift 4":   numeric.MustNewPrefixCodedInt64(numeric.Float64ToInt64(hi.Score), 4),
+		"truncated": hi.SortValue[0][:5],
+	} {
+		m := &DocumentMatch{SortValue: [][]byte{key, {1}}}
+		order.DecodeScore(m)
+		if m.Score != 0 {
+			t.Fatalf("%s key: Score = %v, want 0", name, m.Score)
+		}
+	}
+}
+
+// TestSortOrderCompareNaNScoreTotalOrder: NaN and signed zero must order
+// exactly like their prefix-coded keys so the collector heap stays
+// consistent when a custom scorer produces them.
+func TestSortOrderCompareNaNScoreTotalOrder(t *testing.T) {
+	order := SortOrder{SortBy(DocumentScore())}
+	matches := []*DocumentMatch{
+		{Score: math.NaN(), HitNumber: 1},
+		{Score: 1, HitNumber: 2},
+		{Score: math.Inf(-1), HitNumber: 3},
+		{Score: math.Copysign(0, -1), HitNumber: 4},
+		{Score: 0, HitNumber: 5},
+	}
+	keyed := func(i, j *DocumentMatch) int {
+		if c := bytes.Compare(DocumentScore().Value(i), DocumentScore().Value(j)); c != 0 {
+			return c
+		}
+		switch {
+		case i.HitNumber > j.HitNumber:
+			return 1
+		case i.HitNumber < j.HitNumber:
+			return -1
+		}
+		return 0
+	}
+	for _, i := range matches {
+		for _, j := range matches {
+			if got, want := order.Compare(i, j), keyed(i, j); got != want {
+				t.Fatalf("Compare(%v, %v) = %d, want %d (keyed)", i.Score, j.Score, got, want)
+			}
+		}
 	}
 }
 
