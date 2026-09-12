@@ -73,6 +73,18 @@ const optionScoringNone = "none"
 func optimizeCompositeSearcher(optimizationKind string,
 	indexReader search.Reader, qsearchers []search.Searcher,
 	options search.SearcherOptions) (search.Searcher, error) {
+	optimized, err := optimizeComposite(optimizationKind, qsearchers)
+	if err != nil || optimized == nil {
+		return nil, err
+	}
+
+	return newTermSearcherFromReader(indexReader, optimized,
+		[]byte(optimizationKind), "*", 1.0, similarity.ConstantScorer(1), options)
+}
+
+// optimizeComposite folds qsearchers into a single postings iterator, or
+// returns nil when any of them cannot take part in the optimization.
+func optimizeComposite(optimizationKind string, qsearchers []search.Searcher) (segment.PostingsIterator, error) {
 	var octx segment.OptimizableContext
 	for _, searcher := range qsearchers {
 		o, ok := searcher.(segment.Optimizable)
@@ -91,13 +103,7 @@ func optimizeCompositeSearcher(optimizationKind string,
 		}
 	}
 
-	optimized, err := octx.Finish()
-	if err != nil || optimized == nil {
-		return nil, err
-	}
-
-	return newTermSearcherFromReader(indexReader, optimized,
-		[]byte(optimizationKind), "*", 1.0, similarity.ConstantScorer(1), options)
+	return octx.Finish()
 }
 
 func tooManyClauses(count int) bool {

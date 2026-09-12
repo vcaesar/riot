@@ -304,24 +304,6 @@ func (o *optimizeDisjunctionUnadorned) Finish() (rv segment.PostingsIterator, er
 		return nil, nil
 	}
 
-	for i := range o.snapshot.segment {
-		var cMax uint64
-
-		for _, tfr := range o.tfrs {
-			itr, ok := tfr.iterators[i].(segment.OptimizablePostingsIterator)
-			if !ok {
-				return nil, nil
-			}
-
-			if itr.ActualBitmap() != nil {
-				c := itr.ActualBitmap().GetCardinality()
-				if cMax < c {
-					cMax = c
-				}
-			}
-		}
-	}
-
 	// We use an artificial term and field because the optimized
 	// termFieldReader can represent multiple terms and fields.
 	oTFR := o.snapshot.unadornedPostingsIterator(
@@ -356,7 +338,9 @@ func (o *optimizeDisjunctionUnadorned) Finish() (rv segment.PostingsIterator, er
 
 		var bm *roaring.Bitmap
 		if len(actualBMs) > preferHeapOr {
-			bm = roaring.HeapOr(actualBMs...)
+			// FastOr accumulates lazily into one bitmap; HeapOr
+			// materializes an intermediate bitmap per pairwise OR
+			bm = roaring.FastOr(actualBMs...)
 		} else if len(actualBMs) == preferHeapOr {
 			bm = roaring.Or(actualBMs[0], actualBMs[1])
 		} else if len(actualBMs) == 1 {
