@@ -1,48 +1,48 @@
-# ![Riot](docs/bluge.png) Riot
+# ![Riot](../docs/bluge.png) Riot
 
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/vcaesar/riot)](https://pkg.go.dev/github.com/vcaesar/riot)
 [![Tests](https://github.com/vcaesar/riot/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/tests.yml?query=event%3Apush+branch%3Amain)
 [![Lint](https://github.com/vcaesar/riot/actions/workflows/lint.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/lint.yml?query=event%3Apush+branch%3Amain)
 
-English | [简体中文](langs/README.zh.md) | [繁體中文](langs/README.zht.md) | [日本語](langs/README.ja.md) | [한국어](langs/README.ko.md) | [Français](langs/README.fr.md) | [Deutsch](langs/README.de.md) | [Español](langs/README.es.md) | [Русский](langs/README.ru.md) | [Português](langs/README.pt.md)
+[English](../README.md) | 简体中文 | [繁體中文](README.zht.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Español](README.es.md) | [Русский](README.ru.md) | [Português](README.pt.md)
 
-The fast modern text indexing in go, fork form the [bluge](https://github.com/blugelabs/bluge)
+快速、现代的 Go 语言全文索引库，fork 自 [bluge](https://github.com/blugelabs/bluge)
 
-## Features
+## 特性
 
-- Supported field types:
-  - Text, Numeric, Date, Boolean, IP, Geo Point, Vector
-- Supported query types:
-  - Term, Phrase, Match, Match Phrase, Prefix, Regexp, Wildcard, Fuzzy
-  - Conjunction, Disjunction, Boolean
-  - Numeric Range, Date Range, Term Range, IP Range
-  - Geo Bounding Box, Geo Distance, Geo Polygon, KNN
-- BM25 Similarity/Scoring with pluggable interfaces
-- Search result match highlighting
-- Extendable Aggregations:
-  - Bucketing
+- 支持的字段类型：
+  - 文本（Text）、数值（Numeric）、日期（Date）、布尔（Boolean）、IP、地理坐标（Geo Point）、向量（Vector）
+- 支持的查询类型：
+  - Term、Phrase、Match、Match Phrase、Prefix、Regexp、Wildcard、Fuzzy
+  - Conjunction、Disjunction、Boolean
+  - 数值范围（Numeric Range）、日期范围（Date Range）、词项范围（Term Range）、IP 范围（IP Range）
+  - 地理矩形（Geo Bounding Box）、地理距离（Geo Distance）、地理多边形（Geo Polygon）、KNN
+- BM25 相似度/打分，接口可插拔
+- 搜索结果匹配高亮
+- 可扩展的聚合：
+  - 分桶（Bucketing）
     - Terms
-    - Numeric Range
-    - Date Range
-  - Metrics
+    - 数值范围
+    - 日期范围
+  - 指标（Metrics）
     - Min/Max/Count/Sum
     - Avg/Weighted Avg
-    - Cardinality Estimation ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
-    - Quantile Approximation ([T-Digest](https://github.com/caio/go-tdigest))
+    - 基数估计（[HyperLogLog++](https://github.com/axiomhq/hyperloglog)）
+    - 分位数近似（[T-Digest](https://github.com/caio/go-tdigest)）
 
-## Installation
+## 安装
 
 ```sh
 go get -u github.com/vcaesar/riot
 ```
 
-## Usage
+## 使用
 
-Runnable versions of all three programs live in [`test/readme_demo`](test/readme_demo).
+下面三个程序的可运行版本位于 [`test/readme_demo`](../test/readme_demo)。
 
-### Indexing
+### 建立索引
 
-Save as `write/main.go` and run with `go run ./write`:
+保存为 `write/main.go`，然后运行 `go run ./write`：
 
 ```go
 package main
@@ -72,11 +72,11 @@ func main() {
 }
 ```
 
-### Querying
+### 查询
 
-Save as `read/main.go` and run with `go run ./read` against the index written above.
-If you index and search in the same process, use `writer.Reader()` instead of `riot.OpenReader`
-(or `riot.InMemoryOnlyConfig()` for an in-memory index):
+保存为 `read/main.go`，然后针对上面写入的索引运行 `go run ./read`。
+如果在同一进程中既建索引又搜索，请使用 `writer.Reader()` 而不是 `riot.OpenReader`
+（或者使用 `riot.InMemoryOnlyConfig()` 创建内存索引）：
 
 ```go
 package main
@@ -124,17 +124,16 @@ func main() {
 }
 ```
 
-Output:
+输出：
 
 ```
 match: example
 ```
 
-### Chinese / Japanese with gse
+### 使用 gse 处理中文 / 日文
 
-The [`gse`](gse) package wraps riot with a [gse](https://github.com/go-ego/gse) tokenizer for
-CJK text, plus query-string search and highlighting. Save as `gse/main.go` and run with
-`go run ./gse`:
+[`gse`](../gse) 包用 [gse](https://github.com/go-ego/gse) 分词器封装了 riot，
+用于 CJK 文本，并提供查询字符串搜索和高亮。保存为 `gse/main.go`，然后运行 `go run ./gse`：
 
 ```go
 package main
@@ -191,7 +190,7 @@ func main() {
 }
 ```
 
-Output:
+输出：
 
 ```
 query "運命の犠牲者": 2 hits in 14.5µs
@@ -203,10 +202,6 @@ query "vaudevillian": 1 hits in 1.958µs
   4 (0.657) [In view, humble <mark>vaudevillian</mark> veteran cast vicariously as both victim and villain vicissitudes of fate.]
 ```
 
-<!-- ## Repobeats
-
-![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
-
-## License
+## 许可证
 
 Apache License Version 2.0

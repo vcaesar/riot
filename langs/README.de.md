@@ -1,34 +1,34 @@
-# ![Riot](docs/bluge.png) Riot
+# ![Riot](../docs/bluge.png) Riot
 
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/vcaesar/riot)](https://pkg.go.dev/github.com/vcaesar/riot)
 [![Tests](https://github.com/vcaesar/riot/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/tests.yml?query=event%3Apush+branch%3Amain)
 [![Lint](https://github.com/vcaesar/riot/actions/workflows/lint.yml/badge.svg?branch=main&event=push)](https://github.com/vcaesar/riot/actions/workflows/lint.yml?query=event%3Apush+branch%3Amain)
 
-English | [简体中文](langs/README.zh.md) | [繁體中文](langs/README.zht.md) | [日本語](langs/README.ja.md) | [한국어](langs/README.ko.md) | [Français](langs/README.fr.md) | [Deutsch](langs/README.de.md) | [Español](langs/README.es.md) | [Русский](langs/README.ru.md) | [Português](langs/README.pt.md)
+[English](../README.md) | [简体中文](README.zh.md) | [繁體中文](README.zht.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Français](README.fr.md) | Deutsch | [Español](README.es.md) | [Русский](README.ru.md) | [Português](README.pt.md)
 
-The fast modern text indexing in go, fork form the [bluge](https://github.com/blugelabs/bluge)
+Schnelle, moderne Volltextindizierung in Go, Fork von [bluge](https://github.com/blugelabs/bluge)
 
-## Features
+## Funktionen
 
-- Supported field types:
+- Unterstützte Feldtypen:
   - Text, Numeric, Date, Boolean, IP, Geo Point, Vector
-- Supported query types:
+- Unterstützte Abfragetypen:
   - Term, Phrase, Match, Match Phrase, Prefix, Regexp, Wildcard, Fuzzy
   - Conjunction, Disjunction, Boolean
   - Numeric Range, Date Range, Term Range, IP Range
   - Geo Bounding Box, Geo Distance, Geo Polygon, KNN
-- BM25 Similarity/Scoring with pluggable interfaces
-- Search result match highlighting
-- Extendable Aggregations:
+- BM25-Ähnlichkeit/Scoring mit austauschbaren Schnittstellen
+- Hervorhebung der Treffer in Suchergebnissen
+- Erweiterbare Aggregationen:
   - Bucketing
     - Terms
     - Numeric Range
     - Date Range
-  - Metrics
+  - Metriken
     - Min/Max/Count/Sum
     - Avg/Weighted Avg
-    - Cardinality Estimation ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
-    - Quantile Approximation ([T-Digest](https://github.com/caio/go-tdigest))
+    - Kardinalitätsschätzung ([HyperLogLog++](https://github.com/axiomhq/hyperloglog))
+    - Quantil-Approximation ([T-Digest](https://github.com/caio/go-tdigest))
 
 ## Installation
 
@@ -36,13 +36,13 @@ The fast modern text indexing in go, fork form the [bluge](https://github.com/bl
 go get -u github.com/vcaesar/riot
 ```
 
-## Usage
+## Verwendung
 
-Runnable versions of all three programs live in [`test/readme_demo`](test/readme_demo).
+Lauffähige Versionen aller drei Programme liegen in [`test/readme_demo`](../test/readme_demo).
 
-### Indexing
+### Indizieren
 
-Save as `write/main.go` and run with `go run ./write`:
+Als `write/main.go` speichern und mit `go run ./write` ausführen:
 
 ```go
 package main
@@ -72,11 +72,11 @@ func main() {
 }
 ```
 
-### Querying
+### Abfragen
 
-Save as `read/main.go` and run with `go run ./read` against the index written above.
-If you index and search in the same process, use `writer.Reader()` instead of `riot.OpenReader`
-(or `riot.InMemoryOnlyConfig()` for an in-memory index):
+Als `read/main.go` speichern und mit `go run ./read` gegen den oben erstellten Index ausführen.
+Wenn Sie im selben Prozess indizieren und suchen, verwenden Sie `writer.Reader()` statt `riot.OpenReader`
+(oder `riot.InMemoryOnlyConfig()` für einen In-Memory-Index):
 
 ```go
 package main
@@ -124,17 +124,17 @@ func main() {
 }
 ```
 
-Output:
+Ausgabe:
 
 ```
 match: example
 ```
 
-### Chinese / Japanese with gse
+### Chinesisch / Japanisch mit gse
 
-The [`gse`](gse) package wraps riot with a [gse](https://github.com/go-ego/gse) tokenizer for
-CJK text, plus query-string search and highlighting. Save as `gse/main.go` and run with
-`go run ./gse`:
+Das Paket [`gse`](../gse) kapselt riot mit einem [gse](https://github.com/go-ego/gse)-Tokenizer für
+CJK-Text und bietet zusätzlich Query-String-Suche und Hervorhebung. Als `gse/main.go` speichern und mit
+`go run ./gse` ausführen:
 
 ```go
 package main
@@ -191,7 +191,7 @@ func main() {
 }
 ```
 
-Output:
+Ausgabe:
 
 ```
 query "運命の犠牲者": 2 hits in 14.5µs
@@ -203,10 +203,6 @@ query "vaudevillian": 1 hits in 1.958µs
   4 (0.657) [In view, humble <mark>vaudevillian</mark> veteran cast vicariously as both victim and villain vicissitudes of fate.]
 ```
 
-<!-- ## Repobeats
-
-![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
-
-## License
+## Lizenz
 
 Apache License Version 2.0
