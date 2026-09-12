@@ -201,6 +201,12 @@ linters:
           - gocritic
         text: "config is heavy"
 
+      # gse.Option is passed by value like Config (gse-bleve API shape)
+      - path: gse/
+        linters:
+          - gocritic
+        text: "opt is heavy"
+
 formatters:
   enable:
     - gofmt

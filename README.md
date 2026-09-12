@@ -35,7 +35,7 @@ go get -u github.com/vcaesar/riot
 
 ## Usage
 
-Runnable versions of both programs live in [`test/readme_demo`](test/readme_demo).
+Runnable versions of all three programs live in [`test/readme_demo`](test/readme_demo).
 
 ### Indexing
 
@@ -125,6 +125,79 @@ Output:
 
 ```
 match: example
+```
+
+### Chinese / Japanese with gse
+
+The [`gse`](gse) package wraps riot with a [gse](https://github.com/go-ego/gse) tokenizer for
+CJK text, plus query-string search and highlighting. Save as `gse/main.go` and run with
+`go run ./gse`:
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/vcaesar/riot/gse"
+)
+
+func main() {
+	opt := gse.Option{
+		Index: "test.riot",
+		Dicts: "embed, ja", // or "embed, zh"
+		Opt:   "search-hmm",
+	}
+	// Option{Lang: "en"} skips gse and uses a riot analysis/lang analyzer
+	// instead ("en", "cjk", "de", ...; see gse.Langs()).
+	defer os.RemoveAll(opt.Index)
+
+	index, err := gse.New(opt)
+	if err != nil {
+		log.Fatalf("error opening gse index: %v", err)
+	}
+	defer index.Close()
+
+	text := `見解では、謙虚なヴォードヴィリアンのベテランは、運命の犠牲者と悪役の両方の変遷として代償を払っています`
+	docs := map[string]string{
+		"1": text,
+		"3": text + "浮き沈み",
+		"4": `In view, a humble vaudevillian veteran cast vicariously as both victim and villain vicissitudes of fate.`,
+		"2": `It's difficult to understand the sum of a person's life.`,
+		"5": `Riot 是用 Go 语言编写的全文搜索引擎`,
+	}
+	for id, doc := range docs {
+		if err = index.Index(id, doc); err != nil {
+			log.Fatalf("error indexing %s: %v", id, err)
+		}
+	}
+
+	for _, query := range []string{"運命の犠牲者", "搜索引擎", "vaudevillian"} {
+		req := gse.NewQueryString(query, true)
+		res, err := index.Search(req)
+		if err != nil {
+			log.Fatalf("error searching %q: %v", query, err)
+		}
+		fmt.Printf("query %q: %d hits in %v\n", query, res.Total, res.Took)
+		for _, hit := range res.Hits {
+			fmt.Printf("  %s (%.3f) %v\n", hit.ID, hit.Score, hit.Fragments["text"])
+		}
+	}
+}
+```
+
+Output:
+
+```
+query "運命の犠牲者": 2 hits in 14.5µs
+  1 (1.909) [見解では、謙虚なヴォードヴィリアンのベテランは、<mark>運命</mark><mark>の</mark><mark>犠</mark><mark>牲</mark><mark>者</mark>と悪役<mark>の</mark>両方<mark>の</mark>変遷として代償を払っています]
+  3 (1.846) [見解では、謙虚なヴォードヴィリアンのベテランは、<mark>運命</mark><mark>の</mark><mark>犠</mark><mark>牲</mark><mark>者</mark>と悪役<mark>の</mark>両方<mark>の</mark>変遷として代償を払っています浮き沈み]
+query "搜索引擎": 1 hits in 19.792µs
+  5 (1.536) [Riot 是用 Go 语言编写的全文<mark>搜索</mark><mark>引擎</mark>]
+query "vaudevillian": 1 hits in 1.958µs
+  4 (0.657) [In view, humble <mark>vaudevillian</mark> veteran cast vicariously as both victim and villain vicissitudes of fate.]
 ```
 
 <!-- ## Repobeats
