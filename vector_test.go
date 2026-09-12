@@ -16,9 +16,11 @@ package riot
 
 import (
 	"context"
+	"errors"
 	"math"
 	"os"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/vcaesar/ice/vec"
@@ -196,9 +198,13 @@ func knnIDs(t *testing.T, r *Reader, q Query, explain bool) (ids []string, score
 	if err != nil {
 		t.Fatal(err)
 	}
-	for m, err := itr.Next(); m != nil; m, err = itr.Next() {
+	for {
+		m, err := itr.Next()
 		if err != nil {
 			t.Fatal(err)
+		}
+		if m == nil {
+			return ids, scores
 		}
 		if explain && m.Explanation == nil {
 			t.Fatal("missing explanation")
@@ -215,7 +221,6 @@ func knnIDs(t *testing.T, r *Reader, q Query, explain bool) (ids []string, score
 		ids = append(ids, id)
 		scores = append(scores, m.Score)
 	}
-	return ids, scores
 }
 
 func TestKNNQuery(t *testing.T) {
@@ -279,7 +284,14 @@ func TestKNNQuery(t *testing.T) {
 	})
 	t.Run("cosine default", func(t *testing.T) {
 		ids, scores := knnIDs(t, r, NewKNNQuery("v", []float32{1, 0}, 4), false)
-		if !reflect.DeepEqual(ids, []string{"a", "b", "c", "d"}) || scores[3] != -1 {
+		if len(ids) != 4 {
+			t.Fatalf("got %v %v", ids, scores)
+		}
+		// a, b, c are collinear with the query: a three-way tie at 1, order unspecified.
+		tied := append([]string(nil), ids[:3]...)
+		sort.Strings(tied)
+		if !reflect.DeepEqual(tied, []string{"a", "b", "c"}) || ids[3] != "d" ||
+			!reflect.DeepEqual(scores, []float64{1, 1, 1, -1}) {
 			t.Fatalf("got %v %v", ids, scores)
 		}
 	})
@@ -303,4 +315,50 @@ func TestKNNQuery(t *testing.T) {
 			t.Error("expected dimension mismatch error")
 		}
 	})
+}
+
+func openKNNReader(t *testing.T, config Config) *Reader {
+	t.Helper()
+	w, err := OpenWriter(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	d := vectorDocument(t, "a", []float32{1, 0})
+	if err := w.Update(d.ID(), d); err != nil {
+		t.Fatal(err)
+	}
+	r, err := w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return r
+}
+
+func TestKNNQueryAdmissionBeforeScan(t *testing.T) {
+	rejected := errors.New("rejected")
+	r := openKNNReader(t, InMemoryOnlyConfig().WithSearchStartFunc(func(uint64) error { return rejected }))
+	q := NewKNNQuery("v", []float32{1}, 1) // dimension mismatch: only fails if the scan runs
+	if _, err := r.Search(context.Background(), NewTopNSearch(1, q)); !errors.Is(err, rejected) {
+		t.Fatalf("admission must reject before the vector scan runs, got %v", err)
+	}
+}
+
+func TestKNNQueryCancelled(t *testing.T) {
+	r := openKNNReader(t, InMemoryOnlyConfig())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := r.Search(ctx, NewTopNSearch(1, NewKNNQuery("v", []float32{1, 0}, 1)))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
 }

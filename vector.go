@@ -67,8 +67,8 @@ func (r *Reader) SearchVectors(ctx context.Context, field string, query []float3
 
 // KNNQuery matches the k nearest documents to a vector, scored by
 // boost * similarity, so it composes with BooleanQuery, sorting and
-// aggregations. The vector search runs when the Searcher is built, using
-// context.Background; use Reader.SearchVectors for cancellation.
+// aggregations. The vector scan runs on first use under the context passed
+// to Reader.Search, after Config.SearchStartFunc admission.
 type KNNQuery struct {
 	field  string
 	vector []float32
@@ -119,15 +119,9 @@ func (q *KNNQuery) Vector() []float32 {
 }
 
 func (q *KNNQuery) Searcher(i search.Reader, options search.SearcherOptions) (search.Searcher, error) {
-	if err := q.Validate(); err != nil {
-		return nil, err
-	}
-	return knn.NewSearcher(context.Background(), i, q.field, q.vector, q.k, q.metric, q.boost.Value(), nil, options)
+	return knn.NewSearcher(i, q.field, q.vector, q.k, q.metric, q.boost.Value(), nil, options)
 }
 
 func (q *KNNQuery) Validate() error {
-	if q.field == "" || q.k <= 0 {
-		return fmt.Errorf("knn query requires a non-empty field and positive k")
-	}
-	return vec.Validate(q.vector, q.metric)
+	return knn.Validate(q.field, q.vector, q.k, q.metric)
 }

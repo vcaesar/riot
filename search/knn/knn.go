@@ -33,50 +33,92 @@ type VectorReader interface {
 		metric vec.Metric, accept func(uint64) bool) ([]vec.Match, error)
 }
 
-// Searcher yields the k nearest documents in ascending document number order,
-// scored by boost * similarity. The vector search runs once in NewSearcher.
-type Searcher struct {
-	reader  search.Reader
-	matches []vec.Match
-	pos     int
-	field   string
-	metric  vec.Metric
-	boost   float64
-	explain bool
+// Validate reports whether the parameters describe a runnable KNN search.
+func Validate(field string, query []float32, k int, metric vec.Metric) error {
+	if field == "" || k <= 0 {
+		return fmt.Errorf("knn search requires a non-empty field and positive k")
+	}
+	return vec.Validate(query, metric)
 }
 
-// NewSearcher runs the vector search eagerly. indexReader must implement
-// VectorReader. accept may be nil; otherwise it prefilters document numbers.
-func NewSearcher(ctx context.Context, indexReader search.Reader, field string, query []float32, k int,
+// Searcher yields the k nearest documents in ascending document number order,
+// scored by boost * similarity. The vector scan is deferred to the first Next
+// or Advance so it runs after search admission (Config.SearchStartFunc) and
+// under the collector's search.Context.Ctx for cancellation.
+type Searcher struct {
+	reader  search.Reader
+	vectors VectorReader
+	field   string
+	query   []float32
+	k       int
+	metric  vec.Metric
+	boost   float64
+	accept  func(uint64) bool
+	explain bool
+
+	matches []vec.Match
+	ran     bool
+	err     error
+	pos     int
+}
+
+// NewSearcher validates the parameters without scanning. indexReader must
+// implement VectorReader. accept may be nil; otherwise it prefilters
+// document numbers.
+func NewSearcher(indexReader search.Reader, field string, query []float32, k int,
 	metric vec.Metric, boost float64, accept func(uint64) bool, options search.SearcherOptions) (*Searcher, error) {
-	vr, ok := indexReader.(VectorReader)
+	vectors, ok := indexReader.(VectorReader)
 	if !ok {
 		return nil, fmt.Errorf("reader %T does not support vector search", indexReader)
 	}
-	matches, err := vr.SearchVectors(ctx, field, query, k, metric, accept)
-	if err != nil {
-		return nil, fmt.Errorf("error searching vectors: %w", err)
+	if err := Validate(field, query, k, metric); err != nil {
+		return nil, err
 	}
-	sort.Slice(matches, func(i, j int) bool { return matches[i].Number < matches[j].Number })
 	return &Searcher{
 		reader:  indexReader,
-		matches: matches,
+		vectors: vectors,
 		field:   field,
+		query:   query,
+		k:       k,
 		metric:  metric,
 		boost:   boost,
+		accept:  accept,
 		explain: options.Explain,
 	}, nil
 }
 
-func (s *Searcher) Size() int {
-	return reflectStaticSizeSearcher + sizeOfPtr + len(s.matches)*reflectStaticSizeMatch
+func (s *Searcher) run(ctx *search.Context) error {
+	if s.ran {
+		return s.err
+	}
+	s.ran = true
+	matches, err := s.vectors.SearchVectors(ctx.Ctx, s.field, s.query, s.k, s.metric, s.accept)
+	if err != nil {
+		s.err = fmt.Errorf("error searching vectors: %w", err)
+		return s.err
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].Number < matches[j].Number })
+	s.matches = matches
+	return nil
 }
 
+// Size estimates memory for k matches; it is used for admission before the scan runs.
+func (s *Searcher) Size() int {
+	return reflectStaticSizeSearcher + sizeOfPtr + len(s.query)*sizeOfFloat32 + s.k*reflectStaticSizeMatch
+}
+
+// Count returns k until the scan has run, then the number of matches.
 func (s *Searcher) Count() uint64 {
+	if !s.ran {
+		return uint64(s.k) // #nosec G115 -- Validate rejects k <= 0.
+	}
 	return uint64(len(s.matches))
 }
 
 func (s *Searcher) Next(ctx *search.Context) (*search.DocumentMatch, error) {
+	if err := s.run(ctx); err != nil {
+		return nil, err
+	}
 	if s.pos >= len(s.matches) {
 		return nil, nil
 	}
@@ -86,6 +128,9 @@ func (s *Searcher) Next(ctx *search.Context) (*search.DocumentMatch, error) {
 }
 
 func (s *Searcher) Advance(ctx *search.Context, number uint64) (*search.DocumentMatch, error) {
+	if err := s.run(ctx); err != nil {
+		return nil, err
+	}
 	s.pos += sort.Search(len(s.matches)-s.pos, func(i int) bool {
 		return s.matches[s.pos+i].Number >= number
 	})

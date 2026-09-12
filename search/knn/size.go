@@ -23,6 +23,8 @@ import (
 func init() {
 	var ptr *int
 	sizeOfPtr = int(reflect.TypeOf(ptr).Size())
+	var f float32
+	sizeOfFloat32 = int(reflect.TypeOf(f).Size())
 	var s Searcher
 	reflectStaticSizeSearcher = int(reflect.TypeOf(s).Size())
 	var m vec.Match
@@ -30,5 +32,6 @@ func init() {
 }
 
 var sizeOfPtr int
+var sizeOfFloat32 int
 var reflectStaticSizeSearcher int
 var reflectStaticSizeMatch int

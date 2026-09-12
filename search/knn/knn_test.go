@@ -31,14 +31,20 @@ import (
 type stubReader struct {
 	matches []vec.Match
 	err     error
+	calls   int
+	ctx     context.Context
 	field   string
 	k       int
 	accept  func(uint64) bool
 }
 
-func (s *stubReader) SearchVectors(_ context.Context, field string, _ []float32, k int,
+func (s *stubReader) SearchVectors(ctx context.Context, field string, _ []float32, k int,
 	_ vec.Metric, accept func(uint64) bool) ([]vec.Match, error) {
-	s.field, s.k, s.accept = field, k, accept
+	s.calls++
+	s.ctx, s.field, s.k, s.accept = ctx, field, k, accept
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return s.matches, s.err
 }
 
@@ -62,17 +68,15 @@ func (noVectorReader) SearchVectors() {}
 
 func newSearcher(t *testing.T, r search.Reader, boost float64, explain bool) *Searcher {
 	t.Helper()
-	s, err := NewSearcher(context.Background(), r, "v", []float32{1, 0}, 3, vec.DotProduct, boost, nil,
-		search.SearcherOptions{Explain: explain})
+	s, err := NewSearcher(r, "v", []float32{1, 0}, 3, vec.DotProduct, boost, nil, search.SearcherOptions{Explain: explain})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s
 }
 
-func drain(t *testing.T, s *Searcher) (numbers []uint64, scores []float64) {
+func drain(t *testing.T, s *Searcher, ctx *search.Context) (numbers []uint64, scores []float64) {
 	t.Helper()
-	ctx := search.NewSearchContext(s.DocumentMatchPoolSize(), 0)
 	for {
 		m, err := s.Next(ctx)
 		if err != nil {
@@ -86,7 +90,7 @@ func drain(t *testing.T, s *Searcher) (numbers []uint64, scores []float64) {
 	}
 }
 
-func TestSearcherOrderAndScore(t *testing.T) {
+func TestSearcherLazyScan(t *testing.T) {
 	r := &stubReader{matches: []vec.Match{{Number: 7, Score: 0.9}, {Number: 2, Score: 0.5}, {Number: 4, Score: 0.7}}}
 	s := newSearcher(t, r, 2, false)
 	defer func() {
@@ -94,15 +98,22 @@ func TestSearcherOrderAndScore(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	if r.field != "v" || r.k != 3 || r.accept != nil {
-		t.Fatalf("reader called with field %q k %d accept %v", r.field, r.k, r.accept != nil)
+	// Admission (Size/Count) must not trigger the scan.
+	if r.calls != 0 || s.Count() != 3 || s.Min() != 0 || s.Size() <= 0 {
+		t.Fatalf("calls %d count %d min %d size %d", r.calls, s.Count(), s.Min(), s.Size())
 	}
-	if s.Count() != 3 || s.Min() != 0 || s.Size() <= 0 {
-		t.Fatalf("count %d min %d size %d", s.Count(), s.Min(), s.Size())
-	}
-	numbers, scores := drain(t, s)
+	ctx := search.NewSearchContext(s.DocumentMatchPoolSize(), 0)
+	type key struct{}
+	ctx.Ctx = context.WithValue(context.Background(), key{}, "search")
+	numbers, scores := drain(t, s, ctx)
 	if !reflect.DeepEqual(numbers, []uint64{2, 4, 7}) || !reflect.DeepEqual(scores, []float64{1, 1.4, 1.8}) {
 		t.Fatalf("got %v %v", numbers, scores)
+	}
+	if r.calls != 1 || r.field != "v" || r.k != 3 || r.accept != nil || r.ctx.Value(key{}) != "search" {
+		t.Fatalf("reader called %d times with field %q k %d accept %v ctx %v", r.calls, r.field, r.k, r.accept != nil, r.ctx)
+	}
+	if s.Count() != 3 {
+		t.Fatalf("count after scan %d", s.Count())
 	}
 }
 
@@ -153,8 +164,11 @@ func TestSearcherExplain(t *testing.T) {
 func TestSearcherPrefilter(t *testing.T) {
 	r := &stubReader{}
 	accept := func(n uint64) bool { return n%2 == 0 }
-	_, err := NewSearcher(context.Background(), r, "v", []float32{1}, 1, vec.L2, 1, accept, search.SearcherOptions{})
+	s, err := NewSearcher(r, "v", []float32{1}, 1, vec.L2, 1, accept, search.SearcherOptions{})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Next(search.NewSearchContext(1, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if r.accept == nil || !r.accept(2) || r.accept(3) {
@@ -162,16 +176,55 @@ func TestSearcherPrefilter(t *testing.T) {
 	}
 }
 
+func TestSearcherCancelled(t *testing.T) {
+	r := &stubReader{matches: []vec.Match{{Number: 1, Score: 1}}}
+	s := newSearcher(t, r, 1, false)
+	ctx := search.NewSearchContext(1, 0)
+	var cancel context.CancelFunc
+	ctx.Ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	for _, step := range []func() (*search.DocumentMatch, error){
+		func() (*search.DocumentMatch, error) { return s.Next(ctx) },
+		func() (*search.DocumentMatch, error) { return s.Advance(ctx, 1) },
+	} {
+		m, err := step()
+		if m != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v %v, want context.Canceled", m, err)
+		}
+	}
+	// Failed scan is not retried.
+	if r.calls != 1 {
+		t.Fatalf("reader called %d times", r.calls)
+	}
+}
+
 func TestSearcherErrors(t *testing.T) {
 	boom := errors.New("boom")
-	_, err := NewSearcher(context.Background(), &stubReader{err: boom}, "v", []float32{1}, 1, vec.L2, 1, nil,
-		search.SearcherOptions{})
-	if !errors.Is(err, boom) {
+	s, err := NewSearcher(&stubReader{err: boom}, "v", []float32{1}, 1, vec.L2, 1, nil, search.SearcherOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Next(search.NewSearchContext(1, 0)); !errors.Is(err, boom) {
 		t.Fatalf("expected wrapped reader error, got %v", err)
 	}
-	_, err = NewSearcher(context.Background(), noVectorReader{&stubReader{}}, "v", []float32{1}, 1, vec.L2, 1, nil,
-		search.SearcherOptions{})
+	_, err = NewSearcher(noVectorReader{&stubReader{}}, "v", []float32{1}, 1, vec.L2, 1, nil, search.SearcherOptions{})
 	if err == nil || !strings.Contains(err.Error(), "does not support vector search") {
 		t.Fatalf("expected unsupported reader error, got %v", err)
+	}
+	for name, args := range map[string]struct {
+		field  string
+		query  []float32
+		k      int
+		metric vec.Metric
+	}{
+		"empty field": {"", []float32{1}, 1, vec.L2},
+		"zero k":      {"v", []float32{1}, 0, vec.L2},
+		"bad vector":  {"v", nil, 1, vec.L2},
+		"bad metric":  {"v", []float32{1}, 1, "manhattan"},
+	} {
+		if _, err := NewSearcher(&stubReader{}, args.field, args.query, args.k, args.metric, 1, nil,
+			search.SearcherOptions{}); err == nil {
+			t.Errorf("%s: expected validation error", name)
+		}
 	}
 }
