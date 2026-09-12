@@ -15,8 +15,10 @@
 package riot
 
 import (
+	"bytes"
 	"fmt"
 	"math"
+	"net"
 	"strings"
 	"time"
 
@@ -1439,6 +1441,93 @@ func (q *TermRangeQuery) Min() (string, bool) {
 // Max returns the query upperbound and if the upper bound is included in the query
 func (q *TermRangeQuery) Max() (string, bool) {
 	return q.max, q.inclusiveMax
+}
+
+// NewBooleanFieldQuery creates a Query matching documents whose
+// NewBooleanField holds the given value.
+func NewBooleanFieldQuery(value bool) *TermQuery {
+	if value {
+		return NewTermQuery(booleanTrueTerm)
+	}
+	return NewTermQuery(booleanFalseTerm)
+}
+
+type IPRangeQuery struct {
+	cidr   string
+	field  string
+	boost  *boost
+	scorer search.Scorer
+}
+
+// NewIPRangeQuery creates a Query matching NewIPField values inside the
+// given network, in CIDR notation ("10.0.0.0/8", "2001:db8::/32"). A bare
+// address ("10.0.0.1") matches exactly that address.
+func NewIPRangeQuery(cidr string) *IPRangeQuery {
+	return &IPRangeQuery{
+		cidr: cidr,
+	}
+}
+
+func (q *IPRangeQuery) SetBoost(b float64) *IPRangeQuery {
+	boostVal := boost(b)
+	q.boost = &boostVal
+	return q
+}
+
+func (q *IPRangeQuery) Boost() float64 {
+	return q.boost.Value()
+}
+
+func (q *IPRangeQuery) SetField(f string) *IPRangeQuery {
+	q.field = f
+	return q
+}
+
+func (q *IPRangeQuery) Field() string {
+	return q.field
+}
+
+// CIDR returns the network being queried.
+func (q *IPRangeQuery) CIDR() string {
+	return q.cidr
+}
+
+func (q *IPRangeQuery) Searcher(i search.Reader, options search.SearcherOptions) (search.Searcher, error) {
+	field := q.field
+	if q.field == "" {
+		field = options.DefaultSearchField
+	}
+	ipNet, err := q.ipNet()
+	if err != nil {
+		return nil, err
+	}
+	minTerm := ipNet.IP.To16()
+	mask := ipNet.Mask
+	if len(mask) == net.IPv4len {
+		mask = append(bytes.Repeat([]byte{0xff}, net.IPv6len-net.IPv4len), mask...)
+	}
+	maxTerm := make([]byte, net.IPv6len)
+	for idx := range maxTerm {
+		maxTerm[idx] = minTerm[idx] | ^mask[idx]
+	}
+	return searcher.NewTermRangeSearcher(i, minTerm, maxTerm, true, true, field,
+		q.boost.Value(), q.scorer, similarity.NewCompositeSumScorer(), options)
+}
+
+func (q *IPRangeQuery) ipNet() (*net.IPNet, error) {
+	if _, ipNet, err := net.ParseCIDR(q.cidr); err == nil {
+		return ipNet, nil
+	}
+	ip := net.ParseIP(q.cidr)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid ip or cidr %q", q.cidr)
+	}
+	return &net.IPNet{IP: ip.To16(), Mask: net.CIDRMask(8*net.IPv6len, 8*net.IPv6len)}, nil
+}
+
+func (q *IPRangeQuery) Validate() error {
+	_, err := q.ipNet()
+	return err
 }
 
 type WildcardQuery struct {
