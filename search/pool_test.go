@@ -14,7 +14,10 @@
 
 package search
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestDocumentMatchPool(t *testing.T) {
 	tooManyCalled := false
@@ -65,5 +68,41 @@ func TestDocumentMatchPool(t *testing.T) {
 	// cap grows, but not by 1 (append behavior)
 	if cap(dmp.avail) <= 10 {
 		t.Fatalf("expected avail cap mpore than 10, got %d", cap(dmp.avail))
+	}
+}
+
+// TestDocumentMatchPoolPreallocatesSortKeys: a fresh pooled match must be
+// able to take a score sort key without allocating, and slots must not
+// alias each other.
+func TestDocumentMatchPoolPreallocatesSortKeys(t *testing.T) {
+	order := SortOrder{SortBy(DocumentScore()).Desc(), SortBy(DocumentScore())}
+	dmp := NewDocumentMatchPool(3, len(order))
+	a, b := dmp.Get(), dmp.Get()
+	a.Score, b.Score = 1, 2
+	// the very first Complete must land in the preallocated slot: AllocsPerRun
+	// warms up once, which would hide a too-small slot being grown
+	slot0 := &sortSlot(a, 0)[:1][0]
+	order.Complete(a)
+	if &a.SortValue[0][0] != slot0 {
+		t.Fatal("Complete on a fresh pooled match did not reuse its preallocated slot")
+	}
+	// enough runs that a stray runtime allocation cannot show as 1
+	allocs := testing.AllocsPerRun(100, func() {
+		order.Complete(a)
+		order.Complete(b)
+	})
+	if allocs != 0 {
+		t.Fatalf("Complete on fresh pooled matches allocated %v times", allocs)
+	}
+	if len(a.SortValue) != 2 || len(b.SortValue) != 2 {
+		t.Fatalf("unexpected sort values %v %v", a.SortValue, b.SortValue)
+	}
+	if &a.SortValue[0][0] == &a.SortValue[1][0] || &a.SortValue[0][0] == &b.SortValue[0][0] {
+		t.Fatal("sort key slots alias each other")
+	}
+	// a longer text key grows its own slot without touching the neighbors
+	a.SortValue[0] = append(a.SortValue[0][:0], []byte("longer than ten bytes")...)
+	if !bytes.Equal(b.SortValue[0], DocumentScore().Value(b)) {
+		t.Fatalf("growing a's slot changed b's key: %v", b.SortValue[0])
 	}
 }

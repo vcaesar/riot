@@ -18,7 +18,18 @@ import (
 	"fmt"
 
 	"github.com/vcaesar/riot/search"
+	"github.com/vcaesar/riot/search/similarity"
 )
+
+// MultiTermConstantScoreThreshold is a compile time setting that
+// applications can adjust to control when a multi-term searcher (prefix,
+// regexp, wildcard, term range, numeric range, ...) stops scoring each
+// expanded term and instead returns every matching document with the
+// constant score boost, computed as a single bitmap union per segment.
+// This is what Lucene (CONSTANT_SCORE_BLENDED_REWRITE, 16 terms) and
+// tantivy (always) do; summing BM25 over hundreds of expansions is
+// expensive and not a useful relevance signal. Set to 0 to disable.
+var MultiTermConstantScoreThreshold = 16
 
 func NewMultiTermSearcher(indexReader search.Reader, terms []string,
 	field string, boost float64, scorer search.Scorer, compScorer search.CompositeScorer,
@@ -30,6 +41,17 @@ func NewMultiTermSearcher(indexReader search.Reader, terms []string,
 		}
 		if limit {
 			return nil, tooManyClausesErr(field, len(terms))
+		}
+	}
+
+	if score, ok := constantScoreMultiTerm(len(terms), boost, scorer, compScorer, options); ok {
+		bterms := make([][]byte, len(terms))
+		for i, term := range terms {
+			bterms[i] = []byte(term)
+		}
+		rv, err := newConstantScoreMultiTermSearcher(indexReader, bterms, field, score, options)
+		if err != nil || rv != nil {
+			return rv, err
 		}
 	}
 
@@ -73,6 +95,13 @@ func NewMultiTermSearcherBytes(indexReader search.Reader, terms [][]byte,
 
 		if limit {
 			return nil, tooManyClausesErr(field, len(terms))
+		}
+	}
+
+	if score, ok := constantScoreMultiTerm(len(terms), boost, scorer, compScorer, options); ok {
+		rv, err := newConstantScoreMultiTermSearcher(indexReader, terms, field, score, options)
+		if err != nil || rv != nil {
+			return rv, err
 		}
 	}
 
@@ -213,6 +242,77 @@ func optimizeMultiTermSearcherBytes(indexReader search.Reader, terms [][]byte,
 		}
 		if finalSearcher == nil {
 			return nil, fmt.Errorf("unable to optimize")
+		}
+	}
+	return finalSearcher, nil
+}
+
+// constantScoreMultiTerm reports whether a multi-term searcher over
+// numTerms expansions should be built as a constant-score bitmap union,
+// and the score to use. Term vectors, custom (non-constant) scorers and
+// custom composite scorers need the per-term searchers.
+func constantScoreMultiTerm(numTerms int, boost float64, scorer search.Scorer,
+	compScorer search.CompositeScorer, options search.SearcherOptions) (float64, bool) {
+	if MultiTermConstantScoreThreshold <= 0 || numTerms <= MultiTermConstantScoreThreshold ||
+		options.IncludeTermVectors {
+		return 0, false
+	}
+	if _, ok := compScorer.(*similarity.CompositeSumScorer); !ok && compScorer != nil {
+		return 0, false
+	}
+	switch s := scorer.(type) {
+	case nil:
+		return boost, true
+	case similarity.ConstantScorer:
+		return float64(s), true
+	}
+	return 0, false
+}
+
+var multiTermConstantScoreTerm = []byte("<multi-term:constant-score>")
+
+// newConstantScoreMultiTermSearcher ORs the postings of every term into
+// one bitmap per segment and returns a searcher scoring each document
+// with score. It returns nil when the index cannot take part in the
+// optimization, in which case the caller falls back to a scored
+// disjunction.
+func newConstantScoreMultiTermSearcher(indexReader search.Reader, terms [][]byte, field string,
+	score float64, options search.SearcherOptions) (search.Searcher, error) {
+	// only the document numbers are needed from the constituent terms
+	termOptions := options
+	termOptions.Score = optionScoringNone
+	termOptions.IncludeTermVectors = false
+
+	var finalSearcher search.Searcher
+	for len(terms) > 0 {
+		batchTerms := terms
+		if DisjunctionMaxClauseCount > 0 && len(terms) > DisjunctionMaxClauseCount {
+			batchTerms = terms[:DisjunctionMaxClauseCount]
+		}
+		terms = terms[len(batchTerms):]
+		batch, err := makeBatchSearchersBytes(indexReader, batchTerms, field, 1.0,
+			similarity.ConstantScorer(1), termOptions)
+		if err != nil {
+			if finalSearcher != nil {
+				_ = finalSearcher.Close()
+			}
+			return nil, err
+		}
+		if finalSearcher != nil {
+			batch = append(batch, finalSearcher)
+		}
+		optimized, err := optimizeComposite("disjunction:unadorned", batch)
+		// the batch is folded into optimized (or unusable), close it either way
+		for _, searcher := range batch {
+			_ = searcher.Close()
+		}
+		if err != nil || optimized == nil {
+			return nil, err
+		}
+		finalSearcher, err = newTermSearcherFromReader(indexReader, optimized,
+			multiTermConstantScoreTerm, field, score, similarity.ConstantScorer(score), options)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return finalSearcher, nil

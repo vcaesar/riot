@@ -120,6 +120,15 @@ func (i *postingsIterator) Advance(number uint64) (segment.Posting, error) {
 
 func (i *postingsIterator) Count() uint64 {
 	var rv uint64
+	if len(i.postings) == 0 {
+		// an unadorned (optimized) iterator has bitmaps but no postings lists
+		for _, itr := range i.iterators {
+			if itr != nil {
+				rv += itr.Count()
+			}
+		}
+		return rv
+	}
 	for _, posting := range i.postings {
 		rv += posting.Count()
 	}

@@ -826,6 +826,139 @@ func TestFindMultiPhrasePaths(t *testing.T) {
 // TestPhraseSearchReusesLocationsScratch runs a phrase over several
 // candidates, some rejected, some accepted, and checks the accepted hits'
 // locations are intact despite the searcher recycling its location maps.
+// TestPhraseSearchExactMatchesGeneralPath runs exact phrases through the
+// position-merge fast path and the general path (forced by clearing
+// exact) and requires identical hits, scores and locations.
+func TestPhraseSearchExactMatchesGeneralPath(t *testing.T) {
+	soptions := search.SearcherOptions{
+		SimilarityForField: func(_ string) search.Similarity {
+			return similarity.NewBM25Similarity()
+		},
+		IncludeTermVectors: true,
+	}
+	type hit struct {
+		number uint64
+		score  float64
+		ftls   []search.FieldTermLocation
+	}
+	run := func(t *testing.T, terms [][]string, exact bool) []hit {
+		t.Helper()
+		ps, err := NewMultiPhraseSearcher(baseTestIndexReader, terms, "desc", nil, soptions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ps.Close()
+		if ps.exact != exact && exact {
+			t.Fatalf("phrase %v: expected the exact path to be selected", terms)
+		}
+		ps.exact = exact
+		ctx := &search.Context{
+			DocumentMatchPool: search.NewDocumentMatchPool(ps.DocumentMatchPoolSize(), 0),
+		}
+		var hits []hit
+		next, err := ps.Next(ctx)
+		for err == nil && next != nil {
+			hits = append(hits, hit{next.Number, next.Score,
+				append([]search.FieldTermLocation(nil), next.FieldTermLocations...)})
+			ctx.DocumentMatchPool.Put(next)
+			next, err = ps.Next(ctx)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hits
+	}
+	for _, terms := range [][][]string{
+		{{"angst"}, {"beer"}},
+		{{"beer"}, {"couch"}, {"database"}},
+		{{"apple"}, {"beer"}, {"column"}, {"dank"}},
+		{{"beer"}, {"angst"}}, // wrong order, no hits
+		{{"couch"}, {"dank"}}, // never adjacent
+	} {
+		got, want := run(t, terms, true), run(t, terms, false)
+		if len(got) == 0 && len(want) == 0 {
+			continue
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("phrase %v: exact path %+v, general path %+v", terms, got, want)
+		}
+	}
+	if got := run(t, [][]string{{"angst"}, {"beer"}}, true); len(got) != 1 || len(got[0].ftls) != 2 {
+		t.Fatalf("expected one hit with two locations, got %+v", got)
+	}
+	if got := run(t, [][]string{{"beer"}, {"couch"}, {"database"}}, true); len(got) != 1 {
+		t.Fatalf("expected one hit, got %+v", got)
+	}
+	// repeated or multi-term positions and slop keep the general path
+	for _, tc := range []struct {
+		terms [][]string
+		slop  int
+	}{
+		{[][]string{{"beer"}, {"beer"}}, 0},
+		{[][]string{{"angst", "apple"}, {"beer"}}, 0},
+		{[][]string{{"angst"}, {"beer"}}, 1},
+	} {
+		ps, err := NewSloppyMultiPhraseSearcher(baseTestIndexReader, tc.terms, "desc", tc.slop, nil, soptions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ps.exact {
+			t.Fatalf("phrase %v slop %d: exact path must not be used", tc.terms, tc.slop)
+		}
+		_ = ps.Close()
+	}
+}
+
+// TestPhraseExactFallsBackOnUnsortedPositions feeds the exact path a
+// candidate whose term positions are not strictly ascending and requires
+// it to decline (ok=false) so the general path decides, and checks the
+// multi-field and pointer-exhaustion branches of the merge directly.
+func TestPhraseExactFallsBackOnUnsortedPositions(t *testing.T) {
+	ftl := func(field, term string, pos int) search.FieldTermLocation {
+		return search.FieldTermLocation{Field: field, Term: term, Location: search.Location{Pos: pos, Start: pos, End: pos + 1}}
+	}
+	newSearcher := func(in ...search.FieldTermLocation) *PhraseSearcher {
+		s := &PhraseSearcher{
+			terms:     [][]string{{"a"}, {"b"}},
+			exact:     true,
+			exactLocs: make([][]int, 2),
+			exactPtr:  make([]int, 2),
+			currMust:  &search.DocumentMatch{Number: 7, FieldTermLocations: in},
+		}
+		return s
+	}
+
+	// duplicate position for "a": decline
+	s := newSearcher(ftl("f", "a", 1), ftl("f", "a", 1), ftl("f", "b", 2))
+	if rv, ok := s.checkCurrMustMatchExact(); ok || rv != nil {
+		t.Fatalf("unsorted positions: got rv=%v ok=%v, want nil,false", rv, ok)
+	}
+	if s.currMust == nil {
+		t.Fatal("declining must leave currMust for the general path")
+	}
+
+	// phrase in the second of two fields only (composite _all style)
+	s = newSearcher(ftl("title", "a", 1), ftl("title", "b", 5), ftl("body", "a", 3), ftl("body", "b", 4))
+	rv, ok := s.checkCurrMustMatchExact()
+	if !ok || rv == nil {
+		t.Fatalf("multi-field: got rv=%v ok=%v", rv, ok)
+	}
+	want := []search.FieldTermLocation{ftl("body", "a", 3), ftl("body", "b", 4)}
+	if !reflect.DeepEqual(rv.FieldTermLocations, want) {
+		t.Fatalf("multi-field locations = %+v, want %+v", rv.FieldTermLocations, want)
+	}
+
+	// "b" exhausted before the last "a": no match, no panic
+	s = newSearcher(ftl("f", "a", 1), ftl("f", "a", 9), ftl("f", "b", 2), ftl("f", "b", 3))
+	rv, ok = s.checkCurrMustMatchExact()
+	if !ok || rv == nil || len(rv.FieldTermLocations) != 2 {
+		t.Fatalf("exhaustion: got rv=%+v ok=%v, want the single match at 1-2", rv, ok)
+	}
+	if s.currMust != nil {
+		t.Fatal("a returned match must clear currMust")
+	}
+}
+
 func TestPhraseSearchReusesLocationsScratch(t *testing.T) {
 	soptions := search.SearcherOptions{
 		SimilarityForField: func(_ string) search.Similarity {

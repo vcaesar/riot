@@ -20,31 +20,26 @@ import (
 	"github.com/vcaesar/riot/search"
 )
 
+type singleValueOp uint8
+
+const (
+	opSum singleValueOp = iota
+	opMin
+	opMax
+)
+
 type SingleValueMetric struct {
-	src     search.NumericValuesSource
-	init    float64
-	compute SingleValueCalculatorFunc
+	src  search.NumericValuesSource
+	init float64
+	op   singleValueOp
 }
 
 func Sum(src search.NumericValuesSource) *SingleValueMetric {
-	return &SingleValueMetric{
-		src: src,
-		compute: func(s *SingleValueCalculator, val float64) {
-			s.val += val
-		},
-	}
+	return &SingleValueMetric{src: src, op: opSum}
 }
 
 func Min(src search.NumericValuesSource) *SingleValueMetric {
-	return &SingleValueMetric{
-		init: math.Inf(1),
-		src:  src,
-		compute: func(s *SingleValueCalculator, val float64) {
-			if val < s.val {
-				s.val = val
-			}
-		},
-	}
+	return &SingleValueMetric{src: src, op: opMin, init: math.Inf(1)}
 }
 
 func Max(src search.NumericValuesSource) *SingleValueMetric {
@@ -52,15 +47,7 @@ func Max(src search.NumericValuesSource) *SingleValueMetric {
 }
 
 func MaxStartingAt(src search.NumericValuesSource, initial float64) *SingleValueMetric {
-	return &SingleValueMetric{
-		init: initial,
-		src:  src,
-		compute: func(s *SingleValueCalculator, val float64) {
-			if val > s.val {
-				s.val = val
-			}
-		},
-	}
+	return &SingleValueMetric{src: src, op: opMax, init: initial}
 }
 
 func (s *SingleValueMetric) Fields() []string {
@@ -69,35 +56,59 @@ func (s *SingleValueMetric) Fields() []string {
 
 func (s *SingleValueMetric) Calculator() search.Calculator {
 	rv := &SingleValueCalculator{
-		val:     s.init,
-		src:     s.src,
-		compute: s.compute,
+		val: s.init,
+		src: s.src,
+		op:  s.op,
+	}
+	// count and score are single valued and hot: decided once here so the
+	// per-hit path is a branch rather than a type switch and a Numbers slice
+	switch s.src.(type) {
+	case *countingSource:
+		rv.count = true
+	case *search.ScoreSource:
+		rv.score = true
 	}
 	return rv
 }
 
-type SingleValueCalculatorFunc func(*SingleValueCalculator, float64)
-
 type SingleValueCalculator struct {
-	src     search.NumericValuesSource
-	val     float64
-	compute SingleValueCalculatorFunc
+	src          search.NumericValuesSource
+	val          float64
+	op           singleValueOp
+	count, score bool
+}
+
+func (s *SingleValueCalculator) apply(val float64) {
+	switch s.op {
+	case opSum:
+		s.val += val
+	case opMin:
+		if val < s.val {
+			s.val = val
+		}
+	case opMax:
+		if val > s.val {
+			s.val = val
+		}
+	}
 }
 
 func (s *SingleValueCalculator) Consume(d *search.DocumentMatch) {
-	// the score is single valued; skip the []float64 Numbers allocates per hit
-	if score, ok := s.src.(*search.ScoreSource); ok {
-		s.compute(s, score.Number(d))
-		return
-	}
-	for _, val := range s.src.Numbers(d) {
-		s.compute(s, val)
+	switch {
+	case s.count:
+		s.apply(1)
+	case s.score:
+		s.apply(d.Score)
+	default:
+		for _, val := range s.src.Numbers(d) {
+			s.apply(val)
+		}
 	}
 }
 
 func (s *SingleValueCalculator) Merge(other search.Calculator) {
 	if other, ok := other.(*SingleValueCalculator); ok {
-		s.compute(s, other.val)
+		s.apply(other.val)
 	}
 }
 

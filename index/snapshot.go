@@ -30,16 +30,6 @@ import (
 	segment "github.com/vcaesar/bluge_segment_api"
 )
 
-type asyncSegmentResult struct {
-	dict    segment.Dictionary
-	dictItr segment.DictionaryIterator
-
-	index int
-	docs  *roaring.Bitmap
-
-	err error
-}
-
 type Snapshot struct {
 	parent  *Writer
 	segment []*segmentSnapshot
@@ -107,68 +97,51 @@ func (i *Snapshot) updateSize() {
 	}
 }
 
+// newDictionary opens the field dictionary of every segment. This is a
+// map lookup on an already loaded FST per segment, so it runs inline
+// rather than fanning out a goroutine per segment per query.
 func (i *Snapshot) newDictionary(field string,
 	makeItr func(i segment.Dictionary) segment.DictionaryIterator,
 	randomLookup bool) (*dictionary, error) {
-	results := make(chan *asyncSegmentResult)
-	for _, seg := range i.segment {
-		go func(segment *segmentSnapshot) {
-			dict, err := segment.segment.Dictionary(field)
-			if err != nil {
-				results <- &asyncSegmentResult{err: err}
-			} else {
-				if randomLookup {
-					results <- &asyncSegmentResult{dict: dict}
-				} else {
-					results <- &asyncSegmentResult{dictItr: makeItr(dict)}
-				}
-			}
-		}(seg)
-	}
-
-	var err error
 	rv := &dictionary{
 		snapshot: i,
 		cursors:  make([]*segmentDictCursor, 0, len(i.segment)),
 	}
-	for count := 0; count < len(i.segment); count++ {
-		asr := <-results
-		if asr.err != nil {
-			// keep draining the channel so the goroutines can exit
-			if err == nil {
-				err = asr.err
-			}
-			continue
-		}
-		if randomLookup {
-			rv.cursors = append(rv.cursors, &segmentDictCursor{dict: asr.dict})
-			continue
-		}
-		next, err2 := asr.dictItr.Next()
-		if err2 != nil || next == nil {
-			// failed or empty: this iterator will never join the heap
-			cerr := asr.dictItr.Close()
-			if err == nil {
-				err = err2
-			}
-			if err == nil {
-				err = cerr
-			}
-			continue
-		}
-		rv.cursors = append(rv.cursors, &segmentDictCursor{
-			itr:  asr.dictItr,
-			curr: next,
-		})
-	}
-	// after ensuring we've read all items on channel
-	if err != nil {
+	closeCursors := func() {
 		for _, cursor := range rv.cursors {
 			if cursor.itr != nil {
 				_ = cursor.itr.Close() // already returning err
 			}
 		}
-		return nil, err
+	}
+	for _, seg := range i.segment {
+		dict, err := seg.segment.Dictionary(field)
+		if err != nil {
+			closeCursors()
+			return nil, err
+		}
+		if randomLookup {
+			rv.cursors = append(rv.cursors, &segmentDictCursor{dict: dict})
+			continue
+		}
+		itr := makeItr(dict)
+		next, err := itr.Next()
+		if err != nil || next == nil {
+			// failed or empty: this iterator will never join the heap
+			cerr := itr.Close()
+			if err == nil {
+				err = cerr
+			}
+			if err != nil {
+				closeCursors()
+				return nil, err
+			}
+			continue
+		}
+		rv.cursors = append(rv.cursors, &segmentDictCursor{
+			itr:  itr,
+			curr: next,
+		})
 	}
 
 	if !randomLookup {
@@ -244,18 +217,23 @@ func (i *Snapshot) CollectionStats(field string) (segment.CollectionStats, error
 		}
 	}
 
-	// FIXME just making this work for now, possibly should be async
-	var rv segment.CollectionStats
+	// segments may hand out shared, immutable stats: merge into our own value
+	var rv *collectionStats
 	for _, seg := range i.segment {
 		segStats, err := seg.segment.CollectionStats(field)
 		if err != nil {
 			return nil, err
 		}
-		if rv == nil {
-			rv = segStats
-		} else {
-			rv.Merge(segStats)
+		if segStats == nil {
+			continue
 		}
+		if rv == nil {
+			rv = &collectionStats{}
+		}
+		rv.Merge(segStats)
+	}
+	if rv == nil { // no segment contributed: nil, not a typed nil pointer
+		return nil, nil
 	}
 	return rv, nil
 }
@@ -269,20 +247,6 @@ func (i *Snapshot) Count() (uint64, error) {
 }
 
 func (i *Snapshot) postingsIteratorAll(term string) (segment.PostingsIterator, error) {
-	results := make(chan *asyncSegmentResult)
-	for index, seg := range i.segment {
-		go func(index int, segment *segmentSnapshot) {
-			results <- &asyncSegmentResult{
-				index: index,
-				docs:  segment.DocNumbersLive(),
-			}
-		}(index, seg)
-	}
-
-	return i.newPostingsIteratorAll(term, results)
-}
-
-func (i *Snapshot) newPostingsIteratorAll(term string, results chan *asyncSegmentResult) (segment.PostingsIterator, error) {
 	rv := &postingsIteratorAll{
 		preAlloc: virtualPosting{
 			term: term,
@@ -290,23 +254,9 @@ func (i *Snapshot) newPostingsIteratorAll(term string, results chan *asyncSegmen
 		snapshot:  i,
 		iterators: make([]roaring.IntPeekable, len(i.segment)),
 	}
-	var err error
-	for count := 0; count < len(i.segment); count++ {
-		asr := <-results
-		if asr.err != nil {
-			if err == nil {
-				// returns the first error encountered
-				err = asr.err
-			}
-		} else if err == nil {
-			rv.iterators[asr.index] = asr.docs.Iterator()
-		}
+	for index, seg := range i.segment {
+		rv.iterators[index] = seg.DocNumbersLive().Iterator()
 	}
-
-	if err != nil {
-		return nil, err
-	}
-
 	return rv, nil
 }
 
@@ -323,9 +273,7 @@ func (i *Snapshot) VisitStoredFields(number uint64, visitor segment.StoredFieldV
 			}
 		}
 	}
-	err := i.segment[segmentIndex].VisitDocument(localDocNum, func(name string, val []byte) bool {
-		return visitor(name, val)
-	})
+	err := i.segment[segmentIndex].VisitDocument(localDocNum, visitor)
 	if err != nil {
 		return err
 	}
@@ -432,11 +380,10 @@ func (i *Snapshot) recyclePostingsIterator(tfr *postingsIterator) {
 		return
 	}
 
-	if i.epoch != i.parent.currentEpoch() {
-		// if we're not the current root (mutations happened), don't bother recycling
-		return
-	}
-
+	// unlike scorch, a Reader keeps its snapshot for its whole lifetime and
+	// one opened by OpenReader is never the writer's root, so the pool is
+	// keyed on the snapshot alone: it lives and dies with it and is bounded
+	// by the number of concurrent searches
 	i.m2.Lock()
 	if i.fieldTFRs == nil {
 		i.fieldTFRs = map[string][]*postingsIterator{}

@@ -16,6 +16,7 @@ package searcher
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/vcaesar/riot/search/similarity"
 
@@ -32,8 +33,17 @@ type PhraseSearcher struct {
 	// locationsMap is scratch reused across candidates so Complete
 	// does not rebuild the field/term maps for every document
 	locationsMap search.FieldTermLocationMap
-	initialized  bool
-	slop         int
+	// exact is set when every phrase position is a single, distinct term
+	// and slop is 0: matches are then found by merging the sorted term
+	// positions (exactLocs, exactPtr, exactOut are per-candidate scratch)
+	// instead of building the location maps and searching paths
+	exact       bool
+	exactFields []string
+	exactLocs   [][]int
+	exactPtr    []int
+	exactOut    []search.FieldTermLocation
+	initialized bool
+	slop        int
 }
 
 func (s *PhraseSearcher) Size() int {
@@ -126,9 +136,31 @@ func NewSloppyMultiPhraseSearcher(indexReader search.Reader, terms [][]string, f
 		mustSearcher: mustSearcher,
 		terms:        terms,
 		slop:         slop,
+		exact:        slop == 0 && singleDistinctTerms(terms),
+	}
+	if rv.exact {
+		rv.exactLocs = make([][]int, len(terms))
+		rv.exactPtr = make([]int, len(terms))
 	}
 
 	return &rv, nil
+}
+
+// singleDistinctTerms reports whether every phrase position holds exactly
+// one term and no term repeats, the precondition for the exact-phrase
+// position merge.
+func singleDistinctTerms(terms [][]string) bool {
+	for i, termPos := range terms {
+		if len(termPos) != 1 || termPos[0] == "" {
+			return false
+		}
+		for _, prev := range terms[:i] {
+			if prev[0] == termPos[0] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (s *PhraseSearcher) initSearchers(ctx *search.Context) error {
@@ -189,6 +221,12 @@ func (s *PhraseSearcher) Next(ctx *search.Context) (*search.DocumentMatch, error
 // also satisfies the phase constraints.  if so, it returns a DocumentMatch
 // for this document, otherwise nil
 func (s *PhraseSearcher) checkCurrMustMatch() *search.DocumentMatch {
+	if s.exact {
+		if rv, ok := s.checkCurrMustMatchExact(); ok {
+			return rv
+		}
+	}
+
 	s.currMust.Locations = s.locationsMap
 	s.locations = s.currMust.Complete(s.locations)
 
@@ -222,6 +260,103 @@ func (s *PhraseSearcher) checkCurrMustMatch() *search.DocumentMatch {
 	}
 
 	return nil
+}
+
+// checkCurrMustMatchExact is checkCurrMustMatch for exact phrases of
+// distinct single terms: term i must occur at position p+i for some
+// occurrence p of term 0, found with one forward pass per term over the
+// sorted positions. ok is false when a term's positions are not strictly
+// ascending (multi-valued fields, duplicates), and the caller falls back
+// to the general path.
+func (s *PhraseSearcher) checkCurrMustMatchExact() (rv *search.DocumentMatch, ok bool) {
+	in := s.currMust.FieldTermLocations
+	fields := s.exactFields[:0]
+	for j := range in {
+		if !slices.Contains(fields, in[j].Field) {
+			fields = append(fields, in[j].Field)
+		}
+	}
+	s.exactFields = fields
+
+	out := s.exactOut[:0]
+	for _, field := range fields {
+		if !s.exactFieldLocations(in, field) {
+			return nil, false
+		}
+		out = s.mergeExact(in, out)
+	}
+	s.exactOut = out
+	if len(out) == 0 {
+		return nil, true
+	}
+	rv = s.currMust
+	s.currMust = nil
+	rv.FieldTermLocations = append(rv.FieldTermLocations[:0], out...)
+	return rv, true
+}
+
+// exactFieldLocations fills s.exactLocs[i] with the indices into in of
+// term i's locations in field, in one pass, and reports whether every
+// list is strictly ascending by position.
+func (s *PhraseSearcher) exactFieldLocations(in []search.FieldTermLocation, field string) bool {
+	for i := range s.terms {
+		s.exactLocs[i] = s.exactLocs[i][:0]
+		s.exactPtr[i] = 0
+	}
+	for j := range in {
+		if in[j].Field != field {
+			continue
+		}
+		i := s.termIndex(in[j].Term)
+		if i < 0 {
+			continue
+		}
+		locs := s.exactLocs[i]
+		if n := len(locs); n > 0 && in[locs[n-1]].Location.Pos >= in[j].Location.Pos {
+			return false
+		}
+		s.exactLocs[i] = append(locs, j)
+	}
+	return true
+}
+
+func (s *PhraseSearcher) termIndex(term string) int {
+	for i, termPos := range s.terms {
+		if termPos[0] == term {
+			return i
+		}
+	}
+	return -1
+}
+
+// mergeExact appends to out the locations of every exact phrase match in
+// the field prepared by exactFieldLocations.
+func (s *PhraseSearcher) mergeExact(in, out []search.FieldTermLocation) []search.FieldTermLocation {
+	for _, j0 := range s.exactLocs[0] {
+		p := in[j0].Location.Pos
+		matched := true
+		for i := 1; i < len(s.terms); i++ {
+			locs, want := s.exactLocs[i], p+i
+			for s.exactPtr[i] < len(locs) && in[locs[s.exactPtr[i]]].Location.Pos < want {
+				s.exactPtr[i]++
+			}
+			if s.exactPtr[i] >= len(locs) {
+				return out // term i is exhausted, no later start can match
+			}
+			if in[locs[s.exactPtr[i]]].Location.Pos != want {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		out = append(out, in[j0])
+		for i := 1; i < len(s.terms); i++ {
+			out = append(out, in[s.exactLocs[i][s.exactPtr[i]]])
+		}
+	}
+	return out
 }
 
 // checkCurrMustMatchField is solely concerned with determining if one

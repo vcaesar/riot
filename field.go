@@ -15,6 +15,8 @@
 package riot
 
 import (
+	"fmt"
+	"net"
 	"strconv"
 	"time"
 
@@ -366,6 +368,77 @@ func DecodeGeoLonLat(value []byte) (lon, lat float64, err error) {
 	}
 	//nolint:gosec // G115: restore all Morton hash bits from the signed prefix-coding API.
 	return geo.MortonUnhashLon(uint64(i64)), geo.MortonUnhashLat(uint64(i64)), nil
+}
+
+const defaultBooleanIndexingOptions = Index | Sortable | Aggregatable
+
+const (
+	booleanTrueTerm  = "T"
+	booleanFalseTerm = "F"
+)
+
+// NewBooleanField indexes a boolean as the single keyword term "T" or "F".
+func NewBooleanField(name string, value bool) *TermField {
+	term := booleanFalseTerm
+	if value {
+		term = booleanTrueTerm
+	}
+	return &TermField{
+		FieldOptions:      defaultBooleanIndexingOptions,
+		name:              name,
+		value:             []byte(term),
+		numPlainTextBytes: 1,
+		analyzer:          &singleTokenAnalyzer{tokenType: analysis.Boolean},
+	}
+}
+
+func DecodeBoolean(value []byte) (bool, error) {
+	switch string(value) {
+	case booleanTrueTerm:
+		return true, nil
+	case booleanFalseTerm:
+		return false, nil
+	}
+	return false, fmt.Errorf("invalid boolean term %q", value)
+}
+
+const defaultIPIndexingOptions = Index | Sortable | Aggregatable
+
+// NewIPField indexes an IPv4 or IPv6 address as its 16-byte form so that
+// IPv4 and IPv6 share one sortable term space; see NewIPRangeQuery.
+// A nil or invalid ip yields a field with no value.
+func NewIPField(name string, ip net.IP) *TermField {
+	return &TermField{
+		FieldOptions:      defaultIPIndexingOptions,
+		name:              name,
+		value:             ip.To16(),
+		numPlainTextBytes: net.IPv6len,
+		analyzer:          &singleTokenAnalyzer{tokenType: analysis.IP},
+	}
+}
+
+func DecodeIP(value []byte) (net.IP, error) {
+	if len(value) != net.IPv6len {
+		return nil, fmt.Errorf("invalid ip term length %d, want %d", len(value), net.IPv6len)
+	}
+	return net.IP(value), nil
+}
+
+// singleTokenAnalyzer emits the raw value as one token of the given type.
+type singleTokenAnalyzer struct {
+	tokenType analysis.TokenType
+}
+
+func (s *singleTokenAnalyzer) Analyze(input []byte) analysis.TokenStream {
+	return analysis.TokenStream{
+		&analysis.Token{
+			Start:        0,
+			End:          len(input),
+			Term:         input,
+			PositionIncr: 1,
+			Type:         s.tokenType,
+		},
+	}
 }
 
 const defaultCompositeIndexingOptions = Index
