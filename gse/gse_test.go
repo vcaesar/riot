@@ -15,6 +15,10 @@
 package gse
 
 import (
+	"io"
+	"log"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -86,13 +90,18 @@ func TestNewAnalyzerDicts(t *testing.T) {
 }
 
 func TestNewErrors(t *testing.T) {
+	// gse logs missing dictionary files on its own; keep CI output clean.
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(os.Stderr)
+
 	if _, err := New(Option{Opt: "bogus"}); err == nil {
 		t.Fatal("expected error for unknown cut mode")
 	}
-	if _, err := New(Option{Dicts: "./test/does-not-exist.txt"}); err == nil {
+	missing := filepath.Join(t.TempDir(), "does-not-exist.txt")
+	if _, err := New(Option{Dicts: missing}); err == nil {
 		t.Fatal("expected error for missing dictionary file")
 	}
-	if _, err := New(Option{Stop: "./test/does-not-exist.txt"}); err == nil {
+	if _, err := New(Option{Stop: missing}); err == nil {
 		t.Fatal("expected error for missing stop word file")
 	}
 }

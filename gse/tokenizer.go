@@ -15,12 +15,15 @@
 package gse
 
 import (
+	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 
 	gogse "github.com/go-ego/gse"
 
 	"github.com/vcaesar/riot/analysis"
+	"github.com/vcaesar/riot/analysis/tokenizer"
 )
 
 // Tokenizer adapts a loaded gse.Segmenter to the analysis.Tokenizer interface.
@@ -58,6 +61,11 @@ func (t *Tokenizer) Tokenize(input []byte) analysis.TokenStream {
 		subs := []string{word}
 		if t.search {
 			subs = t.seg.CutSearch(word, t.hmm...)
+			// gse's plain search mode returns only the sub-words (nothing at
+			// all for a single rune); the segment itself must stay searchable.
+			if !slices.Contains(subs, word) {
+				subs = append(subs, word)
+			}
 		}
 		posIncr := 1
 		for _, sub := range subs {
@@ -70,12 +78,24 @@ func (t *Tokenizer) Tokenize(input []byte) analysis.TokenStream {
 				End:          subStart + len(sub),
 				Term:         []byte(sub),
 				PositionIncr: posIncr,
-				Type:         analysis.Ideographic,
+				Type:         tokenType(sub),
 			})
 			posIncr = 0
 		}
 	}
 	return tokens
+}
+
+// tokenType classifies a term like analysis/tokenizer does so that filters
+// such as the cjk bigram filter treat Latin and numeric terms correctly.
+func tokenType(term string) analysis.TokenType {
+	if tokenizer.IdeographRegexp.MatchString(term) {
+		return analysis.Ideographic
+	}
+	if _, err := strconv.ParseFloat(term, 64); err == nil {
+		return analysis.Numeric
+	}
+	return analysis.AlphaNumeric
 }
 
 // skip reports whether word is only whitespace/punctuation/symbols or a

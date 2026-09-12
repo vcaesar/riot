@@ -94,6 +94,22 @@ func TestIndexSearch(t *testing.T) {
 	}
 }
 
+func TestIndexSearchModeWholeWord(t *testing.T) {
+	idx := openIndex(t, Option{Dicts: "embed, zh", Opt: "search"})
+	if err := idx.Index("1", "全文搜索引擎很好"); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"搜索引擎", "搜索", "好"} {
+		res, err := idx.Search(NewQueryString(q))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hitIDs(res); !reflect.DeepEqual(got, []string{"1"}) {
+			t.Fatalf("query %q hits = %v, want [1]", q, got)
+		}
+	}
+}
+
 func TestIndexSearchHighlight(t *testing.T) {
 	idx := openIndex(t, Option{Dicts: "embed, jp", Opt: "search-hmm"})
 	text := "見解では、謙虚なヴォードヴィリアンのベテランは、運命の犠牲者と悪役の両方の変遷として代償を払っています"
@@ -115,7 +131,8 @@ func TestIndexSearchHighlight(t *testing.T) {
 	if len(frags) != 1 || !strings.Contains(frags[0], "<mark>運命</mark>") {
 		t.Fatalf("fragments = %q", frags)
 	}
-	if res.MaxScore != res.Hits[0].Score || res.Took <= 0 {
+	// Windows' clock can report a 0 duration for a sub-microsecond search.
+	if res.MaxScore != res.Hits[0].Score || res.Took < 0 {
 		t.Fatalf("max score %v vs %v, took %v", res.MaxScore, res.Hits[0].Score, res.Took)
 	}
 }
@@ -156,15 +173,7 @@ func TestIndexUpdateDeletePaging(t *testing.T) {
 }
 
 func TestIndexOnDiskAndCustomDoc(t *testing.T) {
-	dir := filepath.Join("..", "test", "logs", "gse-index-test")
-	if err := os.RemoveAll(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Error(err)
-		}
-	})
+	dir := filepath.Join(t.TempDir(), "gse-index-test")
 
 	idx := openIndex(t, Option{Index: dir})
 	doc := riot.NewDocument("x").
