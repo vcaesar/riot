@@ -1,6 +1,6 @@
 module github.com/vcaesar/riot
 
-go 1.27.1
+go 1.26.0
 
 require (
 	github.com/RoaringBitmap/roaring/v2 v2.27.0
@@ -14,8 +14,8 @@ require (
 	github.com/caio/go-tdigest/v5 v5.0.0
 	github.com/go-ego/gse v1.1.0
 	github.com/spf13/cobra v1.10.2
-	github.com/vcaesar/bluge_segment_api v1.1.0
-	github.com/vcaesar/ice v1.2.2
+	github.com/vcaesar/bluge_segment_api v1.2.0
+	github.com/vcaesar/ice v1.2.3
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
 )
