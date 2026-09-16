@@ -17,7 +17,9 @@ package riot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"reflect"
 	"sort"
@@ -350,6 +352,171 @@ func TestKNNQueryAdmissionBeforeScan(t *testing.T) {
 	q := NewKNNQuery("v", []float32{1}, 1) // dimension mismatch: only fails if the scan runs
 	if _, err := r.Search(context.Background(), NewTopNSearch(1, q)); !errors.Is(err, rejected) {
 		t.Fatalf("admission must reject before the vector scan runs, got %v", err)
+	}
+}
+
+func TestSearchVectorsANNMatchesExact(t *testing.T) {
+	w, err := OpenWriter(InMemoryOnlyConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	rng := rand.New(rand.NewSource(1))
+	random := func() []float32 {
+		v := make([]float32, 8)
+		for i := range v {
+			v[i] = float32(rng.NormFloat64())
+		}
+		return v
+	}
+	// Several batches produce several segments, so the search fans out and merges.
+	for batch := 0; batch < 4; batch++ {
+		b := NewBatch()
+		for i := 0; i < 25; i++ {
+			d := vectorDocument(t, fmt.Sprintf("%d-%d", batch, i), random())
+			b.Update(d.ID(), d)
+		}
+		if err := w.Batch(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Delete(Identifier("1-3")); err != nil {
+		t.Fatal(err)
+	}
+	r, err := w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	query := random()
+	accept := func(n uint64) bool { return n%3 != 0 }
+	for _, metric := range []Metric{Cosine, DotProduct, L2} {
+		for _, filter := range []func(uint64) bool{nil, accept} {
+			exact, err := r.SearchVectors(context.Background(), "v", query, 10, metric, filter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// With EfSearch above the segment size the beam covers every live vector.
+			approx, err := r.SearchVectorsANN(context.Background(), "v", query, 10, metric, ANNParams{EfSearch: 200}, filter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(approx, exact) {
+				t.Fatalf("%s filtered=%v: ann %v, exact %v", metric, filter != nil, approx, exact)
+			}
+		}
+	}
+	for _, m := range approxDeleted(t, r, query) {
+		if id := storedID(t, r, m.Number); id == "1-3" {
+			t.Fatal("ann returned deleted document")
+		}
+	}
+	if _, err := r.SearchVectorsANN(context.Background(), "v", query, 10, L2, ANNParams{M: 1}, nil); err == nil {
+		t.Fatal("accepted invalid params")
+	}
+	if _, err := r.SearchVectorsANN(context.Background(), "v", []float32{1}, 10, L2, ANNParams{}, nil); err == nil {
+		t.Fatal("accepted dimension mismatch")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := r.SearchVectorsANN(ctx, "v", query, 10, L2, ANNParams{}, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation: %v", err)
+	}
+}
+
+func approxDeleted(t *testing.T, r *Reader, query []float32) []VectorMatch {
+	t.Helper()
+	matches, err := r.SearchVectorsANN(context.Background(), "v", query, 100, L2, ANNParams{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 99 {
+		t.Fatalf("expected all 99 live documents, got %d", len(matches))
+	}
+	return matches
+}
+
+func storedID(t *testing.T, r *Reader, number uint64) string {
+	t.Helper()
+	var id string
+	if err := r.VisitStoredFields(number, func(name string, value []byte) bool {
+		if name == "_id" {
+			id = string(value)
+		}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestKNNQueryANN(t *testing.T) {
+	w, err := OpenWriter(InMemoryOnlyConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	for _, tc := range []struct {
+		id, color string
+		vector    []float32
+	}{
+		{"a", "red", []float32{1, 0}},
+		{"b", "blue", []float32{3, 0}},
+		{"c", "red", []float32{2, 0}},
+		{"d", "blue", []float32{-1, 0}},
+	} {
+		d := vectorDocument(t, tc.id, tc.vector).AddField(NewTextField("color", tc.color))
+		if err := w.Update(d.ID(), d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	q := NewKNNQuery("v", []float32{1, 0}, 2).SetMetric(DotProduct).SetBoost(2).SetANN(ANNParams{M: 4})
+	if q.ANN() == nil || q.ANN().M != 4 || NewKNNQuery("v", nil, 1).ANN() != nil {
+		t.Fatal("ANN params not recorded")
+	}
+	ids, scores := knnIDs(t, r, q, true)
+	if !reflect.DeepEqual(ids, []string{"b", "c"}) || !reflect.DeepEqual(scores, []float64{6, 4}) {
+		t.Fatalf("got %v %v", ids, scores)
+	}
+	hybrid := NewBooleanQuery().
+		AddMust(NewKNNQuery("v", []float32{1, 0}, 3).SetMetric(DotProduct).SetANN(ANNParams{})).
+		AddMust(NewTermQuery("red").SetField("color"))
+	if ids, _ := knnIDs(t, r, hybrid, false); !reflect.DeepEqual(ids, []string{"c", "a"}) {
+		t.Fatalf("hybrid got %v", ids)
+	}
+	bad := NewKNNQuery("v", []float32{1, 0}, 1).SetANN(ANNParams{EfSearch: -1})
+	if bad.Validate() == nil {
+		t.Fatal("expected params validation error")
+	}
+	if _, err := r.Search(context.Background(), NewTopNSearch(1, bad)); err == nil {
+		t.Fatal("expected search error")
+	}
+	rejected := errors.New("rejected")
+	gated := openKNNReader(t, InMemoryOnlyConfig().WithSearchStartFunc(func(uint64) error { return rejected }))
+	mismatch := NewKNNQuery("v", []float32{1}, 1).SetANN(ANNParams{})
+	if _, err := gated.Search(context.Background(), NewTopNSearch(1, mismatch)); !errors.Is(err, rejected) {
+		t.Fatalf("admission must reject before the graph builds, got %v", err)
 	}
 }
 
