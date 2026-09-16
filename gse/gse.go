@@ -35,7 +35,8 @@ const (
 type Option struct {
 	// Index is the on-disk index path; empty opens an in-memory index.
 	Index string
-	// Field is the document field written by Index.Index; default "text".
+	// Field is the field for string documents and default searches; default "text".
+	// Struct documents use their JSON field names instead.
 	Field string
 	// Lang selects a riot analysis/lang analyzer ("en", "cjk", "de", ...;
 	// see Langs) instead of gse. When set, no gse dictionary is loaded, the

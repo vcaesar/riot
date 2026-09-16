@@ -172,6 +172,61 @@ func TestIndexUpdateDeletePaging(t *testing.T) {
 	}
 }
 
+func TestIndexStructMapping(t *testing.T) {
+	type Mapping struct {
+		Text   string `json:"text"`
+		Title  string `json:"title"`
+		Secret string `json:"-"`
+	}
+	idx := openIndex(t, Option{Lang: "en"})
+	mapping := Mapping{Text: "search engines", Title: "Running outdoors", Secret: "hidden"}
+	for id, data := range map[string]any{"value": mapping, "pointer": &mapping} {
+		if err := idx.Index(id, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, field := range []string{"text", "title"} {
+		query := "engine"
+		if field == "title" {
+			query = "running"
+		}
+		req := NewQueryString(query, true)
+		req.Field = field
+		res, err := idx.Search(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Total != 2 {
+			t.Fatalf("field %q: total = %d, want 2", field, res.Total)
+		}
+		for _, hit := range res.Hits {
+			want := map[string]string{"text": mapping.Text, "title": mapping.Title}
+			if !reflect.DeepEqual(hit.Fields, want) || len(hit.Fragments[field]) != 1 {
+				t.Fatalf("unexpected mapped hit: %+v", hit)
+			}
+		}
+	}
+	if err := idx.Index("value", nil); err == nil {
+		t.Fatal("expected invalid mapping error")
+	}
+	res, err := idx.Search(NewQueryString("engines"))
+	if err != nil || res.Total != 2 {
+		t.Fatalf("invalid mapping changed documents: result=%+v, err=%v", res, err)
+	}
+	if err := idx.Index("value", "replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Index("pointer", &Mapping{Text: "replacement"}); err != nil {
+		t.Fatal(err)
+	}
+	req := NewQueryString("running")
+	req.Field = "title"
+	res, err = idx.Search(req)
+	if err != nil || res.Total != 0 {
+		t.Fatalf("update retained mapped fields: result=%+v, err=%v", res, err)
+	}
+}
+
 func TestIndexOnDiskAndCustomDoc(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "gse-index-test")
 
