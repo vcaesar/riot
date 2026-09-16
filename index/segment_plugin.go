@@ -76,6 +76,8 @@ type segmentWrapper struct {
 	timeOnce         sync.Once
 	timeMin, timeMax int64
 	timeErr          error
+	graphMu          sync.Mutex
+	graphs           map[graphKey]*graphEntry
 }
 
 func (s *segmentWrapper) Persisted() bool {

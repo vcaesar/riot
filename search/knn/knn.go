@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package knn adapts exact top-k vector search to the search.Searcher
-// interface so it composes with boolean, sort, collector and aggregation code.
+// Package knn adapts exact and approximate top-k vector search to the
+// search.Searcher interface so it composes with boolean, sort, collector and
+// aggregation code.
 package knn
 
 import (
@@ -23,6 +24,7 @@ import (
 
 	"github.com/vcaesar/ice/vec"
 
+	"github.com/vcaesar/riot/hnsw"
 	"github.com/vcaesar/riot/search"
 )
 
@@ -31,6 +33,13 @@ import (
 type VectorReader interface {
 	SearchVectors(ctx context.Context, field string, query []float32, k int,
 		metric vec.Metric, accept func(uint64) bool) ([]vec.Match, error)
+}
+
+// ApproximateVectorReader is the optional capability a search.Reader must
+// provide for ANN search. *index.Snapshot implements it.
+type ApproximateVectorReader interface {
+	SearchVectorsANN(ctx context.Context, field string, query []float32, k int,
+		metric vec.Metric, params hnsw.Params, accept func(uint64) bool) ([]vec.Match, error)
 }
 
 // Validate reports whether the parameters describe a runnable KNN search.
@@ -48,6 +57,8 @@ func Validate(field string, query []float32, k int, metric vec.Metric) error {
 type Searcher struct {
 	reader  search.Reader
 	vectors VectorReader
+	approx  ApproximateVectorReader
+	ann     hnsw.Params
 	field   string
 	query   []float32
 	k       int
@@ -87,12 +98,47 @@ func NewSearcher(indexReader search.Reader, field string, query []float32, k int
 	}, nil
 }
 
+// NewApproximateSearcher is like NewSearcher but searches per-segment HNSW
+// graphs tuned by params. indexReader must implement ApproximateVectorReader.
+func NewApproximateSearcher(indexReader search.Reader, field string, query []float32, k int,
+	metric vec.Metric, params hnsw.Params, boost float64, accept func(uint64) bool,
+	options search.SearcherOptions) (*Searcher, error) {
+	approx, ok := indexReader.(ApproximateVectorReader)
+	if !ok {
+		return nil, fmt.Errorf("reader %T does not support approximate vector search", indexReader)
+	}
+	if err := params.Validate(); err != nil {
+		return nil, err
+	}
+	if err := Validate(field, query, k, metric); err != nil {
+		return nil, err
+	}
+	return &Searcher{
+		reader:  indexReader,
+		approx:  approx,
+		ann:     params,
+		field:   field,
+		query:   query,
+		k:       k,
+		metric:  metric,
+		boost:   boost,
+		accept:  accept,
+		explain: options.Explain,
+	}, nil
+}
+
 func (s *Searcher) run(ctx *search.Context) error {
 	if s.ran {
 		return s.err
 	}
 	s.ran = true
-	matches, err := s.vectors.SearchVectors(ctx.Ctx, s.field, s.query, s.k, s.metric, s.accept)
+	var matches []vec.Match
+	var err error
+	if s.approx != nil {
+		matches, err = s.approx.SearchVectorsANN(ctx.Ctx, s.field, s.query, s.k, s.metric, s.ann, s.accept)
+	} else {
+		matches, err = s.vectors.SearchVectors(ctx.Ctx, s.field, s.query, s.k, s.metric, s.accept)
+	}
 	if err != nil {
 		s.err = fmt.Errorf("error searching vectors: %w", err)
 		return s.err
@@ -155,8 +201,12 @@ func (s *Searcher) buildDocumentMatch(ctx *search.Context, m vec.Match) *search.
 	rv.Number = m.Number
 	rv.Score = s.boost * m.Score
 	if s.explain {
+		kind := "knn"
+		if s.approx != nil {
+			kind = "ann"
+		}
 		rv.Explanation = search.NewExplanation(rv.Score,
-			fmt.Sprintf("knn(%s:%s), similarity %f, boost %f", s.field, s.metric, m.Score, s.boost))
+			fmt.Sprintf("%s(%s:%s), similarity %f, boost %f", kind, s.field, s.metric, m.Score, s.boost))
 	}
 	return rv
 }

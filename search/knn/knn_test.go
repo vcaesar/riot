@@ -24,6 +24,7 @@ import (
 	segment "github.com/vcaesar/bluge_segment_api"
 	"github.com/vcaesar/ice/vec"
 
+	"github.com/vcaesar/riot/hnsw"
 	"github.com/vcaesar/riot/search"
 )
 
@@ -65,6 +66,61 @@ func (s *stubReader) Close() error { return nil }
 type noVectorReader struct{ *stubReader }
 
 func (noVectorReader) SearchVectors() {}
+
+// approxReader records ANN calls and fails exact calls, proving the searcher
+// routes to the approximate path.
+type approxReader struct {
+	*stubReader
+	params hnsw.Params
+	ann    int
+}
+
+func (a *approxReader) SearchVectors(context.Context, string, []float32, int, vec.Metric, func(uint64) bool) ([]vec.Match, error) {
+	return nil, errors.New("exact path must not run")
+}
+
+func (a *approxReader) SearchVectorsANN(ctx context.Context, field string, query []float32, k int,
+	metric vec.Metric, params hnsw.Params, accept func(uint64) bool) ([]vec.Match, error) {
+	a.ann++
+	a.params = params
+	return a.stubReader.SearchVectors(ctx, field, query, k, metric, accept)
+}
+
+func TestApproximateSearcher(t *testing.T) {
+	r := &approxReader{stubReader: &stubReader{matches: []vec.Match{{Number: 7, Score: 0.9}, {Number: 2, Score: 0.5}}}}
+	params := hnsw.Params{M: 8, EfSearch: 50}
+	accept := func(n uint64) bool { return n == 2 }
+	s, err := NewApproximateSearcher(r, "v", []float32{1, 0}, 2, vec.DotProduct, params, 2, accept, search.SearcherOptions{Explain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ann != 0 || s.Count() != 2 {
+		t.Fatal("construction must not search")
+	}
+	ctx := search.NewSearchContext(1, 0)
+	m, err := s.Next(ctx)
+	if err != nil || m == nil || m.Number != 2 || m.Score != 1 {
+		t.Fatalf("match %v err %v", m, err)
+	}
+	if !strings.Contains(m.Explanation.Message, "ann(v:dot_product)") {
+		t.Fatalf("explanation %s", m.Explanation)
+	}
+	if r.ann != 1 || r.params != params || r.field != "v" || r.k != 2 || r.accept == nil || !r.accept(2) || r.accept(3) {
+		t.Fatalf("ann called %d times with %+v field %q k %d", r.ann, r.params, r.field, r.k)
+	}
+	if _, err := NewApproximateSearcher(&stubReader{}, "v", []float32{1}, 1, vec.L2, hnsw.Params{}, 1, nil,
+		search.SearcherOptions{}); err == nil || !strings.Contains(err.Error(), "does not support approximate") {
+		t.Fatalf("expected unsupported reader error, got %v", err)
+	}
+	if _, err := NewApproximateSearcher(r, "v", []float32{1}, 1, vec.L2, hnsw.Params{M: 1}, 1, nil,
+		search.SearcherOptions{}); err == nil {
+		t.Fatal("expected params validation error")
+	}
+	if _, err := NewApproximateSearcher(r, "", []float32{1}, 1, vec.L2, hnsw.Params{}, 1, nil,
+		search.SearcherOptions{}); err == nil {
+		t.Fatal("expected field validation error")
+	}
+}
 
 func newSearcher(t *testing.T, r search.Reader, boost float64, explain bool) *Searcher {
 	t.Helper()

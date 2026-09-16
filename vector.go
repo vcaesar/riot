@@ -20,6 +20,7 @@ import (
 
 	"github.com/vcaesar/ice/vec"
 
+	"github.com/vcaesar/riot/hnsw"
 	"github.com/vcaesar/riot/search"
 	"github.com/vcaesar/riot/search/knn"
 )
@@ -36,6 +37,11 @@ const (
 // VectorMatch contains a snapshot-local document number and similarity score.
 // Number can be passed to the same Reader's VisitStoredFields.
 type VectorMatch = vec.Match
+
+// ANNParams tunes approximate search: M and EfConstruction shape the
+// per-segment HNSW graph, EfSearch bounds the search beam. Zero fields take
+// the defaults in package hnsw.
+type ANNParams = hnsw.Params
 
 // NewVectorField copies a finite, nonempty vector into a stored-only field.
 // It emits no text terms or doc values. Use a dedicated field name for vectors
@@ -65,16 +71,29 @@ func (r *Reader) SearchVectors(ctx context.Context, field string, query []float3
 	return r.reader.SearchVectors(ctx, field, query, k, metric, accept)
 }
 
+// SearchVectorsANN is the approximate counterpart of SearchVectors. Each
+// segment is searched through an HNSW graph built from its stored vectors on
+// first use and cached for the segment's lifetime, keyed by field, metric,
+// M and EfConstruction; the first search after opening or merging pays the
+// build. Results may miss some true neighbors, but every returned score is
+// exact, and deleted or rejected documents are never returned.
+func (r *Reader) SearchVectorsANN(ctx context.Context, field string, query []float32, k int,
+	metric Metric, params ANNParams, accept func(uint64) bool) ([]VectorMatch, error) {
+	return r.reader.SearchVectorsANN(ctx, field, query, k, metric, params, accept)
+}
+
 // KNNQuery matches the k nearest documents to a vector, scored by
 // boost * similarity, so it composes with BooleanQuery, sorting and
 // aggregations. The vector scan runs on first use under the context passed
-// to Reader.Search, after Config.SearchStartFunc admission.
+// to Reader.Search, after Config.SearchStartFunc admission. SetANN switches
+// from an exact scan to approximate search.
 type KNNQuery struct {
 	field  string
 	vector []float32
 	k      int
 	metric Metric
 	boost  *boost
+	ann    *ANNParams
 }
 
 // NewKNNQuery creates a cosine KNNQuery over field.
@@ -118,10 +137,29 @@ func (q *KNNQuery) Vector() []float32 {
 	return q.vector
 }
 
+// SetANN enables approximate search with params; see Reader.SearchVectorsANN.
+func (q *KNNQuery) SetANN(params ANNParams) *KNNQuery {
+	q.ann = &params
+	return q
+}
+
+// ANN returns the approximate search parameters, or nil for exact search.
+func (q *KNNQuery) ANN() *ANNParams {
+	return q.ann
+}
+
 func (q *KNNQuery) Searcher(i search.Reader, options search.SearcherOptions) (search.Searcher, error) {
+	if q.ann != nil {
+		return knn.NewApproximateSearcher(i, q.field, q.vector, q.k, q.metric, *q.ann, q.boost.Value(), nil, options)
+	}
 	return knn.NewSearcher(i, q.field, q.vector, q.k, q.metric, q.boost.Value(), nil, options)
 }
 
 func (q *KNNQuery) Validate() error {
+	if q.ann != nil {
+		if err := q.ann.Validate(); err != nil {
+			return err
+		}
+	}
 	return knn.Validate(q.field, q.vector, q.k, q.metric)
 }
