@@ -17,6 +17,8 @@ package gse
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -112,10 +114,23 @@ func (x *Index) Field(name, text string) *riot.TermField {
 		HighlightMatches()
 }
 
-// Index writes text under id into the configured field, replacing any
-// existing document with that id.
-func (x *Index) Index(id, text string) error {
-	doc := riot.NewDocument(id).AddField(x.Field(x.field, text))
+// Index writes a string or a struct (or non-nil pointer to a struct) under id,
+// replacing any existing document with that id. Strings use Option.Field.
+// Structs follow encoding/json field names and tags, including "-" and omitempty.
+// Nested fields use dotted names; arrays are joined with newlines; nulls are skipped.
+// Mapped names must be nonempty, without dots or a leading underscore.
+// Scalar values
+// are stored and analyzed as text, not as numeric or date range fields.
+// Use Request.Field to search a mapped field; the default search field is unchanged.
+func (x *Index) Index(id string, data any) error {
+	fields, err := documentFields(x.field, data)
+	if err != nil {
+		return fmt.Errorf("error indexing %q: %v", id, err)
+	}
+	doc := riot.NewDocument(id)
+	for _, name := range slices.Sorted(maps.Keys(fields)) {
+		doc.AddField(x.Field(name, strings.Join(fields[name], "\n")))
+	}
 	if err := x.writer.Update(doc.ID(), doc); err != nil {
 		return fmt.Errorf("error indexing %q: %v", id, err)
 	}
