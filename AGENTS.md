@@ -1,7 +1,7 @@
 # AGENTS.md — riot
 
 Go text indexing/search library (`github.com/vcaesar/riot`, Bluge fork, Apache-2.0).
-Root package is `riot`; `cmd/bluge` is a small cobra CLI. Go version from `go.mod`.
+Root package is `riot`; `cmd/riot` is a small cobra CLI. Go version from `go.mod`.
 
 ## Commands
 
@@ -36,7 +36,7 @@ No Makefile, codegen, vendor dir, or fixture downloads; test corpora are inline 
 - Apache-2.0 header on every `.go` file; new files use "The Bluge Authors".
 - Fluent value-receiver builders return copies: `func (config Config) WithSegmentType(typ string) Config`.
 - `.golangci.yml`: `lll` 140, `funlen`, `gocyclo` 20, `dupl` 100, `misspell` US.
-  `gochecknoinits` is on — `init()` only in `_test.go`, `sizes.go`, `cmd/bluge/cmd`.
+  `gochecknoinits` is on — `init()` only in `_test.go`, `sizes.go`, `cmd/riot/cmd`.
 - Errors: `fmt.Errorf("error <doing x>: %v", err)`.
 
 ## Testing
