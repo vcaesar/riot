@@ -67,6 +67,13 @@ func (config Config) WithSegmentVersion(ver uint32) Config {
 	return config
 }
 
+// WithStoredChunkCacheSize bounds decompressed stored-field chunks cached
+// per segment; zero disables caching.
+func (config Config) WithStoredChunkCacheSize(n int) Config {
+	config.indexConfig = config.indexConfig.WithStoredChunkCacheSize(n)
+	return config
+}
+
 func (config Config) DisableOptimizeConjunction() Config {
 	config.indexConfig = config.indexConfig.DisableOptimizeConjunction()
 	return config
