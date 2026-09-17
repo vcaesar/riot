@@ -45,69 +45,69 @@ var masks = []uint64{16, 8, 4, 2, 1}
 // higher precision. This api is in experimental phase.
 func DecodeGeoHash(geoHash string) (lat, lon float64) {
 	even := true
-	lats := []float64{-90.0, 90.0}
-	lons := []float64{-180.0, 180.0}
+	minLat, maxLat := -90.0, 90.0
+	minLon, maxLon := -180.0, 180.0
 
 	for i := 0; i < len(geoHash); i++ {
 		cd := uint64(base32encoding.dec[geoHash[i]])
-		for j := 0; j < 5; j++ {
+		for j := 0; j < bitsPerChar; j++ {
 			if even {
 				if cd&masks[j] > 0 {
-					lons[0] = (lons[0] + lons[1]) / 2
+					minLon = (minLon + maxLon) / 2
 				} else {
-					lons[1] = (lons[0] + lons[1]) / 2
+					maxLon = (minLon + maxLon) / 2
 				}
 			} else {
 				if cd&masks[j] > 0 {
-					lats[0] = (lats[0] + lats[1]) / 2
+					minLat = (minLat + maxLat) / 2
 				} else {
-					lats[1] = (lats[0] + lats[1]) / 2
+					maxLat = (minLat + maxLat) / 2
 				}
 			}
 			even = !even
 		}
 	}
 
-	return (lats[0] + lats[1]) / 2, (lons[0] + lons[1]) / 2
+	return (minLat + maxLat) / 2, (minLon + maxLon) / 2
 }
 
 const bitsPerChar = 5
 
 func EncodeGeoHash(lat, lon float64) string {
 	even := true
-	lats := []float64{-90.0, 90.0}
-	lons := []float64{-180.0, 180.0}
-	precision := 12
+	minLat, maxLat := -90.0, 90.0
+	minLon, maxLon := -180.0, 180.0
 	var ch, bit uint64
-	var geoHash string
+	var geoHash [geoHashMaxLength]byte
 
-	for len(geoHash) < precision {
+	for n := 0; n < geoHashMaxLength; {
 		if even {
-			mid := (lons[0] + lons[1]) / 2
+			mid := (minLon + maxLon) / 2
 			if lon > mid {
 				ch |= masks[bit]
-				lons[0] = mid
+				minLon = mid
 			} else {
-				lons[1] = mid
+				maxLon = mid
 			}
 		} else {
-			mid := (lats[0] + lats[1]) / 2
+			mid := (minLat + maxLat) / 2
 			if lat > mid {
 				ch |= masks[bit]
-				lats[0] = mid
+				minLat = mid
 			} else {
-				lats[1] = mid
+				maxLat = mid
 			}
 		}
 		even = !even
 		if bit < (bitsPerChar - 1) {
 			bit++
 		} else {
-			geoHash += string(base32encoding.enc[ch])
+			geoHash[n] = base32encoding.enc[ch]
+			n++
 			ch = 0
 			bit = 0
 		}
 	}
 
-	return geoHash
+	return string(geoHash[:])
 }

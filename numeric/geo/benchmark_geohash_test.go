@@ -41,3 +41,10 @@ func BenchmarkGeoHashLen7NewDecode(b *testing.B) {
 		_, _ = DecodeGeoHash(hash)
 	}
 }
+
+func BenchmarkGeoHashEncode(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = EncodeGeoHash(48.85841131, 2.29449034)
+	}
+}

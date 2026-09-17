@@ -19,70 +19,85 @@ import (
 	"testing"
 )
 
-func TestCos(t *testing.T) {
-	cosDelta := 1e-15
-
-	tests := []struct {
-		in   float64
-		want float64
-	}{
-		{math.NaN(), math.NaN()},
-		{math.Inf(-1), math.NaN()},
-		{math.Inf(1), math.NaN()},
-		{1, math.Cos(1)},
-		{0, math.Cos(0)},
-		{math.Pi / 2, math.Cos(math.Pi / 2)},
-		{-math.Pi / 2, math.Cos(-math.Pi / 2)},
-		{math.Pi / 4, math.Cos(math.Pi / 4)},
-		{-math.Pi / 4, math.Cos(-math.Pi / 4)},
-		{math.Pi * 2 / 3, math.Cos(math.Pi * 2 / 3)},
-		{-math.Pi * -2 / 3, math.Cos(-math.Pi * -2 / 3)},
-		{math.Pi / 6, math.Cos(math.Pi / 6)},
-		{-math.Pi / 6, math.Cos(-math.Pi / 6)},
-	}
-
-	for _, test := range tests {
-		got := cos(test.in)
-		if math.IsNaN(test.want) && !math.IsNaN(got) {
-			t.Errorf("wanted NaN, got %f for cos(%f)", got, test.in)
+func BenchmarkEarthDiameterLookup(b *testing.B) {
+	b.Run("modulo", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			lat := float64(i%180-90) * degreesToRadian
+			index := math.Mod(math.Abs(lat)*radiusIndexer+0.5, float64(len(earthDiameterPerLatitude)))
+			benchmarkDistance = earthDiameterPerLatitude[int(index)]
 		}
-		if !math.IsNaN(test.want) && math.Abs(got-test.want) > cosDelta {
-			t.Errorf("wanted: %f, got %f for cos(%f) diff %f", test.want, got, test.in, math.Abs(got-test.want))
+	})
+	b.Run("fast", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			lat := float64(i%180-90) * degreesToRadian
+			benchmarkDistance = earthDiameter(lat)
+		}
+	})
+}
+
+func TestEarthDiameterLookupCompatibility(t *testing.T) {
+	latitudes := []float64{math.NaN(), math.Inf(1), math.Inf(-1), math.MaxFloat64, -math.MaxFloat64}
+	for i := -4096; i <= 4096; i++ {
+		lat := float64(i) * radiusDelta / 2
+		latitudes = append(latitudes, lat, math.Nextafter(lat, math.Inf(-1)), math.Nextafter(lat, math.Inf(1)))
+	}
+	for _, lat := range latitudes {
+		index := math.Mod(math.Abs(lat)*radiusIndexer+0.5, float64(len(earthDiameterPerLatitude)))
+		var want float64
+		if !math.IsNaN(index) {
+			want = earthDiameterPerLatitude[int(index)]
+		}
+		if got := earthDiameter(lat); got != want {
+			t.Fatalf("earthDiameter(%g): want %g, got %g", lat, want, got)
 		}
 	}
 }
 
-func TestAsin(t *testing.T) {
-	asinDelta := 1e-7
+func TestEarthDiameter(t *testing.T) {
+	const equatorial = 2 * 6378.137
+	const polar = 2 * 6356.75231420
 
 	tests := []struct {
-		in   float64
+		lat  float64
 		want float64
 	}{
-		{math.NaN(), math.NaN()},
-		{2, math.NaN()},
-		{-2, math.NaN()},
-		{-1, -math.Pi / 2},
-		{-0.8660254, -math.Pi / 3},
-		{-0.7071068, -math.Pi / 4},
-		{-0.5, -math.Pi / 6},
-		{0, 0},
-		{0.5, math.Pi / 6},
-		{0.7071068, math.Pi / 4},
-		{0.8660254, math.Pi / 3},
-		{1, math.Pi / 2},
-		// these last two cases test the code outside tabular range
-		{0.999999999999999, math.Pi / 2},
-		{-0.999999999999999, -math.Pi / 2},
+		{math.NaN(), 0},
+		{0, equatorial},
+		{math.Pi / 2, polar},
+		{-math.Pi / 2, polar},
 	}
 
 	for _, test := range tests {
-		got := asin(test.in)
-		if math.IsNaN(test.want) && !math.IsNaN(got) {
-			t.Errorf("wanted NaN, got %f for asin(%f)", got, test.in)
+		got := earthDiameter(test.lat)
+		if math.IsNaN(got) || math.Abs(got-test.want) > 1e-9 {
+			t.Errorf("earthDiameter(%f): want %f, got %f", test.lat, test.want, got)
 		}
-		if !math.IsNaN(test.want) && math.Abs(got-test.want) > asinDelta {
-			t.Errorf("wanted: %f, got %f for asin(%f) diff %.16f", test.want, got, test.in, math.Abs(got-test.want))
+	}
+
+	for i := 0; i < radiusTabsSize; i++ {
+		lat := float64(i) * radiusDelta
+		cos, sin := math.Cos(lat), math.Sin(lat)
+		a, b := equatorial/2, polar/2
+		x, y := a*cos, b*sin
+		ax, by := a*x, b*y
+		want := 2 * math.Sqrt((ax*ax+by*by)/(x*x+y*y))
+		for _, signedLat := range []float64{lat, -lat} {
+			got := earthDiameter(signedLat)
+			if math.IsNaN(got) || math.Abs(got-want) > 1e-9 {
+				t.Fatalf("earthDiameter(%g): want %.12f, got %.12f", signedLat, want, got)
+			}
 		}
+	}
+
+	// diameter must shrink monotonically from the equator to the pole
+	prev := earthDiameter(0)
+	for lat := 0.01; lat <= math.Pi/2; lat += 0.01 {
+		d := earthDiameter(lat)
+		if d > prev {
+			t.Fatalf("earthDiameter not monotonic at lat %f: %f > %f", lat, d, prev)
+		}
+		prev = d
 	}
 }

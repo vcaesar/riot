@@ -113,9 +113,38 @@ func TestHaversinDistance(t *testing.T) {
 		if math.IsNaN(test.want) && !math.IsNaN(got) {
 			t.Errorf("expected NaN, got %f", got)
 		}
-		if !math.IsNaN(test.want) && math.Abs(got-test.want) > 1e-2 {
+		if !math.IsNaN(test.want) && (math.IsNaN(got) || math.Abs(got-test.want) > 1e-2) {
 			t.Errorf("expected %f got %f", test.want, got)
 		}
+	}
+}
+
+func TestHaversinSmallDistances(t *testing.T) {
+	for _, degrees := range []float64{1e-9, 1e-7, 1e-5, 1e-3} {
+		for _, tc := range []struct {
+			name     string
+			lon, lat float64
+		}{
+			{"longitude", degrees, 0},
+			{"latitude", 0, degrees},
+		} {
+			t.Run(fmt.Sprintf("%s/%g", tc.name, degrees), func(t *testing.T) {
+				want := earthDiameter(tc.lat*degreesToRadian/2) / 2 * degrees * degreesToRadian
+				got := Haversin(0, 0, tc.lon, tc.lat)
+				if math.IsNaN(got) || math.Abs(got-want) > want*1e-12 {
+					t.Fatalf("want %.16g km, got %.16g km", want, got)
+				}
+				if reverse := Haversin(tc.lon, tc.lat, 0, 0); reverse != got {
+					t.Errorf("reverse distance %g != %g", reverse, got)
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkHaversin(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = Haversin(-74.0059731, 40.7143528, -73.95, 40.65)
 	}
 }
 

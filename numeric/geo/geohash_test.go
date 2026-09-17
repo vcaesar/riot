@@ -60,5 +60,39 @@ func TestEncodeGeoHash(t *testing.T) {
 		if !strings.HasPrefix(hash, test.hash) {
 			t.Errorf("expected hash %s, got %s", test.hash, hash)
 		}
+		if len(hash) != geoHashMaxLength {
+			t.Errorf("expected hash length %d, got %d (%s)", geoHashMaxLength, len(hash), hash)
+		}
+	}
+}
+
+func TestGeoHashRoundTrip(t *testing.T) {
+	points := []struct{ lat, lon float64 }{
+		{48.85841131, 2.29449034},
+		{10.060349, 76.491540},
+		{-33.8688, 151.2093},
+		{0, 0},
+		{89.9999, -179.9999},
+		{-89.9999, 179.9999},
+	}
+
+	for _, p := range points {
+		lat, lon := DecodeGeoHash(EncodeGeoHash(p.lat, p.lon))
+		if compareGeo(lat, p.lat) != 0 || compareGeo(lon, p.lon) != 0 {
+			t.Errorf("roundtrip (%f, %f) got (%f, %f)", p.lat, p.lon, lat, lon)
+		}
+	}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		_ = EncodeGeoHash(48.85841131, 2.29449034)
+	})
+	if allocs > 1 {
+		t.Errorf("EncodeGeoHash allocs: want <= 1, got %v", allocs)
+	}
+	allocs = testing.AllocsPerRun(100, func() {
+		_, _ = DecodeGeoHash("u09tunquc")
+	})
+	if allocs != 0 {
+		t.Errorf("DecodeGeoHash allocs: want 0, got %v", allocs)
 	}
 }
