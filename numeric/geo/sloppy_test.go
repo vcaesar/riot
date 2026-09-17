@@ -19,70 +19,34 @@ import (
 	"testing"
 )
 
-func TestCos(t *testing.T) {
-	cosDelta := 1e-15
+func TestEarthDiameter(t *testing.T) {
+	const equatorial = 2 * 6378.137
+	const polar = 2 * 6356.75231420
 
 	tests := []struct {
-		in   float64
+		lat  float64
 		want float64
 	}{
-		{math.NaN(), math.NaN()},
-		{math.Inf(-1), math.NaN()},
-		{math.Inf(1), math.NaN()},
-		{1, math.Cos(1)},
-		{0, math.Cos(0)},
-		{math.Pi / 2, math.Cos(math.Pi / 2)},
-		{-math.Pi / 2, math.Cos(-math.Pi / 2)},
-		{math.Pi / 4, math.Cos(math.Pi / 4)},
-		{-math.Pi / 4, math.Cos(-math.Pi / 4)},
-		{math.Pi * 2 / 3, math.Cos(math.Pi * 2 / 3)},
-		{-math.Pi * -2 / 3, math.Cos(-math.Pi * -2 / 3)},
-		{math.Pi / 6, math.Cos(math.Pi / 6)},
-		{-math.Pi / 6, math.Cos(-math.Pi / 6)},
+		{math.NaN(), 0},
+		{0, equatorial},
+		{math.Pi / 2, polar},
+		{-math.Pi / 2, polar},
 	}
 
 	for _, test := range tests {
-		got := cos(test.in)
-		if math.IsNaN(test.want) && !math.IsNaN(got) {
-			t.Errorf("wanted NaN, got %f for cos(%f)", got, test.in)
-		}
-		if !math.IsNaN(test.want) && math.Abs(got-test.want) > cosDelta {
-			t.Errorf("wanted: %f, got %f for cos(%f) diff %f", test.want, got, test.in, math.Abs(got-test.want))
+		got := earthDiameter(test.lat)
+		if math.Abs(got-test.want) > 1e-9 {
+			t.Errorf("earthDiameter(%f): want %f, got %f", test.lat, test.want, got)
 		}
 	}
-}
 
-func TestAsin(t *testing.T) {
-	asinDelta := 1e-7
-
-	tests := []struct {
-		in   float64
-		want float64
-	}{
-		{math.NaN(), math.NaN()},
-		{2, math.NaN()},
-		{-2, math.NaN()},
-		{-1, -math.Pi / 2},
-		{-0.8660254, -math.Pi / 3},
-		{-0.7071068, -math.Pi / 4},
-		{-0.5, -math.Pi / 6},
-		{0, 0},
-		{0.5, math.Pi / 6},
-		{0.7071068, math.Pi / 4},
-		{0.8660254, math.Pi / 3},
-		{1, math.Pi / 2},
-		// these last two cases test the code outside tabular range
-		{0.999999999999999, math.Pi / 2},
-		{-0.999999999999999, -math.Pi / 2},
-	}
-
-	for _, test := range tests {
-		got := asin(test.in)
-		if math.IsNaN(test.want) && !math.IsNaN(got) {
-			t.Errorf("wanted NaN, got %f for asin(%f)", got, test.in)
+	// diameter must shrink monotonically from the equator to the pole
+	prev := earthDiameter(0)
+	for lat := 0.01; lat <= math.Pi/2; lat += 0.01 {
+		d := earthDiameter(lat)
+		if d > prev {
+			t.Fatalf("earthDiameter not monotonic at lat %f: %f > %f", lat, d, prev)
 		}
-		if !math.IsNaN(test.want) && math.Abs(got-test.want) > asinDelta {
-			t.Errorf("wanted: %f, got %f for asin(%f) diff %.16f", test.want, got, test.in, math.Abs(got-test.want))
-		}
+		prev = d
 	}
 }

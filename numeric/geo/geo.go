@@ -40,7 +40,7 @@ const uint64One uint64 = 0x1
 var lonScale = float64((uint64One<<GeoBits)-1) / 360.0
 var latScale = float64((uint64One<<GeoBits)-1) / 180.0
 
-var geoHashMaxLength = 12
+const geoHashMaxLength = 12
 
 // Point represents a geo point.
 type Point struct {
@@ -142,7 +142,7 @@ func RectFromPointDistance(lon, lat, dist float64) (topLeftLon, topLeftLat, bott
 
 	var minLonL, maxLonL float64
 	if minLatL > minLatRad && maxLatL < maxLatRad {
-		deltaLon := asin(sin(radDistance) / cos(radLat))
+		deltaLon := math.Asin(math.Sin(radDistance) / math.Cos(radLat))
 		minLonL = radLon - deltaLon
 		if minLonL < minLonRad {
 			minLonL += 2 * math.Pi

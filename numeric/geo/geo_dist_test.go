@@ -119,6 +119,12 @@ func TestHaversinDistance(t *testing.T) {
 	}
 }
 
+func BenchmarkHaversin(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = Haversin(-74.0059731, 40.7143528, -73.95, 40.65)
+	}
+}
+
 func TestConvert(t *testing.T) {
 	tests := []struct {
 		desc   string
