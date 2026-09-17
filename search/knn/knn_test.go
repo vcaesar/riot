@@ -254,6 +254,31 @@ func TestSearcherCancelled(t *testing.T) {
 	}
 }
 
+func TestApproximateSearcherCancelled(t *testing.T) {
+	r := &approxReader{stubReader: &stubReader{}}
+	s, err := NewApproximateSearcher(r, "v", []float32{1}, 1, vec.L2, hnsw.Params{}, 1, nil,
+		search.SearcherOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := search.NewSearchContext(1, 0)
+	var cancel context.CancelFunc
+	ctx.Ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	for _, step := range []func() (*search.DocumentMatch, error){
+		func() (*search.DocumentMatch, error) { return s.Next(ctx) },
+		func() (*search.DocumentMatch, error) { return s.Advance(ctx, 1) },
+	} {
+		m, err := step()
+		if m != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v %v, want context.Canceled", m, err)
+		}
+	}
+	if r.ann != 1 || r.ctx != ctx.Ctx {
+		t.Fatalf("ANN calls %d, caller context forwarded %v", r.ann, r.ctx == ctx.Ctx)
+	}
+}
+
 func TestSearcherErrors(t *testing.T) {
 	boom := errors.New("boom")
 	s, err := NewSearcher(&stubReader{err: boom}, "v", []float32{1}, 1, vec.L2, 1, nil, search.SearcherOptions{})

@@ -119,6 +119,73 @@ func TestSnapshotSearchVectorsANNBadStoredValue(t *testing.T) {
 	}
 }
 
+func TestSnapshotSearchVectorsANNCacheCancellation(t *testing.T) {
+	vectors := make([][]float32, 64)
+	for i := range vectors {
+		vectors[i] = []float32{float32(i)}
+	}
+	seg := &storedVectorSegment{vectors: encodedVectors(t, vectors...)}
+	s := &Snapshot{offsets: []uint64{0}, segment: []*segmentSnapshot{
+		{segment: &segmentWrapper{Segment: seg}},
+	}}
+	params := hnsw.Params{EfSearch: len(vectors)}
+	if _, err := s.SearchVectorsANN(context.Background(), "v", []float32{0}, 1, vec.L2, params, nil); err != nil {
+		t.Fatal(err)
+	}
+	visits := seg.visits.Load()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	matches, err := s.SearchVectorsANN(ctx, "v", []float32{0}, 1, vec.L2, params, func(uint64) bool {
+		calls++
+		cancel()
+		return true
+	})
+	if !errors.Is(err, context.Canceled) || matches != nil {
+		t.Fatalf("got %v, %v; want cancellation without partial results", matches, err)
+	}
+	if calls != 1 {
+		t.Fatalf("continued filtering after cancellation: %d calls", calls)
+	}
+	if seg.visits.Load() != visits {
+		t.Fatal("cached graph was rebuilt")
+	}
+	if _, err := s.SearchVectorsANN(context.Background(), "v", []float32{0}, 1, vec.L2, params, nil); err != nil {
+		t.Fatalf("search after cancellation: %v", err)
+	}
+}
+
+func TestSnapshotVectorFilterFastPath(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		deleted    *roaring.Bitmap
+		accept     func(uint64) bool
+		wantFilter bool
+	}{
+		{name: "no filter"},
+		{name: "empty deletion mask", deleted: roaring.New()},
+		{name: "deleted", deleted: roaring.BitmapOf(1), wantFilter: true},
+		{name: "accept", accept: func(n uint64) bool { return n == 10 }, wantFilter: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Snapshot{offsets: []uint64{10}, segment: []*segmentSnapshot{{deleted: tc.deleted}}}
+			_, err := s.searchVectors(context.Background(), "v", []float32{1}, 1, vec.L2, tc.accept,
+				func(_ *segmentSnapshot, accept func(uint64) bool) ([]vec.Match, error) {
+					if (accept != nil) != tc.wantFilter {
+						t.Fatalf("filter present = %v, want %v", accept != nil, tc.wantFilter)
+					}
+					if accept != nil && (!accept(0) || accept(1)) {
+						t.Fatal("incorrect local deletion or global accept mapping")
+					}
+					return nil, nil
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestSegmentVectorGraphAbandonedBuildRetries(t *testing.T) {
 	seg := &storedVectorSegment{vectors: encodedVectors(t, []float32{1}, []float32{2})}
 	w := &segmentWrapper{Segment: seg}

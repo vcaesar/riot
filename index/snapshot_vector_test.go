@@ -41,7 +41,7 @@ func (s *vectorTestSegment) SearchVectors(_ context.Context, _ string, _ []float
 	}
 	var rv []vec.Match
 	for _, m := range s.matches {
-		if accept(m.Number) {
+		if accept == nil || accept(m.Number) {
 			rv = append(rv, m)
 		}
 		if len(rv) == k {
