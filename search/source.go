@@ -91,7 +91,16 @@ func (f FieldSource) Number(match *DocumentMatch) float64 {
 }
 
 func (f FieldSource) Numbers(match *DocumentMatch) []float64 {
-	var rv []float64
+	rv := match.numScratch[:0]
+	if match.hasDocNumbers(string(f)) {
+		for _, n := range match.docNumbers {
+			if n.field == string(f) {
+				rv = append(rv, numeric.Int64ToFloat64(n.value))
+			}
+		}
+		match.numScratch = rv
+		return rv
+	}
 	for _, term := range f.Values(match) {
 		prefixCoded := numeric.PrefixCoded(term)
 		shift, err := prefixCoded.Shift()
@@ -103,6 +112,7 @@ func (f FieldSource) Numbers(match *DocumentMatch) []float64 {
 			}
 		}
 	}
+	match.numScratch = rv
 	return rv
 }
 
@@ -112,6 +122,12 @@ func (f FieldSource) Date(match *DocumentMatch) time.Time {
 
 func (f FieldSource) Dates(match *DocumentMatch) []time.Time {
 	var rv []time.Time
+	if nums, ok := match.DocNumbers(string(f), nil); ok {
+		for _, i64 := range nums {
+			rv = append(rv, time.Unix(0, i64))
+		}
+		return rv
+	}
 	for _, term := range f.Values(match) {
 		prefixCoded := numeric.PrefixCoded(term)
 		shift, err := prefixCoded.Shift()
@@ -132,6 +148,14 @@ func (f FieldSource) GeoPoint(match *DocumentMatch) *geo.Point {
 
 func (f FieldSource) GeoPoints(match *DocumentMatch) []*geo.Point {
 	var rv []*geo.Point
+	if nums, ok := match.DocNumbers(string(f), nil); ok {
+		for _, i64 := range nums {
+			//nolint:gosec // G115: restore all Morton hash bits from the signed column value.
+			hash := uint64(i64)
+			rv = append(rv, &geo.Point{Lon: geo.MortonUnhashLon(hash), Lat: geo.MortonUnhashLat(hash)})
+		}
+		return rv
+	}
 	for _, term := range f.Values(match) {
 		prefixCoded := numeric.PrefixCoded(term)
 		shift, err := prefixCoded.Shift()

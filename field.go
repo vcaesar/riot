@@ -113,6 +113,16 @@ func (b *TermField) NumPlainTextBytes() int {
 	return b.numPlainTextBytes
 }
 
+// NumericValue returns the int64 behind a numeric, date or geo field so the
+// segment can store it as a typed column; ok is false for other fields.
+func (b *TermField) NumericValue() (int64, bool) {
+	if _, ok := b.analyzer.(*numericAnalyzer); !ok {
+		return 0, false
+	}
+	v, err := numeric.PrefixCoded(b.value).Int64()
+	return v, err == nil
+}
+
 func (b *TermField) StoreValue() *TermField {
 	b.FieldOptions |= Store
 	return b

@@ -92,11 +92,12 @@ type TermsCalculator struct {
 func (a *TermsCalculator) Consume(d *search.DocumentMatch) {
 	a.total++
 	for _, term := range a.src.Values(d) {
-		termStr := string(term)
-		bucket, ok := a.bucketsMap[termStr]
+		// map lookup with string(term) does not allocate; only new buckets copy
+		bucket, ok := a.bucketsMap[string(term)]
 		if ok {
 			bucket.Consume(d)
 		} else {
+			termStr := string(term)
 			newBucket := search.NewBucket(termStr, a.aggregations)
 			newBucket.Consume(d)
 			a.bucketsMap[termStr] = newBucket

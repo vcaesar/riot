@@ -68,6 +68,21 @@ func MustNewPrefixCodedInt64(in int64, shift uint) PrefixCoded {
 	return rv
 }
 
+// AppendPrefixCodedInt64 appends the shift-0 encoding of in to buf.
+func AppendPrefixCodedInt64(buf []byte, in int64) []byte {
+	const nChars = 10 // ((63 - 0) / 7) + 1
+	start := len(buf)
+	buf = append(buf, make([]byte, nChars+1)...)
+	buf[start] = ShiftStartInt64
+	//nolint:gosec // G115: flip sign bit while preserving full two's-complement bit pattern.
+	bits := uint64(in) ^ 0x8000000000000000
+	for i := nChars; i > 0; i-- {
+		buf[start+i] = byte(bits & 0x7f)
+		bits >>= 7
+	}
+	return buf
+}
+
 // Shift returns the number of bits shifted
 // returns 0 if in uninitialized state
 func (p PrefixCoded) Shift() (uint, error) {
