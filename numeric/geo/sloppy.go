@@ -36,12 +36,10 @@ func init() {
 	earthDiameterPerLatitude[0] = 2.0 * a / 1000
 	earthDiameterPerLatitude[radiusTabsSize-1] = 2.0 * b / 1000
 	for i := 1; i < radiusTabsSize-1; i++ {
-		lat := math.Pi * float64(i) / (2*radiusTabsSize - 1)
-		one := math.Pow(a2*math.Cos(lat), 2)
-		two := math.Pow(b2*math.Sin(lat), 2)
-		three := math.Pow(a*math.Cos(lat), 2)
-		four := math.Pow(b*math.Sin(lat), 2)
-		radius := math.Sqrt((one + two) / (three + four))
+		lat := float64(i) * radiusDelta
+		sin, cos := math.Sincos(lat)
+		cos2, sin2 := cos*cos, sin*sin
+		radius := math.Sqrt((a2*a2*cos2 + b2*b2*sin2) / (a2*cos2 + b2*sin2))
 		earthDiameterPerLatitude[i] = 2 * radius / 1000
 	}
 }
@@ -49,7 +47,11 @@ func init() {
 // earthDiameter returns an estimation of the earth's diameter at the specified
 // latitude in kilometers
 func earthDiameter(lat float64) float64 {
-	index := math.Mod(math.Abs(lat)*radiusIndexer+0.5, float64(len(earthDiameterPerLatitude)))
+	index := math.Abs(lat)*radiusIndexer + 0.5
+	if index < float64(len(earthDiameterPerLatitude)) {
+		return earthDiameterPerLatitude[int(index)]
+	}
+	index = math.Mod(index, float64(len(earthDiameterPerLatitude)))
 	if math.IsNaN(index) {
 		return 0
 	}

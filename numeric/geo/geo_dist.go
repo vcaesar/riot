@@ -91,9 +91,9 @@ func ParseDistanceUnit(u string) (float64, error) {
 func Haversin(lon1, lat1, lon2, lat2 float64) float64 {
 	x1 := lat1 * degreesToRadian
 	x2 := lat2 * degreesToRadian
-	h1 := 1 - math.Cos(x1-x2)
-	h2 := 1 - math.Cos((lon1-lon2)*degreesToRadian)
-	h := (h1 + math.Cos(x1)*math.Cos(x2)*h2) / 2
+	sinLat := math.Sin((lat1 - lat2) * degreesToRadian / 2)
+	sinLon := math.Sin((lon1 - lon2) * degreesToRadian / 2)
+	h := sinLat*sinLat + math.Cos(x1)*math.Cos(x2)*sinLon*sinLon
 	avgLat := (x1 + x2) / 2
 	diameter := earthDiameter(avgLat)
 
