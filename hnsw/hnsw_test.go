@@ -15,6 +15,8 @@
 package hnsw
 
 import (
+	"context"
+	"errors"
 	"math"
 	"math/rand"
 	"reflect"
@@ -227,6 +229,166 @@ func TestGraphConcurrentSearch(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestParamsMOverflow(t *testing.T) {
+	for _, m := range []int{math.MaxInt / 2, math.MaxInt/2 + 1, math.MaxInt} {
+		p := Params{M: m}
+		wantError := m > math.MaxInt/2
+		if err := p.Validate(); (err != nil) != wantError {
+			t.Fatalf("M=%d: Validate error %v, want error %v", m, err, wantError)
+		}
+		g, err := New(vec.L2, p)
+		if (err != nil) != wantError {
+			t.Fatalf("M=%d: New error %v, want error %v", m, err, wantError)
+		}
+		if !wantError && g.m0 != 2*m {
+			t.Fatalf("M=%d: level-0 limit %d", m, g.m0)
+		}
+	}
+}
+
+func TestGraphRejectedBridges(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		values [][]float32
+		links  [][][]uint32
+		reject map[uint64]bool
+		want   vec.Match
+	}{
+		{
+			name:   "rejected entry below full beam",
+			values: [][]float32{{-1}, {10}, {-2}, {20}},
+			links:  [][][]uint32{{{1, 2}}, {{}}, {{3}}, {{}}},
+			reject: map[uint64]bool{0: true, 2: true},
+			want:   vec.Match{Number: 3, Score: 20},
+		},
+		{
+			name:   "pruned accepted candidate before pending bridges",
+			values: [][]float32{{5}, {6}, {10}, {-1}, {-2}, {20}},
+			links:  [][][]uint32{{{1, 2, 3}}, {{}}, {{}}, {{4}}, {{5}}, {{}}},
+			reject: map[uint64]bool{3: true, 4: true},
+			want:   vec.Match{Number: 5, Score: 20},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := build(t, vec.DotProduct, Params{}, tc.values)
+			g.entry, g.maxLevel, g.links = 0, 0, tc.links
+			calls := make(map[uint64]int)
+			got, err := g.Search([]float32{1}, 1, 1, func(id uint64) bool {
+				calls[id]++
+				return !tc.reject[id]
+			})
+			if err != nil || !reflect.DeepEqual(got, []vec.Match{tc.want}) {
+				t.Fatalf("got %v, error %v, want %v", got, err, tc.want)
+			}
+			for id, count := range calls {
+				if count != 1 {
+					t.Errorf("accept(%d) called %d times", id, count)
+				}
+			}
+		})
+	}
+}
+
+func TestGraphFilteredSearchKeepsAcceptedBeamPruning(t *testing.T) {
+	g := build(t, vec.DotProduct, Params{}, [][]float32{{5}, {0}, {20}})
+	g.entry, g.maxLevel = 0, 0
+	g.links = [][][]uint32{{{1}}, {{2}}, {{}}}
+	calls := 0
+	got, err := g.Search([]float32{1}, 1, 1, func(uint64) bool {
+		calls++
+		return true
+	})
+	want := []vec.Match{{Number: 0, Score: 5}}
+	if err != nil || !reflect.DeepEqual(got, want) || calls != 2 {
+		t.Fatalf("got %v, error %v, filter calls %d; want %v and 2 calls", got, err, calls, want)
+	}
+}
+
+// Cancel at a specified polling point, without scheduling or timer dependencies.
+// Tests use this context synchronously.
+type cancelOnCheckContext struct {
+	context.Context
+	cancel    context.CancelFunc
+	remaining int
+}
+
+func (c *cancelOnCheckContext) Err() error {
+	c.remaining--
+	if c.remaining == 0 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestGraphSearchContextCancellation(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		g := build(t, vec.DotProduct, Params{}, nil)
+		if !empty {
+			if err := g.Add(0, []float32{1}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		got, err := g.SearchContext(ctx, []float32{1}, 1, 1, nil)
+		if got != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("pre-canceled (empty=%v): got %v, error %v", empty, got, err)
+		}
+	}
+
+	t.Run("during filter on final neighbor", func(t *testing.T) {
+		g := build(t, vec.DotProduct, Params{}, [][]float32{{1}, {2}})
+		g.entry, g.maxLevel = 0, 0
+		g.links = [][][]uint32{{{1}}, {{}}}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		got, err := g.SearchContext(ctx, []float32{1}, 1, 1, func(id uint64) bool {
+			if id == 1 {
+				cancel()
+			}
+			return false
+		})
+		if got != nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v, error %v", got, err)
+		}
+	})
+
+	for _, descent := range []bool{false, true} {
+		name := "layer repeated neighbors"
+		if descent {
+			name = "greedy descent neighbors"
+		}
+		t.Run(name, func(t *testing.T) {
+			g := build(t, vec.DotProduct, Params{}, [][]float32{{1}})
+			g.entry, g.maxLevel = 0, 0
+			g.links = [][][]uint32{{{0, 0, 0}}}
+			if descent {
+				g.maxLevel = 1
+				g.links[0] = append(g.links[0], []uint32{0, 0, 0})
+			}
+			base, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// Search entry, helper entry, expansion, first neighbor, second neighbor.
+			ctx := &cancelOnCheckContext{Context: base, cancel: cancel, remaining: 5}
+			filterCalls := 0
+			got, err := g.SearchContext(ctx, []float32{1}, 1, 1, func(uint64) bool {
+				filterCalls++
+				return true
+			})
+			if got != nil || !errors.Is(err, context.Canceled) || ctx.remaining != 0 {
+				t.Fatalf("got %v, error %v, remaining checks %d", got, err, ctx.remaining)
+			}
+			wantCalls := 1
+			if descent {
+				wantCalls = 0
+			}
+			if filterCalls != wantCalls {
+				t.Fatalf("filter calls %d, want %d", filterCalls, wantCalls)
+			}
+		})
+	}
 }
 
 func TestGraphValidation(t *testing.T) {

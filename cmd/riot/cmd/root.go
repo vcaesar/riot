@@ -22,16 +22,22 @@ import (
 )
 
 // RootCmd represents the base command when called without any subcommands
-var RootCmd = &cobra.Command{
-	Use:   "bluge",
-	Short: "command-line tool to interact with a bluge index",
-	Long:  `Bluge is a command-line tool to interact with a bluge index.`,
-	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
-		return nil
-	},
-	PersistentPostRunE: func(_ *cobra.Command, _ []string) error {
-		return nil
-	},
+var RootCmd = newRootCmd()
+
+func newRootCmd() *cobra.Command {
+	rootCmd := &cobra.Command{
+		Use:   "riot",
+		Short: "command-line tool to interact with a riot index",
+		Long:  `Riot is a command-line tool to interact with a riot index.`,
+		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+			return nil
+		},
+		PersistentPostRunE: func(_ *cobra.Command, _ []string) error {
+			return nil
+		},
+	}
+	rootCmd.AddCommand(listCmd, snapshotCmd)
+	return rootCmd
 }
 
 // Execute adds all child commands to the root command sets flags appropriately.

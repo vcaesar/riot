@@ -75,7 +75,3 @@ var snapshotCmd = &cobra.Command{
 		return nil
 	},
 }
-
-func init() {
-	RootCmd.AddCommand(snapshotCmd)
-}

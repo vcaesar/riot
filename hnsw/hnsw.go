@@ -20,6 +20,7 @@ package hnsw
 
 import (
 	"container/heap"
+	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -64,10 +65,13 @@ func (p Params) WithDefaults() Params {
 	return p
 }
 
-// Validate rejects negative values and M below 2.
+// Validate rejects negative values, M below 2, and overflow of the 2*M level-0 limit.
 func (p Params) Validate() error {
 	if p.M < 0 || (p.M > 0 && p.M < 2) {
 		return fmt.Errorf("hnsw M must be 0 (default) or at least 2, got %d", p.M)
+	}
+	if p.M > math.MaxInt/2 {
+		return fmt.Errorf("hnsw M must not exceed %d, got %d", math.MaxInt/2, p.M)
 	}
 	if p.EfConstruction < 0 || p.EfSearch < 0 {
 		return fmt.Errorf("hnsw ef parameters must not be negative")
@@ -76,8 +80,9 @@ func (p Params) Validate() error {
 }
 
 type cand struct {
-	node  uint32
-	score float64
+	node     uint32
+	score    float64
+	rejected bool
 }
 
 // better orders by descending score, then ascending node for determinism.
@@ -211,12 +216,19 @@ func (g *Graph) Add(id uint64, vector []float32) error {
 	q, qn := g.vector(node), g.norm(node)
 	ep := g.entry
 	for l := g.maxLevel; l > level; l-- {
-		ep = g.greedy(q, qn, ep, l)
+		var err error
+		ep, err = g.greedy(context.Background(), q, qn, ep, l)
+		if err != nil {
+			return err
+		}
 	}
 	visited := g.visited.Get().(*visitedSet)
 	defer g.visited.Put(visited)
 	for l := min(level, g.maxLevel); l >= 0; l-- {
-		cands := g.searchLayer(q, qn, ep, g.efCons, l, nil, visited)
+		cands, err := g.searchLayer(context.Background(), q, qn, ep, g.efCons, l, nil, visited)
+		if err != nil {
+			return err
+		}
 		neighbors := g.selectNeighbors(cands, g.m)
 		links[l] = neighbors
 		mmax := g.mmax(l)
@@ -239,8 +251,20 @@ func (g *Graph) Add(id uint64, vector []float32) error {
 // Search returns up to k documents, best first with ties by ascending id;
 // repeated ids keep their best score. ef bounds the candidate list (0 uses
 // the graph's EfSearch; k raises it). accept optionally filters results
-// without limiting traversal, so selective filters still explore the graph.
+// with the traversal semantics documented by SearchContext.
 func (g *Graph) Search(query []float32, k, ef int, accept func(uint64) bool) ([]vec.Match, error) {
+	return g.SearchContext(context.Background(), query, k, ef, accept)
+}
+
+// SearchContext is Search with cancellation during descent and layer expansion.
+// Discovered rejected nodes are always expanded as bridges, even with a full
+// accepted beam. Accepted nodes remain score-pruned, so search is approximate;
+// selective filters may traverse an entire connected rejected region.
+func (g *Graph) SearchContext(ctx context.Context, query []float32, k, ef int,
+	accept func(uint64) bool) ([]vec.Match, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if k <= 0 {
 		return nil, fmt.Errorf("vector search k must be positive")
 	}
@@ -263,11 +287,18 @@ func (g *Graph) Search(query []float32, k, ef int, accept func(uint64) bool) ([]
 	}
 	ep := g.entry
 	for l := g.maxLevel; l > 0; l-- {
-		ep = g.greedy(query, qn, ep, l)
+		var err error
+		ep, err = g.greedy(ctx, query, qn, ep, l)
+		if err != nil {
+			return nil, err
+		}
 	}
 	visited := g.visited.Get().(*visitedSet)
 	defer g.visited.Put(visited)
-	cands := g.searchLayer(query, qn, ep, ef, 0, accept, visited)
+	cands, err := g.searchLayer(ctx, query, qn, ep, ef, 0, accept, visited)
+	if err != nil {
+		return nil, err
+	}
 	matches := make([]vec.Match, 0, min(k, len(cands)))
 	seen := make(map[uint64]struct{}, len(cands))
 	for _, c := range cands { // best first, so the first hit per id is its best
@@ -284,6 +315,9 @@ func (g *Graph) Search(query []float32, k, ef int, accept func(uint64) bool) ([]
 	})
 	if len(matches) > k {
 		matches = matches[:k]
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return matches, nil
 }
@@ -339,48 +373,74 @@ func (g *Graph) score(q []float32, qn float64, node uint32) float64 {
 }
 
 // greedy descends to the local best node on one layer.
-func (g *Graph) greedy(q []float32, qn float64, ep uint32, level int) uint32 {
+func (g *Graph) greedy(ctx context.Context, q []float32, qn float64, ep uint32, level int) (uint32, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	cur, best := ep, g.score(q, qn, ep)
 	for changed := true; changed; {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		changed = false
 		for _, n := range g.links[cur][level] {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
 			if s := g.score(q, qn, n); s > best {
 				cur, best, changed = n, s, true
 			}
 		}
 	}
-	return cur
+	return cur, ctx.Err()
 }
 
 // searchLayer is a beam search on one layer returning up to ef results, best
-// first. Filtered nodes are traversed but not returned; the beam only stops
-// once ef accepted results are better than every remaining candidate.
-func (g *Graph) searchLayer(q []float32, qn float64, ep uint32, ef, level int,
-	accept func(uint64) bool, visited *visitedSet) []cand {
+// first. Rejected candidates bypass beam pruning; accepted candidates below
+// the beam are skipped rather than stopping traversal of pending bridges.
+func (g *Graph) searchLayer(ctx context.Context, q []float32, qn float64, ep uint32, ef, level int,
+	accept func(uint64) bool, visited *visitedSet) ([]cand, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	visited.reset(len(g.ids))
 	visited.visit(ep)
 	cands := &candHeap{best: true}
 	results := &candHeap{}
 	start := cand{node: ep, score: g.score(q, qn, ep)}
+	start.rejected = accept != nil && !accept(g.ids[ep])
 	heap.Push(cands, start)
-	if accept == nil || accept(g.ids[ep]) {
+	if !start.rejected {
 		heap.Push(results, start)
 	}
 	for cands.Len() > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		c := heap.Pop(cands).(cand)
-		if results.Len() >= ef && c.score < results.top().score {
-			break
+		if !c.rejected && results.Len() >= ef && c.score < results.top().score {
+			if accept == nil {
+				break
+			}
+			continue
 		}
 		for _, n := range g.links[c.node][level] {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if !visited.visit(n) {
 				continue
 			}
 			next := cand{node: n, score: g.score(q, qn, n)}
-			if results.Len() >= ef && next.score <= results.top().score {
+			next.rejected = accept != nil && !accept(g.ids[n])
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if !next.rejected && results.Len() >= ef && next.score <= results.top().score {
 				continue
 			}
 			heap.Push(cands, next)
-			if accept == nil || accept(g.ids[n]) {
+			if !next.rejected {
 				heap.Push(results, next)
 				if results.Len() > ef {
 					heap.Pop(results)
@@ -390,7 +450,7 @@ func (g *Graph) searchLayer(q []float32, qn float64, ep uint32, ef, level int,
 	}
 	out := results.items
 	sort.Slice(out, func(i, j int) bool { return better(out[i], out[j]) })
-	return out
+	return out, ctx.Err()
 }
 
 // selectNeighbors applies the diversity heuristic: a candidate is kept only

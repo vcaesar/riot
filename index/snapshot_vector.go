@@ -63,7 +63,7 @@ func (i *Snapshot) SearchVectorsANN(ctx context.Context, field string, query []f
 			if err != nil {
 				return nil, err
 			}
-			return graph.Search(query, k, params.EfSearch, accept)
+			return graph.SearchContext(ctx, query, k, params.EfSearch, accept)
 		})
 }
 
@@ -85,12 +85,16 @@ func (i *Snapshot) searchVectors(ctx context.Context, field string, query []floa
 			return nil, err
 		}
 		offset := i.offsets[index]
-		matches, err := searchSegment(seg, func(number uint64) bool {
-			if seg.deleted != nil && number <= math.MaxUint32 && seg.deleted.Contains(uint32(number)) {
-				return false
+		var segmentAccept func(uint64) bool
+		if accept != nil || (seg.deleted != nil && !seg.deleted.IsEmpty()) {
+			segmentAccept = func(number uint64) bool {
+				if seg.deleted != nil && number <= math.MaxUint32 && seg.deleted.Contains(uint32(number)) {
+					return false
+				}
+				return accept == nil || accept(offset+number)
 			}
-			return accept == nil || accept(offset+number)
-		})
+		}
+		matches, err := searchSegment(seg, segmentAccept)
 		if err != nil {
 			return nil, fmt.Errorf("error searching vectors in segment %d: %w", seg.id, err)
 		}

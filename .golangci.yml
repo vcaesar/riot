@@ -101,7 +101,7 @@ linters:
           - gocyclo
           - dupl
           - gochecknoinits
-      - path: cmd/bluge/cmd
+      - path: cmd/riot/cmd
         linters:
           - gochecknoinits
       - path: sizes.go
@@ -125,7 +125,7 @@ linters:
         linters:
           - funlen
 
-     # FIXME refactor persister
+      # FIXME refactor persister
       - path: index/persister.go
         linters:
           - funlen
