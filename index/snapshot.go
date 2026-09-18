@@ -680,6 +680,14 @@ type documentValueReader struct {
 
 func (dvr *documentValueReader) VisitDocumentValues(number uint64,
 	visitor segment.DocumentValueVisitor) (err error) {
+	return dvr.VisitDocumentNumbers(number, visitor, nil)
+}
+
+// VisitDocumentNumbers hands numeric column values to numVisitor when it
+// is set and the segment supports typed doc values; everything else goes
+// to visitor as terms.
+func (dvr *documentValueReader) VisitDocumentNumbers(number uint64,
+	visitor segment.DocumentValueVisitor, numVisitor segment.NumericValueVisitor) (err error) {
 	segmentIndex, localDocNum := dvr.i.segmentIndexAndLocalDocNumFromGlobal(number)
 	if segmentIndex >= len(dvr.i.segment) {
 		return nil
@@ -706,5 +714,10 @@ func (dvr *documentValueReader) VisitDocumentValues(number uint64,
 		}
 	}
 
+	if numVisitor != nil {
+		if nr, ok := dvr.sdvr.(segment.NumericDocumentValueReader); ok {
+			return nr.VisitDocumentNumbers(localDocNum, visitor, numVisitor)
+		}
+	}
 	return dvr.sdvr.VisitDocumentValues(localDocNum, visitor)
 }

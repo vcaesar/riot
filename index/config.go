@@ -42,6 +42,11 @@ type Config struct {
 
 	MergeBufferSize int
 
+	// StoredChunkCacheSize bounds decompressed stored-field chunks each ice
+	// segment keeps in its LRU; zero disables caching. Applies to segments
+	// opened after the index is configured.
+	StoredChunkCacheSize int
+
 	// Inclusive segment time bounds; zero leaves that bound unrestricted.
 	// Unknown timestamps are retained. Only read-only OpenReader accepts a range.
 	FilterTimeMin int64
@@ -95,6 +100,26 @@ func (config Config) WithSegmentType(typ string) Config {
 
 func (config Config) WithSegmentVersion(ver uint32) Config {
 	config.SegmentVersion = ver
+	return config
+}
+
+// WithStoredChunkCacheSize re-registers the ice plugins so their segments
+// cache at most n decompressed stored-field chunks; zero disables caching.
+func (config Config) WithStoredChunkCacheSize(n int) Config {
+	config.StoredChunkCacheSize = n
+	return config.withIcePlugins(iceV1.Options{StoredChunkCacheSize: n})
+}
+
+func (config Config) withIcePlugins(opts iceV1.Options) Config {
+	for _, ver := range []uint32{iceV1.Version, iceV1.Version - 1} {
+		config = config.WithSegmentPlugin(&SegmentPlugin{
+			Type:    iceV1.Type,
+			Version: ver,
+			New:     opts.New,
+			Load:    opts.Load,
+			Merge:   iceV1.Merge,
+		})
+	}
 	return config
 }
 
@@ -172,7 +197,8 @@ func defaultConfig() Config {
 			return NewKeepNLatestDeletionPolicy(1)
 		},
 
-		MergeBufferSize: 1024 * 1024,
+		MergeBufferSize:      1024 * 1024,
+		StoredChunkCacheSize: iceV1.StoredChunkCacheSize,
 
 		// Optimizations enabled
 		OptimizeConjunction:          true,
@@ -222,13 +248,7 @@ func defaultConfig() Config {
 		supportedSegmentPlugins: map[string]map[uint32]*SegmentPlugin{},
 	}
 
-	rv.WithSegmentPlugin(&SegmentPlugin{
-		Type:    iceV1.Type,
-		Version: iceV1.Version,
-		New:     iceV1.New,
-		Load:    iceV1.Load,
-		Merge:   iceV1.Merge,
-	})
-
-	return rv
+	// ice Version and Version-1: older segments predate numeric columns and
+	// remain readable; merges rewrite them as Version.
+	return rv.withIcePlugins(iceV1.DefaultOptions())
 }

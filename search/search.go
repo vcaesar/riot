@@ -22,6 +22,7 @@ import (
 	segment "github.com/vcaesar/bluge_segment_api"
 
 	"github.com/vcaesar/riot/analysis"
+	"github.com/vcaesar/riot/numeric"
 )
 
 type Location struct {
@@ -93,6 +94,17 @@ type DocumentMatch struct {
 	SortValue   [][]byte
 
 	docValues map[string][][]byte
+	// docNumbers holds typed values of numeric column fields; docValues
+	// has no entry for those fields
+	docNumbers []docNumber
+	// Append-only scratch buffers keep FieldSource results valid until Reset,
+	// including across nested aggregation calls.
+	numScratch  []float64
+	termScratch [][]byte
+	termBytes   []byte
+	// visitors bound once per match so LoadDocumentValues does not allocate
+	termVisitor segment.DocumentValueVisitor
+	numVisitor  segment.NumericValueVisitor
 
 	// used to maintain natural index order
 	HitNumber int
@@ -102,6 +114,11 @@ type DocumentMatch struct {
 	// be later incorporated into the Locations map when search
 	// results are completed
 	FieldTermLocations []FieldTermLocation
+}
+
+type docNumber struct {
+	field string
+	value int64
 }
 
 func (dm *DocumentMatch) SetReader(r MatchReader) {
@@ -115,38 +132,92 @@ func (dm *DocumentMatch) addDocValue(name string, value []byte) {
 	dm.docValues[name] = append(dm.docValues[name], value)
 }
 
+func (dm *DocumentMatch) addDocNumber(name string, value int64) {
+	dm.docNumbers = append(dm.docNumbers, docNumber{field: name, value: value})
+}
+
 func (dm *DocumentMatch) LoadDocumentValues(ctx *Context, fields []string) error {
 	dvReader, err := ctx.DocValueReaderForReader(dm.reader, fields)
 	if err != nil {
 		return err
 	}
-
-	return dvReader.VisitDocumentValues(dm.Number, dm.addDocValue)
+	if dm.termVisitor == nil {
+		dm.termVisitor, dm.numVisitor = dm.addDocValue, dm.addDocNumber
+	}
+	if nr, ok := dvReader.(segment.NumericDocumentValueReader); ok {
+		return nr.VisitDocumentNumbers(dm.Number, dm.termVisitor, dm.numVisitor)
+	}
+	return dvReader.VisitDocumentValues(dm.Number, dm.termVisitor)
 }
 
 func (dm *DocumentMatch) DocValues(field string) [][]byte {
 	if dm.docValues != nil {
-		return dm.docValues[field]
+		if v := dm.docValues[field]; len(v) > 0 {
+			return v
+		}
 	}
-	return nil
+	if !dm.hasDocNumbers(field) {
+		return nil
+	}
+	// Numeric column field: append without overwriting earlier accessor results.
+	first := len(dm.termScratch)
+	for _, n := range dm.docNumbers {
+		if n.field != field {
+			continue
+		}
+		start := len(dm.termBytes)
+		dm.termBytes = numeric.AppendPrefixCodedInt64(dm.termBytes, n.value)
+		dm.termScratch = append(dm.termScratch, dm.termBytes[start:len(dm.termBytes):len(dm.termBytes)])
+	}
+	return dm.termScratch[first:len(dm.termScratch):len(dm.termScratch)]
+}
+
+func (dm *DocumentMatch) hasDocNumbers(field string) bool {
+	for i := range dm.docNumbers {
+		if dm.docNumbers[i].field == field {
+			return true
+		}
+	}
+	return false
+}
+
+// DocNumbers appends the typed int64 doc values of field to buf; ok is
+// false when the field is not stored as a numeric column for this match.
+func (dm *DocumentMatch) DocNumbers(field string, buf []int64) (rv []int64, ok bool) {
+	for i := range dm.docNumbers {
+		if dm.docNumbers[i].field == field {
+			buf = append(buf, dm.docNumbers[i].value)
+			ok = true
+		}
+	}
+	return buf, ok
 }
 
 func (dm *DocumentMatch) VisitStoredFields(visitor segment.StoredFieldVisitor) error {
 	return dm.reader.VisitStoredFields(dm.Number, visitor)
 }
 
-// Reset allows an already allocated DocumentMatch to be reused
+// Reset allows an already allocated DocumentMatch to be reused. It is called
+// once per pooled candidate, so it zeroes the per-hit fields in place and
+// keeps every buffer and the bound visitors rather than rebuilding the
+// struct; `*dm = DocumentMatch{}` plus save/restore cost ~4x as much here.
 func (dm *DocumentMatch) Reset() *DocumentMatch {
-	// remember the [][]byte used for sort
-	sortValue := dm.SortValue
-	// remember the FieldTermLocations backing array
-	ftls := dm.FieldTermLocations
-	// idiom to copy over from empty DocumentMatch (0 allocations)
-	*dm = DocumentMatch{}
-	// reuse the [][]byte already allocated (and reset len to 0)
-	dm.SortValue = sortValue[:0]
-	// reuse the FieldTermLocations already allocated (and reset len to 0)
-	dm.FieldTermLocations = ftls[:0]
+	dm.reader, dm.Number, dm.Score, dm.Explanation, dm.Locations, dm.HitNumber = nil, 0, 0, nil, nil, 0
+	dm.SortValue = dm.SortValue[:0]
+	clear(dm.FieldTermLocations)
+	dm.FieldTermLocations = dm.FieldTermLocations[:0]
+	if len(dm.docValues) > 0 { // ranging a nil map still pays for mapiterinit
+		for k, v := range dm.docValues {
+			clear(v)
+			dm.docValues[k] = v[:0]
+		}
+	}
+	clear(dm.docNumbers)
+	dm.docNumbers = dm.docNumbers[:0]
+	dm.numScratch = dm.numScratch[:0]
+	clear(dm.termScratch)
+	dm.termScratch = dm.termScratch[:0]
+	dm.termBytes = dm.termBytes[:0]
 	return dm
 }
 

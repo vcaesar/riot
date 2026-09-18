@@ -44,11 +44,62 @@ func TestDefaultConfigOnlyRegistersLocalICE(t *testing.T) {
 		t.Fatalf("unexpected default segment: %s/%d", config.SegmentType, config.SegmentVersion)
 	}
 	plugins := config.supportedSegmentPlugins[ice.Type]
-	if len(config.supportedSegmentPlugins) != 1 || len(plugins) != 1 {
-		t.Fatalf("expected only local ICE plugin, got %v", config.supportedSegmentPlugins)
+	// current version plus the previous term-doc-value format, still loadable
+	if len(config.supportedSegmentPlugins) != 1 || len(plugins) != 2 {
+		t.Fatalf("expected only local ICE plugins, got %v", config.supportedSegmentPlugins)
 	}
-	plugin := plugins[ice.Version]
-	if plugin == nil || plugin.New == nil || plugin.Load == nil || plugin.Merge == nil {
-		t.Fatal("local ICE plugin is missing or incomplete")
+	for _, ver := range []uint32{ice.Version, ice.Version - 1} {
+		plugin := plugins[ver]
+		if plugin == nil || plugin.New == nil || plugin.Load == nil || plugin.Merge == nil {
+			t.Fatalf("local ICE plugin %d is missing or incomplete", ver)
+		}
+	}
+}
+
+func TestWithStoredChunkCacheSizeReachesSegments(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		size        int
+		wantEntries int
+	}{{"disabled", 0, 0}, {"enabled", 4, 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := InMemoryOnlyConfig().WithNormCalc(func(string, int) float32 { return 1 }).WithStoredChunkCacheSize(tc.size)
+			if cfg.StoredChunkCacheSize != tc.size {
+				t.Fatalf("StoredChunkCacheSize=%d, want %d", cfg.StoredChunkCacheSize, tc.size)
+			}
+			idx, err := OpenWriter(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := idx.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			b := NewBatch()
+			b.Update(testIdentifier("1"), &FakeDocument{NewFakeField("_id", "1", true, false, false)})
+			if err := idx.Batch(b); err != nil {
+				t.Fatal(err)
+			}
+			reader, err := idx.Reader()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := reader.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			if err := reader.VisitStoredFields(0, func(string, []byte) bool { return true }); err != nil {
+				t.Fatal(err)
+			}
+			seg, ok := reader.segment[0].segment.Segment.(*ice.Segment)
+			if !ok {
+				t.Fatalf("segment is %T, want *ice.Segment", reader.segment[0].segment.Segment)
+			}
+			if _, _, entries := seg.StoredChunkCacheStats(); entries != tc.wantEntries {
+				t.Fatalf("cached chunks=%d, want %d", entries, tc.wantEntries)
+			}
+		})
 	}
 }
