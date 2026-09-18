@@ -91,7 +91,8 @@ func (f FieldSource) Number(match *DocumentMatch) float64 {
 }
 
 func (f FieldSource) Numbers(match *DocumentMatch) []float64 {
-	rv := match.numScratch[:0]
+	first := len(match.numScratch)
+	rv := match.numScratch
 	if match.hasDocNumbers(string(f)) {
 		for _, n := range match.docNumbers {
 			if n.field == string(f) {
@@ -99,7 +100,7 @@ func (f FieldSource) Numbers(match *DocumentMatch) []float64 {
 			}
 		}
 		match.numScratch = rv
-		return rv
+		return rv[first:len(rv):len(rv)]
 	}
 	for _, term := range f.Values(match) {
 		prefixCoded := numeric.PrefixCoded(term)
@@ -113,7 +114,7 @@ func (f FieldSource) Numbers(match *DocumentMatch) []float64 {
 		}
 	}
 	match.numScratch = rv
-	return rv
+	return rv[first:len(rv):len(rv)]
 }
 
 func (f FieldSource) Date(match *DocumentMatch) time.Time {

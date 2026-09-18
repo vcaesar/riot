@@ -63,8 +63,8 @@ func TestNumericColumnStats(t *testing.T) {
 		cat := "c" + string(rune('a'+i%5))
 		doc := NewDocument(itoa(i)).
 			AddField(NewKeywordField("cat", cat).Aggregatable()).
-			AddField(NewNumericField("price", price)).
-			AddField(NewNumericField("price", price*2)). // multi-valued
+			AddField(NewNumericField("price", price).StoreValue()).
+			AddField(NewNumericField("price", price*2).StoreValue()). // multi-valued
 			AddField(NewDateTimeField("when", base.Add(time.Duration(i)*time.Hour))).
 			AddField(NewGeoPointField("loc", 1.5, 2.5))
 		batch.Update(doc.ID(), doc)
@@ -103,7 +103,9 @@ func TestNumericColumnStats(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		drain(dmi)
+		if err := drain(dmi); err != nil {
+			t.Fatal(err)
+		}
 		aggs := dmi.Aggregations()
 		if aggs.Count() != n-n/100 {
 			t.Fatalf("count %d", aggs.Count())
@@ -143,12 +145,20 @@ func TestNumericColumnStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = w.Close() }()
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	r, err = w.Reader()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = r.Close() }()
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	check(t, r)
 
 	// sorting and stored-value access on a column field still work
@@ -157,21 +167,61 @@ func TestNumericColumnStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var prev = math.Inf(1)
-	for m, err := dmi.Next(); m != nil && err == nil; m, err = dmi.Next() {
-		var got float64
+	prev := math.Inf(1)
+	count := 0
+	for {
+		m, err := dmi.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m == nil {
+			break
+		}
+		var prices []float64
+		var decodeErr error
 		if err = m.VisitStoredFields(func(field string, value []byte) bool {
 			if field == "price" {
-				got, _ = DecodeNumericFloat64(value)
+				var price float64
+				price, decodeErr = DecodeNumericFloat64(value)
+				if decodeErr != nil {
+					return false
+				}
+				prices = append(prices, price)
 			}
 			return true
 		}); err != nil {
 			t.Fatal(err)
 		}
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		if len(prices) != 2 {
+			t.Fatalf("stored prices %v, want two values", prices)
+		}
+		// Default field sorting selects the minimum value, even descending.
+		got := math.Min(prices[0], prices[1])
+		want := float64(996) - 100.5
+		if got != want || math.Max(prices[0], prices[1]) != want*2 {
+			t.Fatalf("stored prices %v, want %v and %v", prices, want, want*2)
+		}
+		if len(m.SortValue) != 1 {
+			t.Fatalf("sort values %v, want one", m.SortValue)
+		}
+		sortValue, err := DecodeNumericFloat64(m.SortValue[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sortValue != got {
+			t.Fatalf("sort value %v, want minimum stored price %v", sortValue, got)
+		}
 		if got > prev {
 			t.Fatalf("not sorted desc: %v after %v", got, prev)
 		}
 		prev = got
+		count++
+	}
+	if count != 3 {
+		t.Fatalf("result count %d, want 3", count)
 	}
 }
 

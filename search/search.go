@@ -97,8 +97,8 @@ type DocumentMatch struct {
 	// docNumbers holds typed values of numeric column fields; docValues
 	// has no entry for those fields
 	docNumbers []docNumber
-	// scratch buffers returned by FieldSource accessors, valid until the
-	// next call on this match
+	// Append-only scratch buffers keep FieldSource results valid until Reset,
+	// including across nested aggregation calls.
 	numScratch  []float64
 	termScratch [][]byte
 	termBytes   []byte
@@ -159,18 +159,17 @@ func (dm *DocumentMatch) DocValues(field string) [][]byte {
 	if !dm.hasDocNumbers(field) {
 		return nil
 	}
-	// numeric column field: materialize prefix coded terms into scratch
-	dm.termScratch = dm.termScratch[:0]
-	dm.termBytes = dm.termBytes[:0]
+	// Numeric column field: append without overwriting earlier accessor results.
+	first := len(dm.termScratch)
 	for _, n := range dm.docNumbers {
 		if n.field != field {
 			continue
 		}
 		start := len(dm.termBytes)
 		dm.termBytes = numeric.AppendPrefixCodedInt64(dm.termBytes, n.value)
-		dm.termScratch = append(dm.termScratch, dm.termBytes[start:])
+		dm.termScratch = append(dm.termScratch, dm.termBytes[start:len(dm.termBytes):len(dm.termBytes)])
 	}
-	return dm.termScratch
+	return dm.termScratch[first:len(dm.termScratch):len(dm.termScratch)]
 }
 
 func (dm *DocumentMatch) hasDocNumbers(field string) bool {
@@ -205,14 +204,18 @@ func (dm *DocumentMatch) VisitStoredFields(visitor segment.StoredFieldVisitor) e
 func (dm *DocumentMatch) Reset() *DocumentMatch {
 	dm.reader, dm.Number, dm.Score, dm.Explanation, dm.Locations, dm.HitNumber = nil, 0, 0, nil, nil, 0
 	dm.SortValue = dm.SortValue[:0]
+	clear(dm.FieldTermLocations)
 	dm.FieldTermLocations = dm.FieldTermLocations[:0]
 	if len(dm.docValues) > 0 { // ranging a nil map still pays for mapiterinit
 		for k, v := range dm.docValues {
+			clear(v)
 			dm.docValues[k] = v[:0]
 		}
 	}
+	clear(dm.docNumbers)
 	dm.docNumbers = dm.docNumbers[:0]
 	dm.numScratch = dm.numScratch[:0]
+	clear(dm.termScratch)
 	dm.termScratch = dm.termScratch[:0]
 	dm.termBytes = dm.termBytes[:0]
 	return dm

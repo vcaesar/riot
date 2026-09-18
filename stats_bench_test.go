@@ -16,6 +16,7 @@ package riot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -32,6 +33,11 @@ func benchStatsIndex(b *testing.B, n int) *Reader {
 	if err != nil {
 		b.Fatal(err)
 	}
+	b.Cleanup(func() {
+		if err := w.Close(); err != nil {
+			b.Error(err)
+		}
+	})
 	rnd := rand.New(rand.NewSource(1))
 	batch := NewBatch()
 	for i := 0; i < n; i++ {
@@ -39,21 +45,27 @@ func benchStatsIndex(b *testing.B, n int) *Reader {
 			AddField(NewKeywordField("category", fmt.Sprintf("cat%d", rnd.Intn(16))).Aggregatable()).
 			AddField(NewNumericField("price", float64(rnd.Intn(10000))).Aggregatable())
 		batch.Update(doc.ID(), doc)
-		if i%10000 == 0 {
+		if (i+1)%10000 == 0 {
 			if err = w.Batch(batch); err != nil {
 				b.Fatal(err)
 			}
 			batch.Reset()
 		}
 	}
-	if err = w.Batch(batch); err != nil {
-		b.Fatal(err)
+	if n%10000 != 0 {
+		if err = w.Batch(batch); err != nil {
+			b.Fatal(err)
+		}
 	}
 	r, err := w.Reader()
 	if err != nil {
 		b.Fatal(err)
 	}
-	b.Cleanup(func() { _ = r.Close(); _ = w.Close() })
+	b.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			b.Error(err)
+		}
+	})
 	return r
 }
 
@@ -72,7 +84,9 @@ func BenchmarkStatsGroupBy(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		drain(dmi)
+		if err := drain(dmi); err != nil {
+			b.Fatal(err)
+		}
 		if c := dmi.Aggregations().Count(); c != n {
 			b.Fatalf("count %d != %d", c, n)
 		}
@@ -91,7 +105,9 @@ func BenchmarkStatsSumOnly(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		drain(dmi)
+		if err := drain(dmi); err != nil {
+			b.Fatal(err)
+		}
 		if dmi.Aggregations().Metric("sum") <= 0 {
 			b.Fatal("no sum")
 		}
@@ -99,8 +115,57 @@ func BenchmarkStatsSumOnly(b *testing.B) {
 	b.ReportMetric(float64(n)*float64(b.N)/b.Elapsed().Seconds()/1e6, "Mdocs/s")
 }
 
-func drain(dmi search.DocumentMatchIterator) {
-	for m, err := dmi.Next(); m != nil && err == nil; m, err = dmi.Next() {
-		_ = m
+type drainMockIterator struct {
+	matches  int
+	err      error
+	errMatch *search.DocumentMatch
+	calls    int
+}
+
+func (m *drainMockIterator) Next() (*search.DocumentMatch, error) {
+	m.calls++
+	if m.calls <= m.matches {
+		return &search.DocumentMatch{}, nil
+	}
+	return m.errMatch, m.err
+}
+
+func (m *drainMockIterator) Aggregations() *search.Bucket { return nil }
+
+func TestDrain(t *testing.T) {
+	wantErr := errors.New("iterator failed")
+	for _, tt := range []struct {
+		name     string
+		matches  int
+		err      error
+		errMatch *search.DocumentMatch
+	}{
+		{name: "empty"},
+		{name: "matches", matches: 2},
+		{name: "immediate error", err: wantErr},
+		{name: "error after matches", matches: 2, err: wantErr},
+		{name: "match with error", err: wantErr, errMatch: &search.DocumentMatch{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &drainMockIterator{matches: tt.matches, err: tt.err, errMatch: tt.errMatch}
+			if err := drain(mock); !errors.Is(err, tt.err) {
+				t.Fatalf("drain error %v, want %v", err, tt.err)
+			}
+			if mock.calls != tt.matches+1 {
+				t.Fatalf("Next calls %d, want %d", mock.calls, tt.matches+1)
+			}
+		})
+	}
+}
+
+func drain(dmi search.DocumentMatchIterator) error {
+	for {
+		m, err := dmi.Next()
+		if err != nil {
+			return err
+		}
+		if m == nil {
+			return nil
+		}
 	}
 }
