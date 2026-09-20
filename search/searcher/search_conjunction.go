@@ -134,13 +134,20 @@ OUTER:
 				// maxID < currs[i], so we found a new maxIDIdx
 				s.maxIDIdx = i
 
-				// advance the positions where [0 <= x < i], since we
-				// know they were equal to the former max entry
-				maxID = s.currs[s.maxIDIdx].Number
+				// Stop aligning as soon as a child overshoots: the remaining
+				// seeks would target a candidate that can no longer match.
+				maxID = s.currs[i].Number
 				for x := 0; x < i; x++ {
 					err = s.advanceChild(ctx, x, maxID)
 					if err != nil {
 						return nil, err
+					}
+					if s.currs[x] == nil {
+						return nil, nil
+					}
+					if s.currs[x].Number > maxID {
+						s.maxIDIdx = x
+						break
 					}
 				}
 
@@ -180,21 +187,24 @@ OUTER:
 }
 
 func (s *ConjunctionSearcher) Advance(ctx *search.Context, number uint64) (*search.DocumentMatch, error) {
-	if !s.initialized {
-		err := s.initSearchers(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
 	for i := range s.searchers {
-		if s.currs[i] != nil && s.currs[i].Number >= number {
-			continue
+		if s.initialized && s.currs[i] == nil {
+			return nil, nil
 		}
-		err := s.advanceChild(ctx, i, number)
-		if err != nil {
-			return nil, err
+		if s.currs[i] == nil || s.currs[i].Number < number {
+			if err := s.advanceChild(ctx, i, number); err != nil {
+				return nil, err
+			}
+			if s.currs[i] == nil {
+				s.initialized = true
+				return nil, nil
+			}
 		}
+		// Later children cannot match below an earlier child's seek result.
+		number = s.currs[i].Number
+		s.maxIDIdx = i
 	}
+	s.initialized = true
 	return s.Next(ctx)
 }
 

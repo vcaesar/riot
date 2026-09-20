@@ -14,6 +14,8 @@
 
 package highlight
 
+import "strings"
+
 const defaultAnsiHighlight = BgYellow
 
 type ANSIFragmentFormatter struct {
@@ -31,7 +33,7 @@ func NewANSIFragmentFormatterColor(color string) *ANSIFragmentFormatter {
 }
 
 func (a *ANSIFragmentFormatter) Format(f *Fragment, orderedTermLocations TermLocations) string {
-	rv := ""
+	var rv strings.Builder
 	curr := f.Start
 	for _, termLocation := range orderedTermLocations {
 		if termLocation == nil {
@@ -44,20 +46,20 @@ func (a *ANSIFragmentFormatter) Format(f *Fragment, orderedTermLocations TermLoc
 			break
 		}
 		// add the stuff before this location
-		rv += string(f.Orig[curr:termLocation.Start])
+		rv.Write(f.Orig[curr:termLocation.Start])
 		// add the color
-		rv += a.color
+		rv.WriteString(a.color)
 		// add the term itself
-		rv += string(f.Orig[termLocation.Start:termLocation.End])
+		rv.Write(f.Orig[termLocation.Start:termLocation.End])
 		// reset the color
-		rv += Reset
+		rv.WriteString(Reset)
 		// update current
 		curr = termLocation.End
 	}
 	// add any remaining text after the last token
-	rv += string(f.Orig[curr:f.End])
+	rv.Write(f.Orig[curr:f.End])
 
-	return rv
+	return rv.String()
 }
 
 // ANSI color control escape sequences.
