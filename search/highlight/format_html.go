@@ -14,7 +14,10 @@
 
 package highlight
 
-import "html"
+import (
+	"html"
+	"strings"
+)
 
 const defaultHTMLHighlightBefore = "<mark>"
 const defaultHTMLHighlightAfter = "</mark>"
@@ -36,7 +39,10 @@ func NewHTMLFragmentFormatterTags(before, after string) *HTMLFragmentFormatter {
 }
 
 func (a *HTMLFragmentFormatter) Format(f *Fragment, orderedTermLocations TermLocations) string {
-	rv := ""
+	if len(orderedTermLocations) == 0 {
+		return html.EscapeString(string(f.Orig[f.Start:f.End]))
+	}
+	var rv strings.Builder
 	curr := f.Start
 	for _, termLocation := range orderedTermLocations {
 		if termLocation == nil {
@@ -49,18 +55,18 @@ func (a *HTMLFragmentFormatter) Format(f *Fragment, orderedTermLocations TermLoc
 			break
 		}
 		// add the stuff before this location
-		rv += html.EscapeString(string(f.Orig[curr:termLocation.Start]))
+		rv.WriteString(html.EscapeString(string(f.Orig[curr:termLocation.Start])))
 		// start the <mark> tag
-		rv += a.before
+		rv.WriteString(a.before)
 		// add the term itself
-		rv += html.EscapeString(string(f.Orig[termLocation.Start:termLocation.End]))
+		rv.WriteString(html.EscapeString(string(f.Orig[termLocation.Start:termLocation.End])))
 		// end the <mark> tag
-		rv += a.after
+		rv.WriteString(a.after)
 		// update current
 		curr = termLocation.End
 	}
 	// add any remaining text after the last token
-	rv += html.EscapeString(string(f.Orig[curr:f.End]))
+	rv.WriteString(html.EscapeString(string(f.Orig[curr:f.End])))
 
-	return rv
+	return rv.String()
 }

@@ -17,6 +17,7 @@ package searcher
 import (
 	"fmt"
 	"slices"
+	"sort"
 
 	"github.com/vcaesar/riot/search/similarity"
 
@@ -28,7 +29,6 @@ type PhraseSearcher struct {
 	currMust     *search.DocumentMatch
 	terms        [][]string
 	path         phrasePath
-	paths        []phrasePath
 	locations    []search.Location
 	// locationsMap is scratch reused across candidates so Complete
 	// does not rebuild the field/term maps for every document
@@ -366,11 +366,10 @@ func (s *PhraseSearcher) mergeExact(in, out []search.FieldTermLocation) []search
 // slice
 func (s *PhraseSearcher) checkCurrMustMatchField(field string, tlm search.TermLocationMap,
 	ftls []search.FieldTermLocation) []search.FieldTermLocation {
-	if s.path == nil {
-		s.path = make(phrasePath, 0, len(s.terms))
-	}
-	s.paths = findPhrasePaths(0, s.terms, tlm, s.path[:0], s.slop, s.paths[:0])
-	for _, p := range s.paths {
+	scratch := newPhraseScratch(s.path, len(s.terms))
+	defer scratch.free()
+	s.path = scratch.reusablePath()
+	visitPhrasePaths(0, s.terms, tlm, scratch.path[:0], s.slop, func(p phrasePath) {
 		for _, pp := range p {
 			ftls = append(ftls, search.FieldTermLocation{
 				Field: field,
@@ -382,7 +381,7 @@ func (s *PhraseSearcher) checkCurrMustMatchField(field string, tlm search.TermLo
 				},
 			})
 		}
-	}
+	})
 	return ftls
 }
 
@@ -419,7 +418,6 @@ func (p phrasePath) String() string {
 // of known term locations.  it recursive so care must be taken with
 // arguments and return values.
 //
-// prevPos - the previous location, 0 on first invocation
 // phraseTerms - slice containing the phrase terms,
 //
 //	may contain empty string as placeholder (don't care)
@@ -438,10 +436,9 @@ func (p phrasePath) String() string {
 // rv - the final result being appended to by all the recursive calls
 //
 // returns slice of paths, or nil if invocation did not find any successul paths
-func findPhrasePaths(prevPos int, phraseTerms [][]string,
+func findPhrasePaths(phraseTerms [][]string,
 	tlm search.TermLocationMap, p phrasePath, remainingSlop int, rv []phrasePath) []phrasePath {
-	// no more terms
-	if len(phraseTerms) < 1 {
+	visitPhrasePaths(0, phraseTerms, tlm, p, remainingSlop, func(p phrasePath) {
 		// snapshot or copy the recursively built phrasePath p and
 		// append it to the rv, also optimizing by checking if next
 		// phrasePath item in the rv (which we're about to overwrite)
@@ -450,7 +447,20 @@ func findPhrasePaths(prevPos int, phraseTerms [][]string,
 		if len(rv) < cap(rv) {
 			pcopy = rv[:len(rv)+1][len(rv)][:0]
 		}
-		return append(rv, append(pcopy, p...))
+		rv = append(rv, append(pcopy, p...))
+	})
+	return rv
+}
+
+// visitPhrasePaths calls visit for every phrase path; prevPos is the
+// previous location, 0 on first invocation.
+// visit must consume p synchronously without retaining its backing storage.
+// Term locations must be sorted by position, as guaranteed by Complete.
+func visitPhrasePaths(prevPos int, phraseTerms [][]string,
+	tlm search.TermLocationMap, p phrasePath, remainingSlop int, visit func(phrasePath)) {
+	if len(phraseTerms) == 0 {
+		visit(p)
+		return
 	}
 
 	car := phraseTerms[0]
@@ -463,18 +473,28 @@ func findPhrasePaths(prevPos int, phraseTerms [][]string,
 			// if prevPos was 0, don't set it to 1 (as thats not a real abs pos)
 			nextPos = 0 // don't advance nextPos if prevPos was 0
 		}
-		return findPhrasePaths(nextPos, cdr, tlm, p, remainingSlop, rv)
+		visitPhrasePaths(nextPos, cdr, tlm, p, remainingSlop, visit)
+		return
 	}
 
 	// locations for this term
 	for _, carTerm := range car {
 		locations := tlm[carTerm]
+		if prevPos != 0 && len(locations) > 16 {
+			first := sort.Search(len(locations), func(i int) bool {
+				return locations[i].Pos >= prevPos+1-remainingSlop
+			})
+			locations = locations[first:]
+		}
 	LOCATIONS_LOOP:
 		for _, loc := range locations {
 			// compute distance from previous phrase term
 			dist := 0
 			if prevPos != 0 {
 				dist = editDistance(prevPos+1, loc.Pos)
+				if loc.Pos > prevPos+1 && dist > remainingSlop {
+					break
+				}
 			}
 
 			// if enough slop remaining, continue recursively
@@ -487,13 +507,12 @@ func findPhrasePaths(prevPos int, phraseTerms [][]string,
 				}
 
 				// this location works, add it to the path (but not for empty term)
-				//nolint:gocritic // Branch-local length; completed paths are copied above.
+				//nolint:gocritic // Branch-local length; visit consumes the path synchronously.
 				px := append(p, phrasePart{term: carTerm, loc: loc})
-				rv = findPhrasePaths(loc.Pos, cdr, tlm, px, remainingSlop-dist, rv)
+				visitPhrasePaths(loc.Pos, cdr, tlm, px, remainingSlop-dist, visit)
 			}
 		}
 	}
-	return rv
 }
 
 func editDistance(p1, p2 int) int {
