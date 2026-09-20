@@ -47,8 +47,8 @@ github.com/vcaesar/bluge_segment_api v1.2.1 h1:IhDSkEKqnXJmO2+vtFAkOQ1vyjdSzGasc
 github.com/vcaesar/bluge_segment_api v1.2.1/go.mod h1:MXtBQHBxHAJTSvcof8aYXOd3o9abFSHlW9zSuqSdt8Y=
 github.com/vcaesar/cedar v0.50.0 h1:eNTViTwbdqa5hC6XrV6rpCILf7Yzyi/Z6dk9f6BiXiA=
 github.com/vcaesar/cedar v0.50.0/go.mod h1:eHvpmJXJmOowP8mW/Xqjra+HmKovJNcRxRPtezHjh7I=
-github.com/vcaesar/ice v1.3.0 h1:2Zneyel99PkIbkg0af8kRex7bKCykPJc5ZdPH8N8L8g=
-github.com/vcaesar/ice v1.3.0/go.mod h1:6pW40s4O9soWqZfCWpm4Rfm7SefcCEcGTgzeGAq78GQ=
+github.com/vcaesar/ice v1.3.1 h1:7Sn7WucVJsBSSAGgipaKOf+47FrI7d+XmdIr3KzcrTU=
+github.com/vcaesar/ice v1.3.1/go.mod h1:6pW40s4O9soWqZfCWpm4Rfm7SefcCEcGTgzeGAq78GQ=
 github.com/vcaesar/tt v0.40.0 h1:vWUNRJn13ozP3xXlAXV5q9WivaDSHRS2jQ2J2ayCvQs=
 github.com/vcaesar/tt v0.40.0/go.mod h1:cH2+AwGAJm19Wa6xvEa+0r+sXDJBT0QgNQey6mwqLeU=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=

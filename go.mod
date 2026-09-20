@@ -15,7 +15,7 @@ require (
 	github.com/go-ego/gse v1.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/vcaesar/bluge_segment_api v1.2.1
-	github.com/vcaesar/ice v1.3.0
+	github.com/vcaesar/ice v1.3.1
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
 )

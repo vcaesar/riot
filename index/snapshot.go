@@ -518,9 +518,12 @@ func recordSegment(w io.Writer, snapshot *segmentSnapshot, id uint64, typ string
 	}
 
 	// record deleted bits
-	if snapshot.deleted != nil {
+	if snapshot.deleted != nil && !snapshot.deleted.IsEmpty() {
+		// Snapshots share deletion bitmaps with readers; optimize only a copy.
+		deleted := snapshot.deleted.Clone()
+		deleted.RunOptimize()
 		var deletedBytes []byte
-		deletedBytes, err = snapshot.deleted.ToBytes()
+		deletedBytes, err = deleted.ToBytes()
 		if err != nil {
 			return bytesWritten, err
 		}
