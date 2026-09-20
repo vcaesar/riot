@@ -15,6 +15,7 @@
 package index
 
 import (
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -53,7 +54,7 @@ OUTER:
 				startTime := time.Now()
 
 				// lets get started
-				err = s.planMergeAtSnapshot(merges, ourSnapshot, s.config.MergePlanOptions)
+				err = s.planMergeAtSnapshot(merges, ourSnapshot, &s.config.MergePlanOptions)
 				if err != nil {
 					atomic.StoreUint64(&s.stats.mergeEpoch, 0)
 					if err == segment.ErrClosed {
@@ -87,7 +88,7 @@ OUTER:
 }
 
 func (s *Writer) planMergeAtSnapshot(merges chan *segmentMerge, ourSnapshot *Snapshot,
-	options mergeplan.Options) error {
+	options *mergeplan.Options) error {
 	// build list of persisted segments in this snapshot
 	var onlyPersistedSnapshots []mergeplan.Segment
 	for _, segmentSnapshot := range ourSnapshot.segment {
@@ -99,7 +100,7 @@ func (s *Writer) planMergeAtSnapshot(merges chan *segmentMerge, ourSnapshot *Sna
 	atomic.AddUint64(&s.stats.TotFileMergePlan, 1)
 
 	// give this list to the planner
-	resultMergePlan, err := mergeplan.Plan(onlyPersistedSnapshots, &options)
+	resultMergePlan, err := mergeplan.Plan(onlyPersistedSnapshots, options)
 	if err != nil {
 		atomic.AddUint64(&s.stats.TotFileMergePlanErr, 1)
 		return fmt.Errorf("merge planning err: %v", err)
@@ -162,7 +163,7 @@ func (s *Writer) executeMergeTask(merges chan *segmentMerge, task *mergeplan.Mer
 		seg, err = s.loadSegment(newSegmentID, s.segPlugin)
 		if err != nil {
 			atomic.AddUint64(&s.stats.TotFileMergePlanTasksErr, 1)
-			return err
+			return s.removeUnloadable(newSegmentID, err)
 		}
 		oldNewDocNums = make(map[uint64][]uint64)
 		for i, segNewDocNums := range newDocNums {
@@ -185,7 +186,9 @@ func (s *Writer) executeMergeTask(merges chan *segmentMerge, task *mergeplan.Mer
 	// give it to the introducer
 	select {
 	case <-s.closeCh:
-		_ = seg.Close()
+		if err := s.discardSegment(seg, newSegmentID); err != nil {
+			return err
+		}
 		return segment.ErrClosed
 	case merges <- sm:
 		atomic.AddUint64(&s.stats.TotFileMergeIntroductions, 1)
@@ -205,9 +208,9 @@ func (s *Writer) executeMergeTask(merges chan *segmentMerge, task *mergeplan.Mer
 	if mergeTaskIntroStatus != nil && mergeTaskIntroStatus.snapshot != nil {
 		_ = mergeTaskIntroStatus.snapshot.Close()
 		if mergeTaskIntroStatus.skipped {
-			// decrement the ref counts on skipping introduction.
-			// FIXME stale file that won't get cleaned up
-			_ = seg.Close()
+			if err := s.discardSegment(seg, newSegmentID); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -320,7 +323,7 @@ func (s *Writer) mergeSegmentBases(merges chan *segmentMerge, snapshot *Snapshot
 	seg, err := s.loadSegment(newSegmentID, s.segPlugin)
 	if err != nil {
 		atomic.AddUint64(&s.stats.TotMemMergeErr, 1)
-		return nil, 0, err
+		return nil, 0, s.removeUnloadable(newSegmentID, err)
 	}
 
 	// update persisted stats
@@ -343,7 +346,9 @@ func (s *Writer) mergeSegmentBases(merges chan *segmentMerge, snapshot *Snapshot
 
 	select { // send to introducer
 	case <-s.closeCh:
-		_ = seg.DecRef()
+		if err := s.discardSegment(seg, newSegmentID); err != nil {
+			return nil, 0, err
+		}
 		return nil, 0, segment.ErrClosed
 	case merges <- sm:
 	}
@@ -356,13 +361,40 @@ func (s *Writer) mergeSegmentBases(merges chan *segmentMerge, snapshot *Snapshot
 		atomic.AddUint64(&s.stats.TotMemMergeSegments, uint64(len(sbs)))
 		atomic.AddUint64(&s.stats.TotMemMergeDone, 1)
 		if mergeTaskIntroStatus.skipped {
-			// decrement the ref counts on skipping introduction.
 			_ = newSnapshot.Close()
-			_ = seg.Close()
+			if err := s.discardSegment(seg, newSegmentID); err != nil {
+				return nil, 0, err
+			}
 			newSnapshot = nil
 		}
 	}
 	return newSnapshot, newSegmentID, nil
+}
+
+// discardSegment releases a merged segment that was persisted but never
+// introduced into a snapshot. The deletion policy only tracks segments it has
+// seen in a snapshot, so the file must be removed here or it leaks on disk.
+func (s *Writer) discardSegment(seg *segmentWrapper, id uint64) error {
+	if seg == nil {
+		return nil
+	}
+	if err := seg.Close(); err != nil {
+		return fmt.Errorf("error closing unintroduced merged segment %d: %w", id, err)
+	}
+	if err := s.directory.Remove(ItemKindSegment, id); err != nil {
+		return fmt.Errorf("error removing unintroduced merged segment %d: %w", id, err)
+	}
+	return nil
+}
+
+// removeUnloadable removes a merged segment that was persisted but could not
+// be loaded, so it does not linger on disk, and returns the load error joined
+// with any removal error.
+func (s *Writer) removeUnloadable(id uint64, loadErr error) error {
+	if err := s.directory.Remove(ItemKindSegment, id); err != nil {
+		return errors.Join(loadErr, fmt.Errorf("error removing unloadable merged segment %d: %w", id, err))
+	}
+	return loadErr
 }
 
 func (s *Writer) merge(segments []segment.Segment, drops []*roaring.Bitmap, id uint64) (

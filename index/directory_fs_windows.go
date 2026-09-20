@@ -23,3 +23,12 @@ func (d *FileSystemDirectory) remove(kind string, id uint64) error {
 	segmentPath := filepath.Join(d.path, d.fileName(kind, id))
 	return os.Remove(segmentPath)
 }
+
+// syncDir is a no-op: Windows has no directory fsync and FlushFileBuffers
+// on a directory handle fails with access denied. Segment and snapshot
+// contents are still flushed by Persist, and NTFS journals directory
+// metadata, so durability of new entries after power loss is best-effort
+// on this platform.
+func (d *FileSystemDirectory) syncDir() error {
+	return nil
+}

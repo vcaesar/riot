@@ -597,3 +597,74 @@ func emit(descrip string, cycle, step int, segments []Segment, plan *MergePlan) 
 	fmt.Printf("%s %d.%d ---------- %s\n", descrip, cycle, step, suffix)
 	fmt.Printf("%s\n", ToBarChart(descrip, 100, segments, plan))
 }
+
+func TestDeletesRatioBeforeMerge(t *testing.T) {
+	seg := func(id uint64, full, live int64) *segment {
+		return &segment{MyID: id, MyFullSize: full, MyLiveSize: live}
+	}
+	opts := DefaultMergePlanOptions
+	opts.SegmentsPerMergeTask = 2
+	opts.MaxSegmentSize = 1000
+
+	tests := []struct {
+		name     string
+		segments []Segment
+		options  *Options
+		want     [][]uint64 // segment ids per task
+	}{
+		{
+			name:     "single healthy segment untouched",
+			segments: []Segment{seg(1, 100, 100)},
+			options:  &opts,
+		},
+		{
+			name:     "single over-deleted segment rewritten",
+			segments: []Segment{seg(1, 100, 40)},
+			options:  &opts,
+			want:     [][]uint64{{1}},
+		},
+		{
+			name:     "below ratio not rewritten",
+			segments: []Segment{seg(1, 100, 60)},
+			options:  &opts,
+		},
+		{
+			name:     "disabled keeps legacy behavior",
+			segments: []Segment{seg(1, 100, 10)},
+			options:  func() *Options { o := opts; o.DeletesRatioBeforeMerge = 0; return &o }(),
+		},
+		{
+			name:     "grouped by SegmentsPerMergeTask and MaxSegmentSize",
+			segments: []Segment{seg(1, 1200, 600), seg(2, 1200, 500), seg(3, 100, 40), seg(4, 100, 30), seg(5, 100, 100)},
+			options:  &opts,
+			want:     [][]uint64{{1}, {2, 3}, {4}},
+		},
+		{
+			name:     "fully deleted segment dropped before reclaim",
+			segments: []Segment{seg(1, 100, 0), seg(2, 100, 20)},
+			options:  &opts,
+			want:     [][]uint64{{1}, {2}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan, err := Plan(tt.segments, tt.options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got [][]uint64
+			if plan != nil {
+				for _, task := range plan.Tasks {
+					var ids []uint64
+					for _, s := range task.Segments {
+						ids = append(ids, s.ID())
+					}
+					got = append(got, ids)
+				}
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("plan tasks = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

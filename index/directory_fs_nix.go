@@ -18,6 +18,7 @@
 package index
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -33,4 +34,22 @@ func (d *FileSystemDirectory) remove(kind string, id uint64) error {
 	}()
 
 	return os.Remove(segmentPath)
+}
+
+// syncDir makes newly created or removed directory entries durable.
+func (d *FileSystemDirectory) syncDir() error {
+	dir, err := os.Open(d.path)
+	if err != nil {
+		return fmt.Errorf("error opening directory for sync: %w", err)
+	}
+	err = dir.Sync()
+	if err != nil {
+		_ = dir.Close()
+		return fmt.Errorf("error syncing directory: %w", err)
+	}
+	err = dir.Close()
+	if err != nil {
+		return fmt.Errorf("error closing directory after sync: %w", err)
+	}
+	return nil
 }

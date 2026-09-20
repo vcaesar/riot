@@ -56,6 +56,106 @@ func snapshotFixture(t *testing.T, version byte) []byte {
 	return b.Bytes()
 }
 
+func TestSnapshotCompactDeletions(t *testing.T) {
+	for _, name := range []string{"nil", "empty", "sparse", "runs", "dense"} {
+		t.Run(name, func(t *testing.T) {
+			var deleted *roaring.Bitmap
+			if name != "nil" {
+				deleted = roaring.New()
+			}
+			switch name {
+			case "sparse":
+				deleted.AddMany([]uint32{1, 100, 10000, 100000})
+			case "runs":
+				for doc := uint32(100); doc < 60000; doc++ {
+					deleted.Add(doc)
+				}
+			case "dense":
+				for doc := uint32(0); doc < 65536; doc += 2 {
+					deleted.Add(doc)
+				}
+			}
+			var before []byte
+			if deleted != nil {
+				var err error
+				before, err = deleted.ToBytes()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			s := &Snapshot{segment: []*segmentSnapshot{{
+				id: 7, segmentType: "ice", segmentVersion: 1, deleted: deleted,
+			}}}
+			var out bytes.Buffer
+			if _, err := s.WriteTo(&out, nil); err != nil {
+				t.Fatal(err)
+			}
+			var decoded Snapshot
+			if _, err := decoded.ReadFrom(bytes.NewReader(out.Bytes()[:out.Len()-crcWidth])); err != nil {
+				t.Fatal(err)
+			}
+			got := decoded.segment[0].deleted
+			if deleted == nil || deleted.IsEmpty() {
+				if got != nil {
+					t.Fatal("empty deletions were serialized")
+				}
+				return
+			}
+			if got == nil || !got.Equals(deleted) {
+				t.Fatal("deletions changed after round trip")
+			}
+			after, err := deleted.ToBytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("shared bitmap mutated by serialization")
+			}
+			compact, err := got.ToBytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(compact) > len(before) {
+				t.Fatalf("bitmap grew: %d -> %d", len(before), len(compact))
+			}
+			if name == "runs" {
+				if len(compact) >= len(before) {
+					t.Fatal("contiguous deletions did not shrink")
+				}
+				t.Logf("deletion bitmap: %d -> %d bytes", len(before), len(compact))
+			}
+		})
+	}
+}
+
+func BenchmarkSnapshotDeletionEncoding(b *testing.B) {
+	for _, pattern := range []string{"runs", "sparse"} {
+		deleted := roaring.New()
+		for doc := uint32(0); doc < 60000; doc++ {
+			if pattern == "runs" || doc%100 == 0 {
+				deleted.Add(doc)
+			}
+		}
+		for _, optimize := range []bool{false, true} {
+			b.Run(fmt.Sprintf("%s/optimize=%t", pattern, optimize), func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					bitmap := deleted
+					if optimize {
+						bitmap = deleted.Clone()
+						bitmap.RunOptimize()
+					}
+					data, err := bitmap.ToBytes()
+					if err != nil {
+						b.Fatal(err)
+					}
+					b.ReportMetric(float64(len(data)), "encoded-B")
+				}
+			})
+		}
+	}
+}
+
 func TestSnapshotLegacyHelpers(t *testing.T) {
 	data := snapshotFixture(t, 1)
 	for end := 1; end <= len(data); end++ {
