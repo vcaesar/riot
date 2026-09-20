@@ -334,6 +334,13 @@ func (s *Writer) persistSnapshotDirect(persists chan *persistIntroduction, snaps
 		return err
 	}
 
+	// file contents are fsynced by Persist; the directory entries of the new
+	// segments and snapshot are not durable until the directory is synced
+	err = s.directory.Sync()
+	if err != nil {
+		return fmt.Errorf("error syncing directory after snapshot %d: %w", snapshot.epoch, err)
+	}
+
 	s.deletionPolicy.Commit(snapshot)
 
 	return nil

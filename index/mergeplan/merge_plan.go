@@ -97,6 +97,11 @@ type Options struct {
 	// impact merge selection.
 	ReclaimDeletesWeight float64
 
+	// Segments whose deleted fraction (1 - LiveSize/FullSize) reaches
+	// this ratio are rewritten even when the index is within budget or
+	// holds a single segment, reclaiming their disk space. 0 disables.
+	DeletesRatioBeforeMerge float64
+
 	// Optional, defaults to mergeplan.CalcBudget().
 	CalcBudget func(totalSize int64, firstTierSize int64,
 		o *Options) (budgetNumSegments int)
@@ -126,21 +131,18 @@ var ErrMaxSegmentSizeTooLarge = errors.New("option MaxSegmentSize exceeds the si
 
 // DefaultMergePlanOptions suggests the default options.
 var DefaultMergePlanOptions = Options{
-	MaxSegmentsPerTier:   10,
-	MaxSegmentSize:       1000000, // num of documents
-	TierGrowth:           10.0,
-	SegmentsPerMergeTask: 10,
-	FloorSegmentSize:     2000,
-	ReclaimDeletesWeight: 2.0,
+	MaxSegmentsPerTier:      10,
+	MaxSegmentSize:          1000000, // num of documents
+	TierGrowth:              10.0,
+	SegmentsPerMergeTask:    10,
+	FloorSegmentSize:        2000,
+	ReclaimDeletesWeight:    2.0,
+	DeletesRatioBeforeMerge: 0.5,
 }
 
 // -------------------------------------------
 
 func plan(segmentsIn []Segment, o *Options) (*MergePlan, error) {
-	if len(segmentsIn) <= 1 {
-		return nil, nil
-	}
-
 	if o == nil {
 		o = &DefaultMergePlanOptions
 	}
@@ -148,6 +150,32 @@ func plan(segmentsIn []Segment, o *Options) (*MergePlan, error) {
 	segments := append([]Segment(nil), segmentsIn...) // Copy.
 
 	sort.Sort(byLiveSizeDescending(segments))
+
+	rv := &MergePlan{}
+
+	// fully deleted segments are dropped without merging, even when alone
+	var empties []Segment
+	for _, segment := range segments {
+		if segment.LiveSize() <= 0 {
+			empties = append(empties, segment)
+		}
+	}
+	if len(empties) > 0 {
+		rv.Tasks = append(rv.Tasks, &MergeTask{Segments: empties})
+		segments = removeSegments(segments, empties)
+	}
+
+	for _, task := range reclaimTasks(segments, o) {
+		rv.Tasks = append(rv.Tasks, task)
+		segments = removeSegments(segments, task.Segments)
+	}
+
+	if len(segments) <= 1 {
+		if len(rv.Tasks) == 0 {
+			return nil, nil
+		}
+		return rv, nil
+	}
 
 	minLiveSize, eligiblesLiveSize, eligibles := findLiveSizesAndEligibles(segments, o)
 
@@ -163,19 +191,6 @@ func plan(segmentsIn []Segment, o *Options) (*MergePlan, error) {
 	scoreSegments := o.ScoreSegments
 	if scoreSegments == nil {
 		scoreSegments = ScoreSegments
-	}
-
-	rv := &MergePlan{}
-
-	var empties []Segment
-	for _, eligible := range eligibles {
-		if eligible.LiveSize() <= 0 {
-			empties = append(empties, eligible)
-		}
-	}
-	if len(empties) > 0 {
-		rv.Tasks = append(rv.Tasks, &MergeTask{Segments: empties})
-		eligibles = removeSegments(eligibles, empties)
 	}
 
 	// While we’re over budget, keep looping, which might produce
@@ -219,6 +234,32 @@ func plan(segmentsIn []Segment, o *Options) (*MergePlan, error) {
 	}
 
 	return rv, nil
+}
+
+// reclaimTasks groups segments (sorted by live size descending) that
+// meet DeletesRatioBeforeMerge into tasks bounded like regular merges.
+func reclaimTasks(segments []Segment, o *Options) []*MergeTask {
+	if o.DeletesRatioBeforeMerge <= 0 {
+		return nil
+	}
+	var tasks []*MergeTask
+	var task *MergeTask
+	var taskLiveSize int64
+	for _, segment := range segments {
+		full, live := segment.FullSize(), segment.LiveSize()
+		if full <= 0 || float64(full-live)/float64(full) < o.DeletesRatioBeforeMerge {
+			continue
+		}
+		if task == nil || len(task.Segments) >= o.SegmentsPerMergeTask ||
+			taskLiveSize+live >= o.MaxSegmentSize {
+			task = &MergeTask{}
+			tasks = append(tasks, task)
+			taskLiveSize = 0
+		}
+		task.Segments = append(task.Segments, segment)
+		taskLiveSize += live
+	}
+	return tasks
 }
 
 func findLiveSizesAndEligibles(segments []Segment, o *Options) (minLiveSize, eligiblesLiveSize int64, eligibles []Segment) {

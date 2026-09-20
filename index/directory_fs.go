@@ -255,20 +255,7 @@ func (d *FileSystemDirectory) Stats() (numFilesOnDisk, numBytesUsedDisk uint64) 
 }
 
 func (d *FileSystemDirectory) Sync() error {
-	dir, err := os.Open(d.path)
-	if err != nil {
-		return fmt.Errorf("error opening directory for sync: %w", err)
-	}
-	err = dir.Sync()
-	if err != nil {
-		_ = dir.Close()
-		return fmt.Errorf("error syncing directory: %w", err)
-	}
-	err = dir.Close()
-	if err != nil {
-		return fmt.Errorf("error closing directing after sync: %w", err)
-	}
-	return nil
+	return d.syncDir()
 }
 
 func (d *FileSystemDirectory) fileName(kind string, id uint64) string {

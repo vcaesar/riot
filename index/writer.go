@@ -95,7 +95,7 @@ func OpenWriter(config Config) (*Writer, error) {
 		return nil, fmt.Errorf("error getting exclusive access to diretory: %w", err)
 	}
 
-	lastPersistedEpoch, nextSnapshotEpoch, err2 := rv.loadSnapshots()
+	lastPersistedEpoch, nextSnapshotEpoch, referenced, err2 := rv.loadSnapshots()
 	if err2 != nil {
 		_ = rv.Close()
 		return nil, err2
@@ -111,6 +111,20 @@ func OpenWriter(config Config) (*Writer, error) {
 		rv.nextSegmentID = existingSegments[0]
 	}
 	rv.nextSegmentID++
+
+	// segments persisted before a crash but never referenced by a snapshot
+	// are invisible to the deletion policy, so remove them here
+	if referenced != nil {
+		for _, id := range existingSegments {
+			if _, ok := referenced[id]; ok {
+				continue
+			}
+			if err = rv.directory.Remove(ItemKindSegment, id); err != nil {
+				_ = rv.Close()
+				return nil, fmt.Errorf("error removing orphan segment %d: %w", id, err)
+			}
+		}
+	}
 
 	// give deletion policy an opportunity to cleanup now before we begin
 	err = rv.deletionPolicy.Cleanup(rv.directory)
@@ -136,12 +150,17 @@ func OpenWriter(config Config) (*Writer, error) {
 	return rv, nil
 }
 
-func (s *Writer) loadSnapshots() (lastPersistedEpoch, nextSnapshotEpoch uint64, err error) {
+// loadSnapshots replays the snapshots on disk and returns the set of segment
+// ids they reference, or nil when any snapshot failed to load so callers do
+// not treat segments of an unreadable snapshot as orphans.
+func (s *Writer) loadSnapshots() (lastPersistedEpoch, nextSnapshotEpoch uint64,
+	referenced map[uint64]struct{}, err error) {
 	nextSnapshotEpoch = 1
 	snapshotEpochs, err := s.directory.List(ItemKindSnapshot)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
+	referenced = make(map[uint64]struct{})
 
 	// try and load each snapshot seen
 	var snapshotsFound, snapshotLoaded bool
@@ -156,9 +175,16 @@ func (s *Writer) loadSnapshots() (lastPersistedEpoch, nextSnapshotEpoch uint64, 
 		if err != nil {
 			log.Printf("error loading snapshot epoch: %d: %v", snapshotEpoch, err)
 			// but keep going and hope there is another newer snapshot that works
+			referenced = nil
 			continue
 		}
 		snapshotLoaded = true
+		for _, seg := range indexSnapshot.segment {
+			if referenced != nil {
+				referenced[seg.id] = struct{}{}
+			}
+		}
+		// note: referenced stays nil once any snapshot failed to load
 
 		lastPersistedEpoch = indexSnapshot.epoch
 		nextSnapshotEpoch = indexSnapshot.epoch + 1
@@ -175,9 +201,9 @@ func (s *Writer) loadSnapshots() (lastPersistedEpoch, nextSnapshotEpoch uint64, 
 		// but we failed to successfully load anything
 		// this results in losing all data and starting from scratch
 		// should require, some more explicit decision, for now error out
-		return 0, 0, fmt.Errorf("existing snapshots found, but none could be loaded, exiting")
+		return 0, 0, nil, fmt.Errorf("existing snapshots found, but none could be loaded, exiting")
 	}
-	return lastPersistedEpoch, nextSnapshotEpoch, nil
+	return lastPersistedEpoch, nextSnapshotEpoch, referenced, nil
 }
 
 func (s *Writer) fireEvent(kind int, dur time.Duration) {
