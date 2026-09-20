@@ -63,7 +63,10 @@ type Directory interface {
 	// Stats returns total number of items and their cumulative size
 	Stats() (numItems uint64, numBytes uint64)
 
-	// Sync ensures directory metadata itself has been committed
+	// Sync ensures directory metadata itself has been committed.
+	// On platforms without directory fsync (Windows) this is best-effort:
+	// item contents are already flushed by Persist, but a power loss may
+	// still lose the newest directory entries.
 	Sync() error
 
 	// Lock ensures this process has exclusive access to write in this directory

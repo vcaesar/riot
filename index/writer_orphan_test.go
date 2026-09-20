@@ -16,6 +16,7 @@ package index
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,6 +97,47 @@ func TestOpenWriterRemovesOrphanSegments(t *testing.T) {
 	if idx.nextSegmentID <= live[0]+1 {
 		t.Fatalf("nextSegmentID %d must stay above orphan id %d", idx.nextSegmentID, live[0]+1)
 	}
+	reader, err := idx.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	count, err := reader.Count()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 doc after reopen, got %d", count)
+	}
+}
+
+func TestOpenWriterOrphanRemovalFailureIsNotFatal(t *testing.T) {
+	cfg, cleanup := CreateConfig("TestOpenWriterOrphanRemovalFailureIsNotFatal")
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Log(err)
+		}
+	}()
+	dir, live := persistOneDoc(t, &cfg)
+	orphanID := live[0] + 1
+	writeOrphanSegment(t, dir, orphanID)
+
+	// simulate a file held open, e.g. on Windows, so removal fails
+	cfg.DirectoryFunc = func() Directory {
+		return discardTestDirectory{Directory: dir, remove: func(kind string, id uint64) error {
+			if kind == ItemKindSegment && id == orphanID {
+				return errors.New("file in use")
+			}
+			return dir.Remove(kind, id)
+		}}
+	}
+
+	idx, err := OpenWriter(cfg)
+	if err != nil {
+		t.Fatalf("orphan removal failure must not block startup: %v", err)
+	}
+	defer func() { _ = idx.Close() }()
+
 	reader, err := idx.Reader()
 	if err != nil {
 		t.Fatal(err)

@@ -90,6 +90,35 @@ func TestDiscardSegment(t *testing.T) {
 	}
 }
 
+func TestRemoveUnloadable(t *testing.T) {
+	loadErr := errors.New("load failed")
+	for _, name := range []string{"success", "remove error"} {
+		t.Run(name, func(t *testing.T) {
+			removed := false
+			writer := &Writer{directory: discardTestDirectory{remove: func(kind string, id uint64) error {
+				if kind != ItemKindSegment || id != 7 {
+					t.Fatalf("unexpected removal: %s %d", kind, id)
+				}
+				removed = true
+				if name == "remove error" {
+					return errors.New("remove failed")
+				}
+				return nil
+			}}}
+			err := writer.removeUnloadable(7, loadErr)
+			if !removed {
+				t.Fatal("unloadable segment not removed")
+			}
+			if !errors.Is(err, loadErr) {
+				t.Fatalf("load error lost: %v", err)
+			}
+			if name == "remove error" && !strings.Contains(err.Error(), "remove failed") {
+				t.Fatalf("expected remove error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestObsoleteSegmentMergeIntroduction(t *testing.T) {
 	cfg, cleanup := CreateConfig("TestObsoleteSegmentMergeIntroduction")
 	var introComplete, mergeIntroStart, mergeIntroComplete sync.WaitGroup

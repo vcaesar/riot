@@ -113,15 +113,15 @@ func OpenWriter(config Config) (*Writer, error) {
 	rv.nextSegmentID++
 
 	// segments persisted before a crash but never referenced by a snapshot
-	// are invisible to the deletion policy, so remove them here
+	// are invisible to the deletion policy, so remove them here; this is
+	// best-effort, a file held open (e.g. on Windows) must not block startup
 	if referenced != nil {
 		for _, id := range existingSegments {
 			if _, ok := referenced[id]; ok {
 				continue
 			}
 			if err = rv.directory.Remove(ItemKindSegment, id); err != nil {
-				_ = rv.Close()
-				return nil, fmt.Errorf("error removing orphan segment %d: %w", id, err)
+				log.Printf("error removing orphan segment %d: %v", id, err)
 			}
 		}
 	}
