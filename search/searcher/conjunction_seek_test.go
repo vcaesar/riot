@@ -252,25 +252,26 @@ func BenchmarkConjunctionAdvance(b *testing.B) {
 
 func BenchmarkConjunctionSeek(b *testing.B) {
 	for _, workload := range []string{"dense", "sparse", "staggered", "overshoot"} {
-		for _, width := range []int{2, 6} {
+		for _, width := range []uint64{2, 6} {
 			lists := make([][]uint64, width)
-			for i := range lists {
+			for i := uint64(0); i < width; i++ {
 				for doc := uint64(0); doc < 8192; doc++ {
 					present := true
 					switch workload {
 					case "overshoot":
 						pos := doc % 100
-						if i == 0 {
+						switch i {
+						case 0:
 							present = pos == 0 || pos == 90 || pos == 91
-						} else if i == width-1 {
+						case width - 1:
 							present = pos == 10 || pos == 90 || pos == 91
-						} else {
+						default:
 							present = pos == 0 || pos == 10 || pos == 90
 						}
 					case "sparse":
-						present = doc%uint64(17+i*12) == 0
+						present = doc%(17+i*12) == 0
 					case "staggered":
-						present = doc%uint64(width) == uint64(i) || doc%257 == 0
+						present = doc%width == i || doc%257 == 0
 					}
 					if present {
 						lists[i] = append(lists[i], doc)

@@ -418,7 +418,6 @@ func (p phrasePath) String() string {
 // of known term locations.  it recursive so care must be taken with
 // arguments and return values.
 //
-// prevPos - the previous location, 0 on first invocation
 // phraseTerms - slice containing the phrase terms,
 //
 //	may contain empty string as placeholder (don't care)
@@ -437,9 +436,9 @@ func (p phrasePath) String() string {
 // rv - the final result being appended to by all the recursive calls
 //
 // returns slice of paths, or nil if invocation did not find any successul paths
-func findPhrasePaths(prevPos int, phraseTerms [][]string,
+func findPhrasePaths(phraseTerms [][]string,
 	tlm search.TermLocationMap, p phrasePath, remainingSlop int, rv []phrasePath) []phrasePath {
-	visitPhrasePaths(prevPos, phraseTerms, tlm, p, remainingSlop, func(p phrasePath) {
+	visitPhrasePaths(0, phraseTerms, tlm, p, remainingSlop, func(p phrasePath) {
 		// snapshot or copy the recursively built phrasePath p and
 		// append it to the rv, also optimizing by checking if next
 		// phrasePath item in the rv (which we're about to overwrite)
@@ -453,6 +452,8 @@ func findPhrasePaths(prevPos int, phraseTerms [][]string,
 	return rv
 }
 
+// visitPhrasePaths calls visit for every phrase path; prevPos is the
+// previous location, 0 on first invocation.
 // visit must consume p synchronously without retaining its backing storage.
 // Term locations must be sorted by position, as guaranteed by Complete.
 func visitPhrasePaths(prevPos int, phraseTerms [][]string,

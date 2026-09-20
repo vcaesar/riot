@@ -164,7 +164,7 @@ func BenchmarkPhraseScratch(b *testing.B) {
 					if path == nil {
 						path = make(phrasePath, 0, len(terms))
 					}
-					paths = findPhrasePaths(0, terms, tlm, path[:0], 1, paths[:0])
+					paths = findPhrasePaths(terms, tlm, path[:0], 1, paths[:0])
 					out = out[:0]
 					for _, p := range paths {
 						for _, pp := range p {

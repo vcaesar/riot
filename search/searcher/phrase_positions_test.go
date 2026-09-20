@@ -79,7 +79,7 @@ func TestPhrasePositionWindowParity(t *testing.T) {
 		} {
 			for _, slop := range []int{-1, 0, 1, 4} {
 				want := phrasePathsExhaustive(0, terms, dm.Locations["body"], nil, slop, nil)
-				got := findPhrasePaths(0, terms, dm.Locations["body"], nil, slop, nil)
+				got := findPhrasePaths(terms, dm.Locations["body"], nil, slop, nil)
 				if !reflect.DeepEqual(got, want) {
 					t.Fatalf("trial %d terms %v slop %d: got %v, want %v", trial, terms, slop, got, want)
 				}
