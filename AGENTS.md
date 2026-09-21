@@ -33,7 +33,7 @@ No Makefile, codegen, vendor dir, or fixture downloads; test corpora are inline 
 
 ## Code style
 
-- Apache-2.0 header on every `.go` file; new files use "The Bluge Authors".
+- Apache-2.0 header on every `.go` file; new files use "The Riot Authors".
 - Fluent value-receiver builders return copies: `func (config Config) WithSegmentType(typ string) Config`.
 - `.golangci.yml`: `lll` 140, `funlen`, `gocyclo` 20, `dupl` 100, `misspell` US.
   `gochecknoinits` is on — `init()` only in `_test.go`, `sizes.go`, `cmd/riot/cmd`.
