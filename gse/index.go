@@ -26,6 +26,7 @@ import (
 
 	riot "github.com/vcaesar/riot"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/vcaesar/riot/gse/query"
 	"github.com/vcaesar/riot/search/highlight"
 )
 
@@ -111,7 +112,20 @@ func (x *Index) Field(name, text string) *riot.TermField {
 	return riot.NewTextField(name, text).
 		WithAnalyzer(x.indexAnalyzer).
 		StoreValue().
+		Sortable().
 		HighlightMatches()
+}
+
+func (x *Index) document(id string, data any) (*riot.Document, error) {
+	fields, err := documentFields(x.field, data)
+	if err != nil {
+		return nil, fmt.Errorf("error indexing %q: %v", id, err)
+	}
+	doc := riot.NewDocument(id)
+	for _, name := range slices.Sorted(maps.Keys(fields)) {
+		doc.AddField(x.Field(name, strings.Join(fields[name], "\n")))
+	}
+	return doc, nil
 }
 
 // Index writes a string or a struct (or non-nil pointer to a struct) under id,
@@ -123,13 +137,9 @@ func (x *Index) Field(name, text string) *riot.TermField {
 // are stored and analyzed as text, not as numeric or date range fields.
 // Use Request.Field to search a mapped field; the default search field is unchanged.
 func (x *Index) Index(id string, data any) error {
-	fields, err := documentFields(x.field, data)
+	doc, err := x.document(id, data)
 	if err != nil {
-		return fmt.Errorf("error indexing %q: %v", id, err)
-	}
-	doc := riot.NewDocument(id)
-	for _, name := range slices.Sorted(maps.Keys(fields)) {
-		doc.AddField(x.Field(name, strings.Join(fields[name], "\n")))
+		return err
 	}
 	if err := x.writer.Update(doc.ID(), doc); err != nil {
 		return fmt.Errorf("error indexing %q: %v", id, err)
@@ -148,7 +158,10 @@ func (x *Index) Delete(id string) error {
 // Close closes the underlying writer.
 func (x *Index) Close() error { return x.writer.Close() }
 
-// Request is a query string search; build it with NewQueryString.
+// Query creates a fluent search builder. See package query for clause semantics.
+func Query() *query.Builder { return query.Query() }
+
+// Request is an analyzed text search; build it with QueryString.
 type Request struct {
 	Query string
 	// Field to match; empty uses the field configured in Option.
@@ -160,11 +173,37 @@ type Request struct {
 	Highlight bool
 }
 
-// NewQueryString creates a request matching query against the index field.
+// QueryString creates an analyzed text request against the index field.
+// It does not parse Elasticsearch query-string syntax.
 // Pass true to also return highlighted fragments.
-func NewQueryString(query string, enableHighlight ...bool) *Request {
-	return &Request{Query: query, Size: defaultSize, Highlight: len(enableHighlight) > 0 && enableHighlight[0]}
+func QueryString(text string, enableHighlight ...bool) *Request {
+	return &Request{Query: text, Size: defaultSize, Highlight: len(enableHighlight) > 0 && enableHighlight[0]}
 }
+
+// NewQueryString creates an analyzed text request.
+//
+// Deprecated: use QueryString instead.
+func NewQueryString(text string, enableHighlight ...bool) *Request {
+	return QueryString(text, enableHighlight...)
+}
+
+// SearchRequest is implemented by Request and query.Builder.
+type SearchRequest interface {
+	Build(string, *analysis.Analyzer) (*riot.TopNSearch, error)
+	HighlightEnabled() bool
+}
+
+// Build compiles a legacy request using the index's field and query analyzer.
+func (r *Request) Build(field string, analyzer *analysis.Analyzer) (*riot.TopNSearch, error) {
+	if r == nil {
+		return nil, fmt.Errorf("error building search: nil request")
+	}
+	return Query().Match(r.Query).Field(r.Field).From(r.From).Size(r.Size).
+		Highlight(r.Highlight).Build(field, analyzer)
+}
+
+// HighlightEnabled reports whether the request includes highlighted fragments.
+func (r *Request) HighlightEnabled() bool { return r != nil && r.Highlight }
 
 // Hit is one matched document.
 type Hit struct {
@@ -185,35 +224,42 @@ type Result struct {
 }
 
 // Search runs req against the current index snapshot.
-func (x *Index) Search(req *Request) (*Result, error) {
-	field := req.Field
-	if field == "" {
-		field = x.field
+func (x *Index) Search(req SearchRequest) (res *Result, err error) {
+	if req == nil {
+		return nil, fmt.Errorf("error executing search: nil request")
 	}
-	query := riot.NewMatchQuery(req.Query).SetField(field).SetAnalyzer(x.queryAnalyzer)
-	search := riot.NewTopNSearch(req.Size, query).SetFrom(req.From).WithStandardAggregations()
-	if req.Highlight {
-		search.IncludeLocations()
+	search, err := req.Build(x.field, x.queryAnalyzer)
+	if err != nil {
+		return nil, err
 	}
+	search.WithStandardAggregations()
 
 	reader, err := x.writer.Reader()
 	if err != nil {
 		return nil, fmt.Errorf("error getting index reader: %v", err)
 	}
-	defer reader.Close()
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil && err == nil {
+			res, err = nil, fmt.Errorf("error closing index reader: %v", closeErr)
+		}
+	}()
 
 	it, err := reader.Search(context.Background(), search)
 	if err != nil {
 		return nil, fmt.Errorf("error executing search: %v", err)
 	}
-	res := &Result{}
+	res = &Result{}
 	var highlighter *highlight.SimpleHighlighter
-	if req.Highlight {
+	if req.HighlightEnabled() {
 		highlighter = highlight.NewHTMLHighlighter()
 	}
-	for match, err := it.Next(); match != nil; match, err = it.Next() {
-		if err != nil {
-			return nil, fmt.Errorf("error iterating search results: %v", err)
+	for {
+		match, nextErr := it.Next()
+		if nextErr != nil {
+			return nil, fmt.Errorf("error iterating search results: %v", nextErr)
+		}
+		if match == nil {
+			break
 		}
 		hit := &Hit{Score: match.Score, Fields: map[string]string{}}
 		err = match.VisitStoredFields(func(name string, value []byte) bool {
