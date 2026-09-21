@@ -60,10 +60,12 @@ func run() (err error) {
 	}
 	defer func() { err = errors.Join(err, reader.Close()) }()
 
-	for _, mode := range []string{"KNN", "ANN"} {
+	for _, approximate := range []bool{false, true} {
+		mode := "KNN"
 		query := riot.NewKNNQuery("embedding", []float32{1, 0}, 2).
 			SetMetric(riot.Cosine)
-		if mode == "ANN" {
+		if approximate {
+			mode = "ANN"
 			query.SetANN(riot.ANNParams{EfSearch: 100})
 		}
 		matches, err := reader.Search(context.Background(), riot.NewTopNSearch(2, query))
