@@ -16,7 +16,7 @@ Indexación de texto rápida y moderna en Go, fork de [bluge](https://github.com
   - Term, Phrase, Match, Match Phrase, Prefix, Regexp, Wildcard, Fuzzy
   - Conjunction, Disjunction, Boolean
   - Numeric Range, Date Range, Term Range, IP Range
-  - Geo Bounding Box, Geo Distance, Geo Polygon, KNN
+  - Geo Bounding Box, Geo Distance, Geo Polygon, ANN, KNN
 - Similitud/puntuación BM25 con interfaces intercambiables
 - Resaltado de coincidencias en los resultados de búsqueda
 - Agregaciones extensibles:
@@ -38,7 +38,9 @@ go get -u github.com/vcaesar/riot
 
 ## Uso
 
-Las versiones ejecutables de los tres programas están en [`test/readme_demo`](../test/readme_demo).
+Las versiones ejecutables de los programas de indexación básica, consulta y procesamiento CJK están en
+[`test/readme_demo`](../test/readme_demo). Las demostraciones de indexación de estructuras y búsqueda vectorial están en
+[`examples`](../examples); ejecuta los comandos de estas demostraciones desde la raíz del repositorio.
 
 ### Indexación
 
@@ -133,8 +135,8 @@ match: example
 ### Chino / Japonés con gse
 
 El paquete [`gse`](../gse) envuelve riot con un tokenizador [gse](https://github.com/go-ego/gse) para
-texto CJK, además de búsqueda por cadena de consulta y resaltado. Guarda como `gse/main.go` y ejecuta con
-`go run ./gse`:
+texto CJK, además de búsqueda por cadena de consulta y resaltado. Guarda como `cjk/main.go` y ejecuta con
+`go run ./cjk`:
 
 ```go
 package main
@@ -178,7 +180,7 @@ func main() {
 	}
 
 	for _, query := range []string{"運命の犠牲者", "搜索引擎", "vaudevillian"} {
-		req := gse.NewQueryString(query, true)
+		req := gse.QueryString(query, true)
 		res, err := index.Search(req)
 		if err != nil {
 			log.Fatalf("error searching %q: %v", query, err)
@@ -191,17 +193,174 @@ func main() {
 }
 ```
 
-Salida:
+Salida de ejemplo; los tiempos pueden variar:
 
 ```
 query "運命の犠牲者": 2 hits in 14.5µs
-  1 (1.909) [見解では、謙虚なヴォードヴィリアンのベテランは、<mark>運命</mark><mark>の</mark><mark>犠</mark><mark>牲</mark><mark>者</mark>と悪役<mark>の</mark>両方<mark>の</mark>変遷として代償を払っています]
-  3 (1.846) [見解では、謙虚なヴォードヴィリアンのベテランは、<mark>運命</mark><mark>の</mark><mark>犠</mark><mark>牲</mark><mark>者</mark>と悪役<mark>の</mark>両方<mark>の</mark>変遷として代償を払っています浮き沈み]
+  1 (1.899) [見解では、謙虚なヴォードヴィリアンのベテランは、<mark>運命</mark><mark>の</mark><mark>犠</mark><mark>牲</mark><mark>者</mark>と悪役<mark>の</mark>両方<mark>の</mark>変遷として代償を払っています]
+  3 (1.837) [見解では、謙虚なヴォードヴィリアンのベテランは、<mark>運命</mark><mark>の</mark><mark>犠</mark><mark>牲</mark><mark>者</mark>と悪役<mark>の</mark>両方<mark>の</mark>変遷として代償を払っています浮き沈み]
 query "搜索引擎": 1 hits in 19.792µs
-  5 (1.536) [Riot 是用 Go 语言编写的全文<mark>搜索</mark><mark>引擎</mark>]
+  5 (1.531) [Riot 是用 Go 语言编写的全文<mark>搜索</mark><mark>引擎</mark>]
 query "vaudevillian": 1 hits in 1.958µs
-  4 (0.657) [In view, humble <mark>vaudevillian</mark> veteran cast vicariously as both victim and villain vicissitudes of fate.]
+  4 (0.654) [In view, humble <mark>vaudevillian</mark> veteran cast vicariously as both victim and villain vicissitudes of fate.]
 ```
+
+### Indexación de estructuras con gse
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+	"log"
+
+	"github.com/vcaesar/riot/gse"
+)
+
+type Article struct {
+	Title string `json:"title"`
+	Text  string `json:"text"`
+}
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() (err error) {
+	index, err := gse.New(gse.Option{Lang: "en"}) // Empty Index uses memory only.
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, index.Close()) }()
+
+	if err := index.Index("article-1", Article{
+		Title: "Getting started",
+		Text:  "Riot is a search engine written in Go.",
+	}); err != nil {
+		return err
+	}
+
+	request := gse.QueryString("started", true)
+	request.Field = "title"
+	result, err := index.Search(request)
+	if err != nil {
+		return err
+	}
+	for _, hit := range result.Hits {
+		fmt.Printf("%s: %s %v\n", hit.ID, hit.Fields["title"], hit.Fragments["title"])
+	}
+	return nil
+}
+```
+
+Salida:
+
+```text
+article-1: Getting started [Getting <mark>started</mark>]
+```
+
+### Búsqueda vectorial: KNN exacto y ANN aproximado
+
+Ejecuta [`examples/knn`](../examples/knn) con `go run ./examples/knn`:
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+
+	riot "github.com/vcaesar/riot"
+)
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() (err error) {
+	writer, err := riot.OpenWriter(riot.InMemoryOnlyConfig())
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, writer.Close()) }()
+
+	for _, item := range []struct {
+		id     string
+		vector []float32
+	}{
+		{"east", []float32{1, 0}},
+		{"northeast", []float32{1, 1}},
+		{"north", []float32{0, 1}},
+	} {
+		field, err := riot.NewVectorField("embedding", item.vector)
+		if err != nil {
+			return err
+		}
+		doc := riot.NewDocument(item.id).AddField(field)
+		if err := writer.Update(doc.ID(), doc); err != nil {
+			return err
+		}
+	}
+
+	reader, err := writer.Reader()
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, reader.Close()) }()
+
+	for _, mode := range []string{"KNN", "ANN"} {
+		query := riot.NewKNNQuery("embedding", []float32{1, 0}, 2).
+			SetMetric(riot.Cosine)
+		if mode == "ANN" {
+			query.SetANN(riot.ANNParams{EfSearch: 100})
+		}
+		matches, err := reader.Search(context.Background(), riot.NewTopNSearch(2, query))
+		if err != nil {
+			return err
+		}
+		for {
+			match, err := matches.Next()
+			if err != nil {
+				return err
+			}
+			if match == nil {
+				break
+			}
+			var id string
+			if err := match.VisitStoredFields(func(name string, value []byte) bool {
+				if name == "_id" {
+					id = string(value)
+				}
+				return true
+			}); err != nil {
+				return err
+			}
+			fmt.Printf("%s: %s (%.3f)\n", mode, id, match.Score)
+		}
+	}
+	return nil
+}
+```
+
+Salida:
+
+```text
+KNN: east (1.000)
+KNN: northeast (0.707)
+ANN: east (1.000)
+ANN: northeast (0.707)
+```
+
+<!-- ## Repobeats
+
+![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
 
 ## Licencia
 
