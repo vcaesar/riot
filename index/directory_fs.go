@@ -27,7 +27,7 @@ import (
 	"github.com/vcaesar/riot/index/lock"
 )
 
-const pidFilename = "bluge.pid"
+const pidFilename = "riot.pid"
 
 type LoadMMapFunc func(f lock.LockedFile) (*segment.Data, io.Closer, error)
 

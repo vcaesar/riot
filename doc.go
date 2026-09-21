@@ -17,15 +17,15 @@ package riot is a library for indexing and searching text.
 
 Example Opening New Index, Indexing Data
 
-	config := bluge.DefaultConfig(path)
-	writer, err := bluge.OpenWriter(config)
+	config := riot.DefaultConfig(path)
+	writer, err := riot.OpenWriter(config)
 	if err != nil {
 		log.Fatalf("error opening writer: %v", err)
 	}
 	defer writer.Close()
 
-	doc := bluge.NewDocument("example").
-		AddField(bluge.NewTextField("name", "bluge"))
+	doc := riot.NewDocument("example").
+		AddField(riot.NewTextField("name", "bluge"))
 
 	err = writer.Update(doc.ID(), doc)
 	if err != nil {
@@ -40,8 +40,8 @@ Example Getting Index Reader, Searching Data
 		}
 		defer reader.Close()
 
-		query := bluge.NewMatchQuery("bluge").SetField("name")
-		request := bluge.NewTopNSearch(10, query).
+		query := riot.NewMatchQuery("bluge").SetField("name")
+		request := riot.NewTopNSearch(10, query).
 			WithStandardAggregations()
 		documentMatchIterator, err := reader.Search(context.Background(), request)
 		if err != nil {
