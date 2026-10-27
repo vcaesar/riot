@@ -17,6 +17,7 @@ package hnsw
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"reflect"
@@ -190,6 +191,253 @@ func TestGraphRepeatedIDs(t *testing.T) {
 	}
 }
 
+// Several vectors of one document must not fill the beam and starve others.
+func TestGraphRepeatedIDsDoNotStarveBeam(t *testing.T) {
+	g, err := New(vec.DotProduct, Params{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []struct {
+		id uint64
+		v  []float32
+	}{{7, []float32{10, 0}}, {7, []float32{9, 0}}, {7, []float32{8, 0}}, {3, []float32{5, 0}}, {4, []float32{1, 0}}} {
+		if err := g.Add(v.id, v.v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, accept := range []func(uint64) bool{nil, func(id uint64) bool { return id != 4 }} {
+		got, err := g.Search([]float32{1, 0}, 2, 2, accept)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []vec.Match{{Number: 7, Score: 10}, {Number: 3, Score: 5}}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestCandHeapKeep(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		for _, ef := range []int{1, 4, 64} {
+			t.Run(fmt.Sprintf("indexed=%v/ef=%d", indexed, ef), func(t *testing.T) {
+				rng := rand.New(rand.NewSource(9))
+				g := &Graph{ids: make([]uint64, 512)}
+				for i := range g.ids {
+					g.ids[i] = uint64(i) << 40
+					if indexed {
+						g.ids[i] = (rng.Uint64() % 32) << 40
+					}
+				}
+				h := &candHeap{g: g}
+				if indexed {
+					h.ids = make(map[uint64]int)
+				}
+				check := func() {
+					t.Helper()
+					if len(h.items) > ef || (indexed && len(h.ids) != len(h.items)) {
+						t.Fatalf("heap size %d, index size %d, ef %d", len(h.items), len(h.ids), ef)
+					}
+					for i, c := range h.items {
+						if i > 0 && h.before(c, h.items[(i-1)/2]) {
+							t.Fatalf("heap order violated at %d: %v", i, h.items)
+						}
+						if indexed {
+							if pos, ok := h.ids[g.ids[c.node]]; !ok || pos != i {
+								t.Fatalf("node %d at %d, index %d, present %v", c.node, i, pos, ok)
+							}
+						}
+					}
+				}
+				best := make(map[uint64]cand)
+				var want []cand
+				for _, node := range rng.Perm(len(g.ids)) {
+					// #nosec G115 -- node is a permutation index in the 512-element slice.
+					c := cand{node: uint32(node), score: float64(rng.Intn(21) - 10)}
+					id := g.ids[node]
+					if old, ok := best[id]; !ok || g.better(c, old) {
+						best[id] = c
+					}
+					h.keep(c, ef)
+					check()
+					want = want[:0]
+					for _, c := range best {
+						want = append(want, c)
+					}
+					sort.Slice(want, func(i, j int) bool { return g.better(want[i], want[j]) })
+					want = want[:min(ef, len(want))]
+					got := append([]cand(nil), h.items...)
+					sort.Slice(got, func(i, j int) bool { return g.better(got[i], got[j]) })
+					if !reflect.DeepEqual(got, want) {
+						t.Fatalf("after keeping %v: got %v, want %v", c, got, want)
+					}
+				}
+				for i := len(want) - 1; i >= 0; i-- {
+					if got := h.pop(); got != want[i] {
+						t.Fatalf("pop: got %v, want %v", got, want[i])
+					}
+					check()
+				}
+			})
+		}
+	}
+}
+
+func TestGraphRepeatedIDsConcurrentSearch(t *testing.T) {
+	g, err := New(vec.DotProduct, Params{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []uint64{9, 4, 7, 9, 4, 2, 7}
+	values := []float32{2, 4, 3, 6, 8, 8, 9}
+	for i, id := range ids {
+		if err := g.Add(id, []float32{values[i]}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g.entry, g.maxLevel = 0, 0
+	g.links = [][][]uint32{{{1}}, {{2}}, {{3}}, {{4}}, {{5}}, {{6}}, {{}}}
+	for _, tc := range []struct {
+		name   string
+		query  []float32
+		accept func(uint64) bool
+		want   []vec.Match
+	}{
+		{"replacement and reinsertion", []float32{1}, nil, []vec.Match{{Number: 7, Score: 9}, {Number: 2, Score: 8}}},
+		{"filtered", []float32{1}, func(id uint64) bool { return id != 4 }, []vec.Match{{Number: 7, Score: 9}, {Number: 2, Score: 8}}},
+		{"negative scores", []float32{-1}, nil, []vec.Match{{Number: 9, Score: -2}, {Number: 7, Score: -3}}},
+		{"reject all", []float32{1}, func(uint64) bool { return false }, []vec.Match{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for range 20 {
+				got, err := g.Search(tc.query, 2, 2, tc.accept)
+				if err != nil || !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("got %v, error %v; want %v", got, err, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// A tie at the beam boundary must resolve by ascending id, like exact search.
+func TestGraphTieAtBeamBoundary(t *testing.T) {
+	g, err := New(vec.DotProduct, Params{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []uint64{5, 2} {
+		if err := g.Add(id, []float32{1, 0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g.entry, g.maxLevel = 0, 0
+	g.links = [][][]uint32{{{1}}, {{0}}}
+	got, err := g.Search([]float32{1, 0}, 1, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []vec.Match{{Number: 2, Score: 1}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func BenchmarkGraphBuild(b *testing.B) {
+	rng := rand.New(rand.NewSource(7))
+	vectors := randomVectors(rng, 2000, 32)
+	b.ReportAllocs()
+	for b.Loop() {
+		g, err := New(vec.Cosine, Params{})
+		if err != nil {
+			b.Fatal(err)
+		}
+		for i, v := range vectors {
+			if err := g.Add(uint64(i), v); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+func BenchmarkGraphSearch(b *testing.B) {
+	rng := rand.New(rand.NewSource(6))
+	vectors := randomVectors(rng, 5000, 32)
+	g, err := New(vec.Cosine, Params{})
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i, v := range vectors {
+		if err := g.Add(uint64(i), v); err != nil {
+			b.Fatal(err)
+		}
+	}
+	queries := randomVectors(rng, 64, 32)
+	b.ReportAllocs()
+	i := 0
+	for b.Loop() {
+		if _, err := g.Search(queries[i%len(queries)], 10, 0, nil); err != nil {
+			b.Fatal(err)
+		}
+		i++
+	}
+}
+
+// Keep traversal fixed to measure duplicate bookkeeping independently of recall.
+func BenchmarkGraphRepeatedIDBeam(b *testing.B) {
+	for _, n := range []int{100, 10000} {
+		b.Run(fmt.Sprintf("%d_docs", n), func(b *testing.B) {
+			g, err := New(vec.DotProduct, Params{})
+			if err != nil {
+				b.Fatal(err)
+			}
+			g.dim, g.repeated = 1, true
+			g.ids = make([]uint64, 2*n)
+			g.data = make([]float32, 2*n)
+			g.links = make([][][]uint32, 2*n)
+			for i := range g.ids {
+				g.ids[i] = uint64(i / 2)
+				g.data[i] = float32((i/2)*7919%n + 1)
+				g.links[i] = make([][]uint32, 1)
+				if i > 0 {
+					g.links[i-1][0] = []uint32{uint32(i)}
+				}
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				got, err := g.Search([]float32{1}, n, 2*n, nil)
+				if err != nil || len(got) != n {
+					b.Fatalf("got %d matches, error %v; want %d", len(got), err, n)
+				}
+			}
+		})
+	}
+}
+
+// The unrolled kernels must match vec.Score exactly, including tail dimensions.
+func TestGraphScoreMatchesVecScore(t *testing.T) {
+	rng := rand.New(rand.NewSource(8))
+	for _, metric := range []vec.Metric{vec.Cosine, vec.DotProduct, vec.L2} {
+		for dim := 1; dim <= 9; dim++ {
+			vectors := randomVectors(rng, 20, dim)
+			vectors = append(vectors, vectors[0]) // cosine 1 must clamp, not exceed
+			g := build(t, metric, Params{}, vectors)
+			q := vectors[0]
+			var qn float64
+			if metric == vec.Cosine {
+				qn = norm(q)
+			}
+			for node, v := range vectors {
+				want, err := vec.Score(q, v, metric)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := g.score(q, qn, uint32(node)); got != want {
+					t.Fatalf("%s dim %d node %d: score %v, vec.Score %v", metric, dim, node, got, want)
+				}
+			}
+		}
+	}
+}
+
 func TestGraphTiesOrderByID(t *testing.T) {
 	g := build(t, vec.DotProduct, Params{}, [][]float32{{1, 0}, {1, 0}, {1, 0}, {0, 1}})
 	got, err := g.Search([]float32{1, 0}, 2, 0, nil)
@@ -245,6 +493,35 @@ func TestParamsMOverflow(t *testing.T) {
 		if !wantError && g.m0 != 2*m {
 			t.Fatalf("M=%d: level-0 limit %d", m, g.m0)
 		}
+	}
+}
+
+func TestGraphLargeValidM(t *testing.T) {
+	for _, m := range []int{DefaultM, 1 << 20, math.MaxInt / 2} {
+		t.Run(fmt.Sprint(m), func(t *testing.T) {
+			g, err := New(vec.L2, Params{M: m})
+			if err != nil {
+				t.Fatal(err)
+			}
+			vectors := [][]float32{{1}, {2}, {3}}
+			for i, v := range vectors {
+				if err := g.Add(uint64(i), v); err != nil {
+					t.Fatal(err)
+				}
+				for _, neighbors := range g.links[i] {
+					if cap(neighbors) > i+1 {
+						t.Fatalf("node %d reserved %d neighbors with only %d candidates", i, cap(neighbors), i)
+					}
+				}
+			}
+			got, err := g.Search([]float32{1}, 3, 3, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := exact(t, vectors, []float32{1}, 3, vec.L2, nil); !reflect.DeepEqual(got, want) {
+				t.Fatalf("got %v, want %v", got, want)
+			}
+		})
 	}
 }
 

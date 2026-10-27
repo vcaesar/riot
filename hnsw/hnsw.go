@@ -19,12 +19,11 @@
 package hnsw
 
 import (
-	"container/heap"
 	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
-	"sort"
+	"slices"
 	"sync"
 
 	"github.com/vcaesar/ice/vec"
@@ -79,44 +78,144 @@ func (p Params) Validate() error {
 	return nil
 }
 
+// cand fields are ordered to pack into 16 bytes.
 type cand struct {
-	node     uint32
 	score    float64
+	node     uint32
 	rejected bool
 }
 
-// better orders by descending score, then ascending node for determinism.
-func better(a, b cand) bool {
-	return a.score > b.score || (a.score == b.score && a.node < b.node)
-}
-
-// candHeap is a max-heap of candidates when best is set, else a min-heap.
+// candHeap keeps the best candidate on top when best is set, else the worst.
+// It is typed to avoid container/heap boxing in the search loop.
 type candHeap struct {
+	g     *Graph
 	items []cand
 	best  bool
+	ids   map[uint64]int // document id → heap index; nil without deduplication
 }
 
-func (h *candHeap) Len() int { return len(h.items) }
-func (h *candHeap) Less(i, j int) bool {
-	if h.best {
-		return better(h.items[i], h.items[j])
-	}
-	return better(h.items[j], h.items[i])
-}
-func (h *candHeap) Swap(i, j int)      { h.items[i], h.items[j] = h.items[j], h.items[i] }
-func (h *candHeap) Push(x interface{}) { h.items = append(h.items, x.(cand)) }
-func (h *candHeap) Pop() interface{} {
-	n := len(h.items)
-	x := h.items[n-1]
-	h.items = h.items[:n-1]
-	return x
-}
+func (h *candHeap) Len() int  { return len(h.items) }
 func (h *candHeap) top() cand { return h.items[0] }
 
-// visitedSet marks nodes with an epoch so reuse costs nothing.
+// before reports whether a belongs above b. It stays small enough to
+// inline; ties are rare and go out of line.
+func (h *candHeap) before(a, b cand) bool {
+	if a.score != b.score {
+		return (a.score > b.score) == h.best
+	}
+	return h.tie(a, b)
+}
+
+//go:noinline
+func (h *candHeap) tie(a, b cand) bool {
+	if h.best {
+		return h.g.better(a, b)
+	}
+	return h.g.better(b, a)
+}
+
+func (h *candHeap) push(c cand) {
+	h.items = append(h.items, c)
+	h.up(len(h.items) - 1)
+}
+
+func (h *candHeap) pop() cand {
+	n := len(h.items) - 1
+	top := h.items[0]
+	if h.ids != nil {
+		delete(h.ids, h.g.ids[top.node])
+	}
+	h.items[0] = h.items[n]
+	h.items = h.items[:n]
+	if n > 0 {
+		h.down(0)
+	}
+	return top
+}
+
+// fix restores heap order after items[i] changed.
+func (h *candHeap) fix(i int) {
+	if !h.down(i) {
+		h.up(i)
+	}
+}
+
+func (h *candHeap) set(i int, c cand) {
+	h.items[i] = c
+	if h.ids != nil {
+		h.ids[h.g.ids[c.node]] = i
+	}
+}
+
+// up and down move a hole instead of swapping, writing each slot once.
+func (h *candHeap) up(i int) {
+	items, x := h.items, h.items[i]
+	for i > 0 {
+		p := (i - 1) / 2
+		if !h.before(x, items[p]) {
+			break
+		}
+		h.set(i, items[p])
+		i = p
+	}
+	h.set(i, x)
+}
+
+func (h *candHeap) down(i int) bool {
+	items, x := h.items, h.items[i]
+	start, n := i, len(items)
+	for {
+		j := 2*i + 1
+		if j >= n {
+			break
+		}
+		if r := j + 1; r < n && h.before(items[r], items[j]) {
+			j = r
+		}
+		if !h.before(items[j], x) {
+			break
+		}
+		h.set(i, items[j])
+		i = j
+	}
+	h.set(i, x)
+	return i > start
+}
+
+// keep adds c to the result beam bounded by ef. With ids set, the beam holds
+// one entry per document id, its best, so repeated vectors cannot starve it.
+func (h *candHeap) keep(c cand, ef int) {
+	if h.ids != nil {
+		if i, dup := h.ids[h.g.ids[c.node]]; dup {
+			if h.g.better(c, h.items[i]) {
+				h.items[i] = c
+				h.fix(i)
+			}
+			return
+		}
+	}
+	if len(h.items) < ef {
+		h.push(c)
+		return
+	}
+	if !h.g.better(c, h.top()) {
+		return
+	}
+	if h.ids != nil {
+		delete(h.ids, h.g.ids[h.top().node])
+	}
+	h.items[0] = c
+	h.down(0)
+}
+
+// visitedSet marks nodes with an epoch so reuse costs nothing. It also
+// carries the reusable per-search buffers.
 type visitedSet struct {
-	marks []uint32
-	epoch uint32
+	marks   []uint32
+	epoch   uint32
+	cands   []cand
+	results []cand
+	ids     map[uint64]int
 }
 
 func (v *visitedSet) reset(n int) {
@@ -128,6 +227,18 @@ func (v *visitedSet) reset(n int) {
 		clear(v.marks)
 		v.epoch = 1
 	}
+}
+
+// resultIDs returns an empty id-to-heap-index map for deduplicating results, or nil.
+func (v *visitedSet) resultIDs(unique bool) map[uint64]int {
+	if !unique {
+		return nil
+	}
+	if v.ids == nil {
+		v.ids = make(map[uint64]int)
+	}
+	clear(v.ids)
+	return v.ids
 }
 
 // visit reports whether node was unvisited and marks it.
@@ -158,6 +269,10 @@ type Graph struct {
 	maxLevel int
 	rng      *rand.Rand
 	visited  sync.Pool
+	scratch  []cand // shrink buffer; Add is not concurrent
+	// repeated is set once an id is not above the previous one, so search
+	// must deduplicate ids in its beam.
+	repeated bool
 }
 
 // New creates an empty graph for metric.
@@ -179,7 +294,7 @@ func New(metric vec.Metric, params Params) (*Graph, error) {
 		efSearch: params.EfSearch,
 		levelMul: 1 / math.Log(float64(params.M)),
 		rng:      rand.New(rand.NewPCG(seed, seed)), // #nosec G404 -- levels need reproducibility, not secrecy.
-		visited:  sync.Pool{New: func() interface{} { return &visitedSet{} }},
+		visited:  sync.Pool{New: func() any { return &visitedSet{} }},
 	}, nil
 }
 
@@ -202,6 +317,9 @@ func (g *Graph) Add(id uint64, vector []float32) error {
 	}
 	node := uint32(len(g.ids)) // #nosec G115 -- bounded above.
 	level := int(math.Floor(-math.Log(1-g.rng.Float64()) * g.levelMul))
+	if node > 0 && id <= g.ids[node-1] {
+		g.repeated = true
+	}
 	g.ids = append(g.ids, id)
 	g.data = append(g.data, vector...)
 	if g.metric == vec.Cosine {
@@ -225,13 +343,14 @@ func (g *Graph) Add(id uint64, vector []float32) error {
 	visited := g.visited.Get().(*visitedSet)
 	defer g.visited.Put(visited)
 	for l := min(level, g.maxLevel); l >= 0; l-- {
-		cands, err := g.searchLayer(context.Background(), q, qn, ep, g.efCons, l, nil, visited)
+		cands, err := g.searchLayer(context.Background(), q, qn, ep, g.efCons, l, nil, false, visited)
 		if err != nil {
 			return err
 		}
-		neighbors := g.selectNeighbors(cands, g.m)
-		links[l] = neighbors
 		mmax := g.mmax(l)
+		// Bound the reservation by the candidates, leaving room for one backlink.
+		neighbors := g.selectNeighbors(make([]uint32, 0, min(mmax, len(cands))+1), cands, g.m)
+		links[l] = neighbors
 		for _, n := range neighbors {
 			g.links[n][l] = append(g.links[n][l], node)
 			if len(g.links[n][l]) > mmax {
@@ -295,31 +414,42 @@ func (g *Graph) SearchContext(ctx context.Context, query []float32, k, ef int,
 	}
 	visited := g.visited.Get().(*visitedSet)
 	defer g.visited.Put(visited)
-	cands, err := g.searchLayer(ctx, query, qn, ep, ef, 0, accept, visited)
+	cands, err := g.searchLayer(ctx, query, qn, ep, ef, 0, accept, g.repeated, visited)
 	if err != nil {
 		return nil, err
 	}
-	matches := make([]vec.Match, 0, min(k, len(cands)))
-	seen := make(map[uint64]struct{}, len(cands))
-	for _, c := range cands { // best first, so the first hit per id is its best
-		id := g.ids[c.node]
-		if _, dup := seen[id]; dup {
-			continue
-		}
-		seen[id] = struct{}{}
-		matches = append(matches, vec.Match{Number: id, Score: c.score})
-	}
-	sort.Slice(matches, func(i, j int) bool {
-		return matches[i].Score > matches[j].Score ||
-			(matches[i].Score == matches[j].Score && matches[i].Number < matches[j].Number)
-	})
-	if len(matches) > k {
-		matches = matches[:k]
+	// cands holds unique ids ordered by score, then id.
+	cands = cands[:min(k, len(cands))]
+	matches := make([]vec.Match, len(cands))
+	for i, c := range cands {
+		matches[i] = vec.Match{Number: g.ids[c.node], Score: c.score}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return matches, nil
+}
+
+// better orders by descending score, then ascending document id like exact
+// search, then ascending node for determinism.
+func (g *Graph) better(a, b cand) bool {
+	if a.score != b.score {
+		return a.score > b.score
+	}
+	if ia, ib := g.ids[a.node], g.ids[b.node]; ia != ib {
+		return ia < ib
+	}
+	return a.node < b.node
+}
+
+func (g *Graph) compare(a, b cand) int {
+	if g.better(a, b) {
+		return -1
+	}
+	if g.better(b, a) {
+		return 1
+	}
+	return 0
 }
 
 func (g *Graph) mmax(level int) int {
@@ -351,25 +481,61 @@ func norm(vector []float32) float64 {
 // score mirrors vec.Score, with the query norm precomputed.
 func (g *Graph) score(q []float32, qn float64, node uint32) float64 {
 	v := g.vector(node)
-	var acc float64
 	switch g.metric {
 	case vec.L2:
-		for i, a := range q {
-			d := float64(a) - float64(v[i])
-			acc += d * d
-		}
-		return -acc
+		return -squaredDistance(q, v)
 	case vec.Cosine:
-		for i, a := range q {
-			acc += float64(a) * float64(v[i])
+		// Same result as math.Max(-1, math.Min(1, x)) for every x, including NaN.
+		x := dot(q, v) / (qn * g.norms[node])
+		if x > 1 {
+			return 1
 		}
-		return math.Max(-1, math.Min(1, acc/(qn*g.norms[node])))
+		if x < -1 {
+			return -1
+		}
+		return x
 	default:
-		for i, a := range q {
-			acc += float64(a) * float64(v[i])
-		}
-		return acc
+		return dot(q, v)
 	}
+}
+
+// dot and squaredDistance unroll without reordering the float64 additions,
+// so results stay bit-identical to vec.Score. len(v) must be at least len(q).
+func dot(q, v []float32) float64 {
+	v = v[:len(q)]
+	var acc float64
+	i := 0
+	for ; i+4 <= len(q); i += 4 {
+		acc += float64(q[i]) * float64(v[i])
+		acc += float64(q[i+1]) * float64(v[i+1])
+		acc += float64(q[i+2]) * float64(v[i+2])
+		acc += float64(q[i+3]) * float64(v[i+3])
+	}
+	for ; i < len(q); i++ {
+		acc += float64(q[i]) * float64(v[i])
+	}
+	return acc
+}
+
+func squaredDistance(q, v []float32) float64 {
+	v = v[:len(q)]
+	var acc float64
+	i := 0
+	for ; i+4 <= len(q); i += 4 {
+		d0 := float64(q[i]) - float64(v[i])
+		acc += d0 * d0
+		d1 := float64(q[i+1]) - float64(v[i+1])
+		acc += d1 * d1
+		d2 := float64(q[i+2]) - float64(v[i+2])
+		acc += d2 * d2
+		d3 := float64(q[i+3]) - float64(v[i+3])
+		acc += d3 * d3
+	}
+	for ; i < len(q); i++ {
+		d := float64(q[i]) - float64(v[i])
+		acc += d * d
+	}
+	return acc
 }
 
 // greedy descends to the local best node on one layer.
@@ -398,26 +564,29 @@ func (g *Graph) greedy(ctx context.Context, q []float32, qn float64, ep uint32, 
 // searchLayer is a beam search on one layer returning up to ef results, best
 // first. Rejected candidates bypass beam pruning; accepted candidates below
 // the beam are skipped rather than stopping traversal of pending bridges.
+// unique keeps one result per id. The result aliases visited's buffers and
+// is valid until visited is reused.
 func (g *Graph) searchLayer(ctx context.Context, q []float32, qn float64, ep uint32, ef, level int,
-	accept func(uint64) bool, visited *visitedSet) ([]cand, error) {
+	accept func(uint64) bool, unique bool, visited *visitedSet) ([]cand, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	visited.reset(len(g.ids))
 	visited.visit(ep)
-	cands := &candHeap{best: true}
-	results := &candHeap{}
+	cands := &candHeap{g: g, items: visited.cands[:0], best: true}
+	results := &candHeap{g: g, items: visited.results[:0], ids: visited.resultIDs(unique)}
+	defer func() { visited.cands, visited.results = cands.items[:0], results.items }()
 	start := cand{node: ep, score: g.score(q, qn, ep)}
 	start.rejected = accept != nil && !accept(g.ids[ep])
-	heap.Push(cands, start)
+	cands.push(start)
 	if !start.rejected {
-		heap.Push(results, start)
+		results.keep(start, ef)
 	}
 	for cands.Len() > 0 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		c := heap.Pop(cands).(cand)
+		c := cands.pop()
 		if !c.rejected && results.Len() >= ef && c.score < results.top().score {
 			if accept == nil {
 				break
@@ -436,27 +605,23 @@ func (g *Graph) searchLayer(ctx context.Context, q []float32, qn float64, ep uin
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			if !next.rejected && results.Len() >= ef && next.score <= results.top().score {
+			if !next.rejected && results.Len() >= ef && !g.better(next, results.top()) {
 				continue
 			}
-			heap.Push(cands, next)
+			cands.push(next)
 			if !next.rejected {
-				heap.Push(results, next)
-				if results.Len() > ef {
-					heap.Pop(results)
-				}
+				results.keep(next, ef)
 			}
 		}
 	}
-	out := results.items
-	sort.Slice(out, func(i, j int) bool { return better(out[i], out[j]) })
-	return out, ctx.Err()
+	slices.SortFunc(results.items, g.compare)
+	return results.items, ctx.Err()
 }
 
 // selectNeighbors applies the diversity heuristic: a candidate is kept only
-// when no already kept neighbor is closer to it than the query is.
-func (g *Graph) selectNeighbors(cands []cand, m int) []uint32 {
-	out := make([]uint32, 0, min(m, len(cands)))
+// when no already kept neighbor is closer to it than the query is. Kept
+// nodes are appended to out, which must not alias cands.
+func (g *Graph) selectNeighbors(out []uint32, cands []cand, m int) []uint32 {
 	for _, c := range cands {
 		if len(out) == m {
 			break
@@ -479,10 +644,13 @@ func (g *Graph) selectNeighbors(cands []cand, m int) []uint32 {
 // shrink re-selects node's neighbors on level to at most mmax.
 func (g *Graph) shrink(node uint32, level, mmax int) {
 	nv, nn := g.vector(node), g.norm(node)
-	cands := make([]cand, 0, len(g.links[node][level]))
-	for _, n := range g.links[node][level] {
+	links := g.links[node][level]
+	cands := g.scratch[:0]
+	for _, n := range links {
 		cands = append(cands, cand{node: n, score: g.score(nv, nn, n)})
 	}
-	sort.Slice(cands, func(i, j int) bool { return better(cands[i], cands[j]) })
-	g.links[node][level] = g.selectNeighbors(cands, mmax)
+	slices.SortFunc(cands, g.compare)
+	g.scratch = cands
+	// cands holds copies, so the kept nodes can overwrite links in place.
+	g.links[node][level] = g.selectNeighbors(links[:0], cands, mmax)
 }
