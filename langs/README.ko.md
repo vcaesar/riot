@@ -8,7 +8,7 @@
 
 Go로 작성된 빠르고 현대적인 전문 색인 라이브러리. [bluge](https://github.com/blugelabs/bluge)에서 포크했습니다.
 
-riot 기반의 분산 검색 엔진이자 완전한 Elasticsearch의 경량 대안은 [zed](https://github.com/vcaesar/zed)를 참고하세요.
+riot 기반의 분산 검색 엔진이자 완전한 Elasticsearch의 경량 대안은 [zed](https://github.com/vcaesar/zedsearch)를 참고하세요.
 
 ## 기능
 

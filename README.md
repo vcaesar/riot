@@ -8,7 +8,7 @@ English | [简体中文](langs/README.zh.md) | [繁體中文](langs/README.zht.m
 
 A fast, modern text indexing library in Go, forked from [Bluge](https://github.com/blugelabs/bluge).
 
-For a distributed search engine and a lightweight alternative to full Elasticsearch built on riot, see [zed](https://github.com/vcaesar/zed).
+For a distributed search engine and a lightweight alternative to full Elasticsearch built on riot, see [zed](https://github.com/vcaesar/zedsearch).
 
 ## Features
 
