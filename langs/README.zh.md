@@ -8,7 +8,7 @@
 
 快速、现代的 Go 语言全文索引库，fork 自 [bluge](https://github.com/blugelabs/bluge)
 
-如需基于 riot 的分布式搜索引擎、完整 Elasticsearch 的轻量替代方案，请参阅 [zed](https://github.com/vcaesar/zed)。
+如需基于 riot 的分布式搜索引擎、完整 Elasticsearch 的轻量替代方案，请参阅 [zed](https://github.com/vcaesar/zedsearch)。
 
 ## 特性
 

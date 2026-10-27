@@ -8,7 +8,7 @@
 
 Быстрая современная библиотека полнотекстового индексирования на Go, форк [bluge](https://github.com/blugelabs/bluge)
 
-Распределённый поисковый движок и лёгкая альтернатива полноценному Elasticsearch на базе riot — [zed](https://github.com/vcaesar/zed).
+Распределённый поисковый движок и лёгкая альтернатива полноценному Elasticsearch на базе riot — [zed](https://github.com/vcaesar/zedsearch).
 
 ## Возможности
 

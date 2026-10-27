@@ -8,7 +8,7 @@
 
 Indexación de texto rápida y moderna en Go, fork de [bluge](https://github.com/blugelabs/bluge)
 
-Para un motor de búsqueda distribuido y una alternativa ligera a Elasticsearch completo basada en riot, consulte [zed](https://github.com/vcaesar/zed).
+Para un motor de búsqueda distribuido y una alternativa ligera a Elasticsearch completo basada en riot, consulte [zed](https://github.com/vcaesar/zedsearch).
 
 ## Características
 

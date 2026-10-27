@@ -8,7 +8,7 @@
 
 Go 製の高速でモダンな全文インデックスライブラリ。[bluge](https://github.com/blugelabs/bluge) からのフォークです。
 
-riot をベースにした分散検索エンジン、フル機能の Elasticsearch の軽量な代替としては [zed](https://github.com/vcaesar/zed) をご覧ください。
+riot をベースにした分散検索エンジン、フル機能の Elasticsearch の軽量な代替としては [zed](https://github.com/vcaesar/zedsearch) をご覧ください。
 
 ## 特徴
 

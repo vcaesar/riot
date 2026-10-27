@@ -8,7 +8,7 @@
 
 Schnelle, moderne Volltextindizierung in Go, Fork von [bluge](https://github.com/blugelabs/bluge)
 
-Eine verteilte Suchmaschine und eine leichtgewichtige Alternative zu einem vollständigen Elasticsearch auf Basis von riot finden Sie in [zed](https://github.com/vcaesar/zed).
+Eine verteilte Suchmaschine und eine leichtgewichtige Alternative zu einem vollständigen Elasticsearch auf Basis von riot finden Sie in [zed](https://github.com/vcaesar/zedsearch).
 
 ## Funktionen
 
