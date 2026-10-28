@@ -25,6 +25,8 @@ import (
 const (
 	ItemKindSnapshot = ".snp"
 	ItemKindSegment  = ".seg"
+	// ItemKindGraph is a cached HNSW graph of one segment; see graphItemID.
+	ItemKindGraph = ".hnsw"
 )
 
 // WriterTo is like io.WriterTo only it can be canceled

@@ -267,6 +267,7 @@ type Graph struct {
 
 	entry    uint32
 	maxLevel int
+	pcg      *rand.PCG // rng's source, persisted so Add after Read stays reproducible
 	rng      *rand.Rand
 	visited  sync.Pool
 	scratch  []cand // shrink buffer; Add is not concurrent
@@ -286,6 +287,7 @@ func New(metric vec.Metric, params Params) (*Graph, error) {
 		return nil, err
 	}
 	params = params.WithDefaults()
+	pcg := rand.NewPCG(seed, seed)
 	return &Graph{
 		metric:   metric,
 		m:        params.M,
@@ -293,13 +295,22 @@ func New(metric vec.Metric, params Params) (*Graph, error) {
 		efCons:   params.EfConstruction,
 		efSearch: params.EfSearch,
 		levelMul: 1 / math.Log(float64(params.M)),
-		rng:      rand.New(rand.NewPCG(seed, seed)), // #nosec G404 -- levels need reproducibility, not secrecy.
+		pcg:      pcg,
+		rng:      rand.New(pcg), // #nosec G404 -- levels need reproducibility, not secrecy.
 		visited:  sync.Pool{New: func() any { return &visitedSet{} }},
 	}, nil
 }
 
 // Len returns the number of vectors.
 func (g *Graph) Len() int { return len(g.ids) }
+
+// Metric returns the graph's similarity metric.
+func (g *Graph) Metric() vec.Metric { return g.metric }
+
+// Params returns the graph's parameters with defaults applied.
+func (g *Graph) Params() Params {
+	return Params{M: g.m, EfConstruction: g.efCons, EfSearch: g.efSearch}
+}
 
 // Add inserts vector for document id. Every vector must share one dimension;
 // the same id may be added more than once.

@@ -79,6 +79,10 @@ type segmentWrapper struct {
 	timeErr          error
 	graphMu          sync.Mutex
 	graphs           map[graphKey]*graphEntry
+	// id and writer locate persisted vector graphs; writer is nil for
+	// segments not loaded from the directory.
+	id     uint64
+	writer *Writer
 }
 
 func (s *segmentWrapper) Persisted() bool {
