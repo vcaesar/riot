@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"
+     role="img" aria-labelledby="riot-logo-4-title riot-logo-4-desc">
+  <title id="riot-logo-4-title">Riot</title>
+  <desc id="riot-logo-4-desc">A standalone blue R monogram with a circular search-lens counter.</desc>
+  <path fill="#2563EB" fill-rule="evenodd"
+        d="M52 208V64c0-8.837 7.163-16 16-16h56c35.346 0 64 28.654 64 64
+           0 22.193-11.299 41.75-28.461 53.23L204 208h-46l-33-32H92v32Z
+           M156 112a32 32 0 1 0-64 0a32 32 0 1 0 64 0Z"/>
+</svg>
