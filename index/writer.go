@@ -53,6 +53,10 @@ type Writer struct {
 	// control/track goroutines
 	closeCh    chan struct{}
 	asyncTasks sync.WaitGroup
+	// graphPersistMu orders starting a graph persist against closing
+	// closeCh, so close can wait for graphPersists.
+	graphPersistMu sync.Mutex
+	graphPersists  sync.WaitGroup
 
 	closeOnce sync.Once
 }
@@ -242,9 +246,12 @@ func (s *Writer) close() (err error) {
 	s.fireEvent(EventKindCloseStart, 0)
 
 	// signal to async tasks we want to close
+	s.graphPersistMu.Lock()
 	close(s.closeCh)
+	s.graphPersistMu.Unlock()
 	// wait for them to close
 	s.asyncTasks.Wait()
+	s.graphPersists.Wait()
 
 	s.replaceRoot(nil, nil, nil)
 

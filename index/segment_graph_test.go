@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/vcaesar/ice/vec"
 
@@ -46,6 +47,7 @@ func newGraphTestWriter(t *testing.T, path string, readOnly bool) *graphTestWrit
 	}
 	gw := &graphTestWriter{path: path}
 	gw.Writer = &Writer{directory: dir, closeCh: make(chan struct{}), readOnly: readOnly}
+	t.Cleanup(gw.graphPersists.Wait)
 	gw.config.AsyncError = func(err error) {
 		gw.mu.Lock()
 		gw.errs = append(gw.errs, err)
@@ -84,7 +86,59 @@ func searchGraph(t *testing.T, w *segmentWrapper) []vec.Match {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if w.writer != nil {
+		w.writer.graphPersists.Wait()
+	}
 	return matches
+}
+
+// blockingDirectory holds graph persists until release is closed.
+type blockingDirectory struct {
+	Directory
+	started, release chan struct{}
+}
+
+func (d *blockingDirectory) Persist(kind string, id uint64, w WriterTo, closeCh chan struct{}) error {
+	if kind == ItemKindGraph {
+		close(d.started)
+		<-d.release
+	}
+	return d.Directory.Persist(kind, id, w, closeCh)
+}
+
+// TestSegmentVectorGraphPersistAsync checks that search does not wait for the
+// graph write, while Writer.close does.
+func TestSegmentVectorGraphPersistAsync(t *testing.T) {
+	gw := newGraphTestWriter(t, t.TempDir(), false)
+	if err := gw.directory.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	path := gw.graphFile(t, 8)
+	dir := &blockingDirectory{Directory: gw.directory, started: make(chan struct{}), release: make(chan struct{})}
+	gw.directory = dir
+	w := &segmentWrapper{Segment: testVectorSegment(t), id: 8, writer: gw.Writer}
+	if _, err := w.vectorGraph(context.Background(), testGraphKey); err != nil {
+		t.Fatal(err)
+	}
+	<-dir.started
+
+	closed := make(chan error, 1)
+	go func() { closed <- gw.close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("close returned before the graph persist finished: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(dir.release)
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("graph started before close must be persisted: %v", err)
+	}
+	if errs := gw.asyncErrors(); len(errs) != 0 {
+		t.Fatalf("unexpected async errors: %v", errs)
+	}
 }
 
 func TestSegmentVectorGraphPersisted(t *testing.T) {

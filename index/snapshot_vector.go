@@ -48,9 +48,9 @@ func (i *Snapshot) SearchVectors(ctx context.Context, field string, query []floa
 // SearchVectorsANN is the approximate counterpart of SearchVectors. Each
 // segment is searched through an HNSW graph loaded from the directory or built
 // from its stored vectors on first use, and cached for the segment's lifetime,
-// keyed by field, metric and
-// construction parameters. Deleted and rejected documents are filtered during
-// graph traversal. Results may miss some true neighbors; scores are exact.
+// keyed by field, metric and construction parameters. Deleted and rejected
+// documents are filtered during graph traversal. Results may miss some true
+// neighbors; scores are exact.
 func (i *Snapshot) SearchVectorsANN(ctx context.Context, field string, query []float32, k int,
 	metric vec.Metric, params hnsw.Params, accept func(uint64) bool) ([]vec.Match, error) {
 	if err := params.Validate(); err != nil {

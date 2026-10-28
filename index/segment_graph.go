@@ -62,7 +62,9 @@ type graphItem struct {
 	graph            *hnsw.Graph
 }
 
-func (g graphItem) WriteTo(w io.Writer, closeCh chan struct{}) (int64, error) {
+// WriteTo ignores cancellation: Writer.close waits for started persists so a
+// graph built before Close is kept.
+func (g graphItem) WriteTo(w io.Writer, _ chan struct{}) (int64, error) {
 	le := binary.LittleEndian
 	header := append([]byte(nil), graphMagic...)
 	header = le.AppendUint32(header, graphVersion)
@@ -74,11 +76,6 @@ func (g graphItem) WriteTo(w io.Writer, closeCh chan struct{}) (int64, error) {
 	n, err := w.Write(header)
 	if err != nil {
 		return int64(n), err
-	}
-	select {
-	case <-closeCh:
-		return int64(n), fmt.Errorf("vector graph persist canceled")
-	default:
 	}
 	m, err := g.graph.WriteTo(w)
 	return int64(n) + m, err
@@ -170,20 +167,26 @@ func (s *Writer) loadGraph(segmentID, count uint64, key graphKey) (*hnsw.Graph, 
 	return item.graph, false
 }
 
+// persistGraph writes graph in the background, keeping disk writes out of
+// the search that built it. It is a no-op once the writer is closing.
 func (s *Writer) persistGraph(segmentID, count uint64, key graphKey, graph *hnsw.Graph) {
 	id, ok := graphItemID(segmentID, key)
 	if !ok || len(key.field) > maxGraphField {
 		return
 	}
+	s.graphPersistMu.Lock()
+	defer s.graphPersistMu.Unlock()
 	select {
 	case <-s.closeCh:
 		return
 	default:
 	}
-	item := graphItem{segmentID: segmentID, count: count, field: key.field, graph: graph}
-	if err := s.directory.Persist(ItemKindGraph, id, item, s.closeCh); err != nil {
-		s.fireAsyncError(fmt.Errorf("error persisting vector graph %x: %w", id, err))
-	}
+	s.graphPersists.Go(func() {
+		item := graphItem{segmentID: segmentID, count: count, field: key.field, graph: graph}
+		if err := s.directory.Persist(ItemKindGraph, id, item, nil); err != nil {
+			s.fireAsyncError(fmt.Errorf("error persisting vector graph %x: %w", id, err))
+		}
+	})
 }
 
 // removeOrphanGraphs removes graph items whose segment is gone. Graphs are

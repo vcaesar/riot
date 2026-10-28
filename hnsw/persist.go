@@ -45,7 +45,8 @@ const (
 	// maxShortBytes bounds the metric name and generator state.
 	maxShortBytes = 256
 	// readChunk bounds each allocation while decoding, so a corrupt length
-	// fails on a short read instead of reserving memory up front.
+	// fails on a short read instead of reserving memory up front. It also
+	// sizes the write buffer.
 	readChunk = 64 << 10
 )
 
@@ -59,7 +60,7 @@ func (g *Graph) WriteTo(w io.Writer) (int64, error) {
 	}
 	cw := &countWriter{w: w}
 	crc := crc32.NewIEEE()
-	bw := bufio.NewWriter(io.MultiWriter(cw, crc))
+	bw := bufio.NewWriterSize(io.MultiWriter(cw, crc), readChunk)
 
 	le := binary.LittleEndian
 	buf := append([]byte(nil), formatMagic...)
