@@ -74,9 +74,12 @@ func (r *Reader) SearchVectors(ctx context.Context, field string, query []float3
 // SearchVectorsANN is the approximate counterpart of SearchVectors. Each
 // segment is searched through an HNSW graph built from its stored vectors on
 // first use and cached for the segment's lifetime, keyed by field, metric,
-// M and EfConstruction; the first search after opening or merging pays the
-// build. Results may miss some true neighbors, but every returned score is
-// exact, and deleted or rejected documents are never returned.
+// M and EfConstruction. Graphs of segments a Writer loaded from disk are
+// persisted next to them and reused after reopening, also by OpenReader,
+// which never writes; a missing or corrupt graph is rebuilt, so the first
+// search of a merged or in-memory segment pays the build. Results may miss
+// some true neighbors, but every returned score is exact, and deleted or
+// rejected documents are never returned.
 func (r *Reader) SearchVectorsANN(ctx context.Context, field string, query []float32, k int,
 	metric Metric, params ANNParams, accept func(uint64) bool) ([]VectorMatch, error) {
 	return r.reader.SearchVectorsANN(ctx, field, query, k, metric, params, accept)

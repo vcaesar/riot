@@ -38,10 +38,12 @@ type graphEntry struct {
 	abandoned bool
 }
 
-// vectorGraph returns the cached HNSW graph for key, building it from stored
-// vectors on first use. Segments are immutable, so a graph stays valid for
-// the wrapper's lifetime; deletions are filtered at search time. A build
-// abandoned by cancellation is not cached, so a later caller retries.
+// vectorGraph returns the cached HNSW graph for key, loading it from the
+// directory or building it from stored vectors on first use. Segments are
+// immutable, so a graph stays valid for the wrapper's lifetime; deletions are
+// filtered at search time. A build abandoned by cancellation is not cached,
+// so a later caller retries. Built graphs of persisted segments are persisted
+// after waiters are released.
 func (s *segmentWrapper) vectorGraph(ctx context.Context, key graphKey) (*hnsw.Graph, error) {
 	for {
 		s.graphMu.Lock()
@@ -55,7 +57,13 @@ func (s *segmentWrapper) vectorGraph(ctx context.Context, key graphKey) (*hnsw.G
 		}
 		s.graphMu.Unlock()
 		if !ok {
-			e.graph, e.err = buildVectorGraph(ctx, s.Segment, key)
+			var persist bool
+			if s.writer != nil {
+				e.graph, persist = s.writer.loadGraph(s.id, s.Count(), key)
+			}
+			if e.graph == nil {
+				e.graph, e.err = buildVectorGraph(ctx, s.Segment, key)
+			}
 			if e.err != nil && ctx.Err() != nil {
 				e.abandoned = true
 				s.graphMu.Lock()
@@ -63,6 +71,9 @@ func (s *segmentWrapper) vectorGraph(ctx context.Context, key graphKey) (*hnsw.G
 				s.graphMu.Unlock()
 			}
 			close(e.ready)
+			if persist && e.err == nil {
+				s.writer.persistGraph(s.id, s.Count(), key, e.graph)
+			}
 			return e.graph, e.err
 		}
 		select {

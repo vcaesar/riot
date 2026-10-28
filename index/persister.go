@@ -144,6 +144,9 @@ OUTER:
 			if err != nil {
 				s.config.AsyncError(err)
 			}
+			if err = s.removeOrphanGraphs(); err != nil {
+				s.fireAsyncError(err)
+			}
 		}
 
 		atomic.AddUint64(&s.stats.TotPersistLoopEnd, 1)

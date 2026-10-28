@@ -40,6 +40,7 @@ type Writer struct {
 	deletionPolicy DeletionPolicy
 	directory      Directory
 	segPlugin      *SegmentPlugin // segment plug-in in use
+	readOnly       bool           // OpenReader: never write to directory
 
 	rootLock sync.RWMutex
 	root     *Snapshot // holds 1 ref-count on the root
@@ -132,6 +133,9 @@ func OpenWriter(config Config) (*Writer, error) {
 	if err != nil {
 		_ = rv.Close()
 		return nil, fmt.Errorf("error cleaning up on open: %v", err)
+	}
+	if err = rv.removeOrphanGraphs(); err != nil {
+		log.Printf("error removing orphan vector graphs: %v", err)
 	}
 
 	rv.introductions = make(chan *segmentIntroduction)
@@ -448,6 +452,7 @@ func OpenReader(config Config) (*Snapshot, error) {
 	parent := &Writer{
 		config:    config,
 		directory: config.DirectoryFunc(),
+		readOnly:  true,
 	}
 
 	var err error
@@ -591,6 +596,8 @@ func (s *Writer) loadSegment(id uint64, plugin *SegmentPlugin) (*segmentWrapper,
 			refs:   1,
 		},
 		persisted: true,
+		id:        id,
+		writer:    s,
 	}, nil
 }
 
