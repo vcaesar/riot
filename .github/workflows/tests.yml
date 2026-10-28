@@ -25,3 +25,8 @@ jobs:
         run: |
           go version
           go test -race ./...
+      - name: Build 32-bit
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          for arch in 386 arm mipsle; do GOOS=linux GOARCH=$arch go vet ./...; done
+          GOARCH=386 go test ./hnsw/...

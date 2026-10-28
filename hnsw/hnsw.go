@@ -312,7 +312,7 @@ func (g *Graph) Add(id uint64, vector []float32) error {
 	} else if len(vector) != g.dim {
 		return fmt.Errorf("vector dimension mismatch: graph %d, vector %d", g.dim, len(vector))
 	}
-	if len(g.ids) == math.MaxUint32 {
+	if uint64(len(g.ids)) >= math.MaxUint32 {
 		return fmt.Errorf("hnsw graph is full")
 	}
 	node := uint32(len(g.ids)) // #nosec G115 -- bounded above.
