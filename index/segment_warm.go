@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"maps"
+
+	"github.com/vcaesar/riot/hnsw"
 )
 
 // noteGraphKey records a key searched approximately, so graphs for it are
@@ -74,12 +76,14 @@ func (s *segmentWrapper) adoptGraphs(from *segmentWrapper) map[graphKey]*graphEn
 func (s *Writer) warmGraphs(seg *segmentWrapper, adopted map[graphKey]*graphEntry) {
 	keys := s.searchedGraphKeys()
 	if len(keys) == 0 && len(adopted) == 0 {
+		s.releaseMergeSources(seg)
 		return
 	}
 	s.graphPersistMu.Lock()
 	defer s.graphPersistMu.Unlock()
 	select {
 	case <-s.closeCh:
+		s.releaseMergeSources(seg)
 		return
 	default:
 	}
@@ -88,6 +92,7 @@ func (s *Writer) warmGraphs(seg *segmentWrapper, adopted map[graphKey]*graphEntr
 	w := s.trackWarmup(seg, cancel)
 	s.graphPersists.Go(func() {
 		defer func() {
+			s.releaseMergeSources(seg)
 			s.untrackWarmup(w)
 			cancel()
 			if err := seg.DecRef(); err != nil {
@@ -138,6 +143,12 @@ func (s *Writer) persistAdopted(ctx context.Context, seg *segmentWrapper, adopte
 		if !e.abandoned && e.err == nil {
 			s.persistGraph(seg.id, seg.Count(), key, e.graph)
 		}
+	}
+}
+
+func (s *Writer) releaseMergeSources(seg *segmentWrapper) {
+	if err := seg.clearMergeSources(); err != nil {
+		s.fireAsyncError(err)
 	}
 }
 
@@ -220,4 +231,79 @@ func (s *Writer) inRoot(seg *segmentWrapper) bool {
 		}
 	}
 	return false
+}
+
+// warmPersistedGraphs resumes warm-ups after a reopen: keys of persisted
+// graphs count as searched, so root segments missing a graph, e.g. one
+// merged just before close, are built in the background rather than by the
+// first approximate search.
+func (s *Writer) warmPersistedGraphs() {
+	for _, key := range s.persistedGraphKeys() {
+		s.noteGraphKey(key)
+	}
+	root := s.currentSnapshot()
+	if root == nil {
+		return
+	}
+	defer func() {
+		if err := root.Close(); err != nil {
+			s.fireAsyncError(fmt.Errorf("error releasing snapshot after graph warm-up: %w", err))
+		}
+	}()
+	for _, ss := range root.segment {
+		s.warmGraphs(ss.segment, nil)
+	}
+}
+
+// persistedGraphKeys returns the keys of the graph items in the directory,
+// reading one item header per key hash.
+func (s *Writer) persistedGraphKeys() []graphKey {
+	ids, err := s.directory.List(ItemKindGraph)
+	if err != nil {
+		s.fireAsyncError(fmt.Errorf("error listing vector graphs: %w", err))
+		return nil
+	}
+	var keys []graphKey
+	seen := make(map[uint64]struct{})
+	for _, id := range ids {
+		hash := id & (1<<graphKeyBits - 1)
+		if _, ok := seen[hash]; ok {
+			continue
+		}
+		if key, ok := s.readGraphKey(id); ok {
+			seen[hash] = struct{}{}
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+// readGraphKey reads the key of graph item id. Unreadable items are skipped:
+// loading one later rebuilds it.
+func (s *Writer) readGraphKey(id uint64) (graphKey, bool) {
+	data, closer, err := s.directory.Load(ItemKindGraph, id)
+	if err != nil || data == nil {
+		return graphKey{}, false
+	}
+	defer func() {
+		if closer != nil {
+			if err := closer.Close(); err != nil {
+				s.fireAsyncError(fmt.Errorf("error closing vector graph %x: %w", id, err))
+			}
+		}
+	}()
+	r := data.Reader()
+	item, _, err := readGraphHeader(r)
+	if err != nil {
+		return graphKey{}, false
+	}
+	metric, params, err := hnsw.ReadParams(r)
+	if err != nil {
+		return graphKey{}, false
+	}
+	key := newGraphKey(item.field, metric, params)
+	if want, ok := graphItemID(item.segmentID, key); !ok || want != id {
+		return graphKey{}, false
+	}
+	return key, true
 }

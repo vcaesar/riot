@@ -347,6 +347,9 @@ func (s *Writer) introduceMerge(nextMerge *segmentMerge, introduceSnapshotEpoch 
 
 	newSnapshot.updateSize()
 
+	if !skipped {
+		nextMerge.new.setMergeSources(nextMerge.old, nextMerge.oldNewDocNums)
+	}
 	s.replaceRoot(newSnapshot, nil, nil)
 	if !skipped {
 		s.warmGraphs(nextMerge.new, nil)

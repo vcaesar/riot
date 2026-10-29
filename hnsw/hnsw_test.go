@@ -420,17 +420,13 @@ func TestGraphScoreMatchesVecScore(t *testing.T) {
 			vectors := randomVectors(rng, 20, dim)
 			vectors = append(vectors, vectors[0]) // cosine 1 must clamp, not exceed
 			g := build(t, metric, Params{}, vectors)
-			q := vectors[0]
-			var qn float64
-			if metric == vec.Cosine {
-				qn = norm(q)
-			}
+			q := g.newQuery(vectors[0], nil)
 			for node, v := range vectors {
-				want, err := vec.Score(q, v, metric)
+				want, err := vec.Score(vectors[0], v, metric)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got := g.score(q, qn, uint32(node)); got != want {
+				if got := g.exactScore(&q, uint32(node)); got != want {
 					t.Fatalf("%s dim %d node %d: score %v, vec.Score %v", metric, dim, node, got, want)
 				}
 			}
@@ -706,5 +702,131 @@ func TestGraphValidation(t *testing.T) {
 	}
 	if _, err := g.Search([]float32{0, 0}, 1, 0, nil); err == nil {
 		t.Fatal("accepted zero cosine query")
+	}
+}
+
+func TestGraphApproxScoreCloseToExact(t *testing.T) {
+	rng := rand.New(rand.NewSource(9))
+	for _, metric := range []vec.Metric{vec.Cosine, vec.DotProduct, vec.L2} {
+		for _, dim := range []int{1, 7, 8, 9, 64, 769} {
+			vectors := randomVectors(rng, 10, dim)
+			g := build(t, metric, Params{Quantization: QuantizationNone}, vectors)
+			q := g.newQuery(vectors[0], nil)
+			for node := range vectors {
+				exact, approx := g.exactScore(&q, uint32(node)), g.score(&q, uint32(node))
+				if math.Abs(exact-approx) > 1e-4*math.Max(1, math.Abs(exact)) {
+					t.Fatalf("%s dim %d node %d: approx %v, exact %v", metric, dim, node, approx, exact)
+				}
+			}
+		}
+	}
+}
+
+func TestScanCheaper(t *testing.T) {
+	for _, tc := range []struct {
+		seen, accepted, n int
+		want              bool
+	}{
+		{seen: scanMinVisits - 1, accepted: 0, n: 10, want: false}, // too few samples
+		{seen: scanMinVisits, accepted: 0, n: 1000, want: true},    // 64 > 1000/16
+		{seen: scanMinVisits, accepted: 0, n: 1100, want: false},   // 64 < 1100/16
+		{seen: 1000, accepted: 10, n: 10000, want: true},           // 1% accepted: limit 725
+		{seen: 1000, accepted: 500, n: 10000, want: false},         // 50% deleted: limit 5625
+		{seen: 6000, accepted: 3000, n: 10000, want: true},
+		{seen: 5000, accepted: 5000, n: 10000, want: false},         // unfiltered share never scans first
+		{seen: 1 << 20, accepted: 1 << 19, n: 1 << 30, want: false}, // seen*seen exceeds int32
+	} {
+		if got := scanCheaper(tc.seen, tc.accepted, tc.n); got != tc.want {
+			t.Errorf("scanCheaper(%d, %d, %d) = %v, want %v", tc.seen, tc.accepted, tc.n, got, tc.want)
+		}
+	}
+}
+
+// scanFixture links rejected nodes 0..rejected-1 in a chain from the entry and
+// leaves the accepted nodes after them unreachable, so only a scan finds them.
+func scanFixture(t *testing.T, rejected, n uint64) (g *Graph, vectors [][]float32, accept func(uint64) bool) {
+	t.Helper()
+	vectors = make([][]float32, n)
+	for i := range vectors {
+		vectors[i] = []float32{float32(i)}
+	}
+	g = build(t, vec.DotProduct, Params{}, vectors)
+	g.entry, g.maxLevel = 0, 0
+	for i := range g.links {
+		g.links[i] = [][]uint32{{}}
+		if uint64(i+1) < rejected {
+			g.links[i][0] = []uint32{uint32(i + 1)}
+		}
+	}
+	return g, vectors, func(id uint64) bool { return id >= rejected }
+}
+
+func TestGraphFilteredSearchFallsBackToScan(t *testing.T) {
+	g, vectors, accept := scanFixture(t, 190, 200)
+	calls := 0
+	got, err := g.Search([]float32{1}, 3, 3, func(id uint64) bool {
+		calls++
+		return accept(id)
+	})
+	if want := exact(t, vectors, []float32{1}, 3, vec.DotProduct, accept); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, error %v, want %v", got, err, want)
+	}
+	if calls != scanMinVisits+len(vectors) {
+		t.Fatalf("filter calls %d, want %d visits then a %d node scan", calls, scanMinVisits, len(vectors))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls = 0
+	_, err = g.SearchContext(ctx, []float32{1}, 3, 3, func(id uint64) bool {
+		calls++
+		if calls > scanMinVisits {
+			cancel()
+		}
+		return accept(id)
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled scan: error %v", err)
+	}
+}
+
+func TestGraphFilteredSearchScanKeepsBestPerID(t *testing.T) {
+	g, _, _ := scanFixture(t, 190, 200)
+	g.repeated = true
+	for i := uint64(190); i < 200; i++ {
+		g.ids[i] = 190 + (i-190)/2 // pairs of nodes share an id
+	}
+	got, err := g.Search([]float32{1}, 2, 2, func(id uint64) bool { return id >= 190 })
+	want := []vec.Match{{Number: 194, Score: 199}, {Number: 193, Score: 197}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, error %v, want %v", got, err, want)
+	}
+}
+
+func BenchmarkGraphFilteredSearch(b *testing.B) {
+	rng := rand.New(rand.NewSource(10))
+	vectors := randomVectors(rng, 20000, 32)
+	g, err := New(vec.Cosine, Params{})
+	if err != nil {
+		b.Fatal(err)
+	}
+	for i, v := range vectors {
+		if err := g.Add(uint64(i), v); err != nil {
+			b.Fatal(err)
+		}
+	}
+	queries := randomVectors(rng, 64, 32)
+	for _, every := range []uint64{100, 2} {
+		b.Run(fmt.Sprintf("1_in_%d_accepted", every), func(b *testing.B) {
+			accept := func(id uint64) bool { return id%every == 0 }
+			b.ReportAllocs()
+			i := 0
+			for b.Loop() {
+				if _, err := g.Search(queries[i%len(queries)], 10, 0, accept); err != nil {
+					b.Fatal(err)
+				}
+				i++
+			}
+		})
 	}
 }

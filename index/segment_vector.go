@@ -16,7 +16,9 @@ package index
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 
 	segment "github.com/vcaesar/bluge_segment_api"
 	"github.com/vcaesar/ice/vec"
@@ -29,6 +31,16 @@ type graphKey struct {
 	field             string
 	metric            vec.Metric
 	m, efConstruction int
+	quantization      hnsw.Quantization
+}
+
+func newGraphKey(field string, metric vec.Metric, params hnsw.Params) graphKey {
+	return graphKey{field: field, metric: metric, m: params.M, efConstruction: params.EfConstruction,
+		quantization: params.Quantization}
+}
+
+func (key graphKey) params() hnsw.Params {
+	return hnsw.Params{M: key.m, EfConstruction: key.efConstruction, Quantization: key.quantization}
 }
 
 type graphEntry struct {
@@ -59,10 +71,14 @@ func (s *segmentWrapper) vectorGraph(ctx context.Context, key graphKey) (*hnsw.G
 		if !ok {
 			var persist bool
 			if s.writer != nil {
-				e.graph, persist = s.writer.loadGraph(ctx, s.Segment, s.id, key)
+				var mapping io.Closer
+				e.graph, mapping, persist = s.writer.loadGraph(ctx, s.Segment, s.id, key)
+				if mapping != nil {
+					s.keepGraphMapping(mapping)
+				}
 			}
 			if e.graph == nil {
-				e.graph, e.err = buildVectorGraph(ctx, s.Segment, key)
+				e.graph, e.err = s.buildGraph(ctx, key)
 			}
 			if e.err != nil && ctx.Err() != nil {
 				e.abandoned = true
@@ -96,21 +112,49 @@ func (s *segmentWrapper) forgetGraph(key graphKey, e *graphEntry) {
 	s.graphMu.Unlock()
 }
 
+// keepGraphMapping holds a graph item's mapping, which its graph uses in
+// place, until the segment closes.
+func (s *segmentWrapper) keepGraphMapping(c io.Closer) {
+	s.graphMu.Lock()
+	s.graphMappings = append(s.graphMappings, c)
+	s.graphMu.Unlock()
+}
+
+// closeGraphMappings releases the mappings once the segment's last
+// reference is gone, so no graph using them is reachable.
+func (s *segmentWrapper) closeGraphMappings() error {
+	s.graphMu.Lock()
+	mappings := s.graphMappings
+	s.graphMappings = nil
+	s.graphMu.Unlock()
+	var errs []error
+	for _, c := range mappings {
+		if err := c.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("error closing vector graph of segment %d: %w", s.id, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func buildVectorGraph(ctx context.Context, seg segment.Segment, key graphKey) (*hnsw.Graph, error) {
-	graph, err := hnsw.New(key.metric, hnsw.Params{M: key.m, EfConstruction: key.efConstruction})
-	if err != nil {
-		return nil, err
-	}
-	if err := visitVectors(ctx, seg, key.field, graph.Add); err != nil {
-		return nil, err
-	}
-	return graph, nil
+	return (&segmentWrapper{Segment: seg}).buildGraph(ctx, key)
 }
 
 // segmentVectors returns the document numbers and node-major values of
-// field's vectors in the order buildVectorGraph adds them.
-func segmentVectors(ctx context.Context, seg segment.Segment, field string) (ids []uint64, data []float32, err error) {
+// field's vectors in document order, the order graphs are built in. Each
+// vector must be valid for metric and share the first one's dimension.
+func segmentVectors(ctx context.Context, seg segment.Segment, field string,
+	metric vec.Metric) (ids []uint64, data []float32, err error) {
+	ids = make([]uint64, 0, seg.Count())
 	err = visitVectors(ctx, seg, field, func(number uint64, vector []float32) error {
+		if err := vec.Validate(vector, metric); err != nil {
+			return err
+		}
+		if data == nil {
+			data = make([]float32, 0, int(seg.Count())*len(vector)) // #nosec G115 -- a segment's count fits in memory.
+		} else if dim := len(data) / len(ids); len(vector) != dim {
+			return fmt.Errorf("vector dimension mismatch: graph %d, vector %d", dim, len(vector))
+		}
 		ids = append(ids, number)
 		data = append(data, vector...)
 		return nil

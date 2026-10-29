@@ -45,7 +45,7 @@ func (s *storedVectorSegment) VisitStoredFields(number uint64, visitor segment.S
 	return nil
 }
 
-func encodedVectors(t *testing.T, vectors ...[]float32) [][]byte {
+func encodedVectors(t testing.TB, vectors ...[]float32) [][]byte {
 	t.Helper()
 	rv := make([][]byte, len(vectors))
 	for i, v := range vectors {
@@ -169,7 +169,7 @@ func TestSnapshotVectorFilterFastPath(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Snapshot{offsets: []uint64{10}, segment: []*segmentSnapshot{{deleted: tc.deleted}}}
-			_, err := s.searchVectors(context.Background(), "v", []float32{1}, 1, vec.L2, tc.accept,
+			_, err := s.searchVectors(context.Background(), "v", []float32{1}, 1, vec.L2, tc.accept, false,
 				func(_ *segmentSnapshot, accept func(uint64) bool) ([]vec.Match, error) {
 					if (accept != nil) != tc.wantFilter {
 						t.Fatalf("filter present = %v, want %v", accept != nil, tc.wantFilter)
@@ -204,5 +204,49 @@ func TestSegmentVectorGraphAbandonedBuildRetries(t *testing.T) {
 	}
 	if again, err := w.vectorGraph(context.Background(), key); err != nil || again != graph {
 		t.Fatal("second lookup must return the cached graph")
+	}
+}
+
+func TestBuildVectorGraphDimensionMismatch(t *testing.T) {
+	seg := &storedVectorSegment{vectors: encodedVectors(t, []float32{1, 2}, []float32{3, 4}, []float32{5, 6, 7, 8})}
+	_, err := buildVectorGraph(context.Background(), seg, testGraphKey)
+	if err == nil || !strings.Contains(err.Error(), "document 2") || !strings.Contains(err.Error(), "dimension") {
+		t.Fatalf("want a located dimension error, got %v", err)
+	}
+}
+
+// TestBuildVectorGraphParallel builds a segment large enough for the
+// parallel path and checks every vector finds itself.
+func TestBuildVectorGraphParallel(t *testing.T) {
+	vectors := make([][]float32, minParallelBuild+100)
+	for i := range vectors {
+		vectors[i] = []float32{float32(i % 97), float32(i / 97)}
+	}
+	seg := &storedVectorSegment{vectors: encodedVectors(t, vectors...)}
+	key := graphKey{field: "v", metric: vec.L2, m: 8, efConstruction: 32}
+	graph, err := buildVectorGraph(context.Background(), seg, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if graph.Len() != len(vectors) {
+		t.Fatalf("graph has %d nodes, want %d", graph.Len(), len(vectors))
+	}
+	hits, total := 0, 0
+	for i := 0; i < len(vectors); i += 7 {
+		got, err := graph.Search(vectors[i], 1, 64, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Score > 0 {
+			t.Fatalf("vector %d found %v", i, got)
+		}
+		total++
+		if got[0].Number == uint64(i) {
+			hits++
+		}
+	}
+	// Concurrent inserts are approximate too; grid ties make this a hard case.
+	if float64(hits) < 0.95*float64(total) {
+		t.Fatalf("parallel build found %d of %d vectors", hits, total)
 	}
 }

@@ -16,6 +16,7 @@ package hnsw
 
 import (
 	"bytes"
+	"context"
 	"math/rand"
 	"reflect"
 	"slices"
@@ -162,5 +163,51 @@ func TestGraphWriteLinksToPropagatesErrors(t *testing.T) {
 		if err == nil || n != int64(after) {
 			t.Fatalf("after %d bytes: reported %d, %v", after, n, err)
 		}
+	}
+}
+
+func BenchmarkReadLinks(b *testing.B) {
+	ids, data := flatten(randomVectors(rand.New(rand.NewSource(7)), 20000, 64))
+	g, err := Build(context.Background(), vec.Cosine, Params{}, ids, data, 8)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := g.WriteLinksTo(&buf); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := ReadLinks(bytes.NewReader(buf.Bytes()), ids, data); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// TestReadLinksArenaAppend checks that growing a loaded graph, whose links
+// share arenas, builds exactly what growing the original does.
+func TestReadLinksArenaAppend(t *testing.T) {
+	rng := rand.New(rand.NewSource(13))
+	vectors := randomVectors(rng, 400, 6)
+	extra := randomVectors(rng, 200, 6)
+	params := Params{M: 4, EfConstruction: 32}
+	g := build(t, vec.L2, params, vectors)
+	ids, data := flatten(vectors)
+	loaded, err := ReadLinks(bytes.NewReader(encodeLinks(t, g)), ids, slices.Clone(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range extra {
+		for _, graph := range []*Graph{g, loaded} {
+			if err := graph.Add(uint64(len(vectors)+i), v); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if !bytes.Equal(encode(t, loaded), encode(t, g)) {
+		t.Fatal("adding to a loaded graph diverged from adding to the original")
+	}
+	if err := loaded.checkLinks(); err != nil {
+		t.Fatal(err)
 	}
 }

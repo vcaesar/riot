@@ -75,6 +75,23 @@ func (config Config) WithStoredChunkCacheSize(n int) Config {
 	return config
 }
 
+// VectorStorage selects where persisted HNSW graphs keep their vectors.
+type VectorStorage = index.VectorStorage
+
+const (
+	// VectorStorageDisk, the default, memory-maps graphs stored with their
+	// vectors: fast opens and little heap, for more disk.
+	VectorStorageDisk = index.VectorStorageDisk
+	// VectorStorageMemory stores links only and reads vectors onto the heap.
+	VectorStorageMemory = index.VectorStorageMemory
+)
+
+// WithVectorStorage selects where persisted HNSW graphs keep their vectors.
+func (config Config) WithVectorStorage(storage VectorStorage) Config {
+	config.indexConfig = config.indexConfig.WithVectorStorage(storage)
+	return config
+}
+
 func (config Config) DisableOptimizeConjunction() Config {
 	config.indexConfig = config.indexConfig.DisableOptimizeConjunction()
 	return config

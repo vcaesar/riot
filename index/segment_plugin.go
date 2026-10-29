@@ -79,6 +79,11 @@ type segmentWrapper struct {
 	timeErr          error
 	graphMu          sync.Mutex
 	graphs           map[graphKey]*graphEntry
+	// mergeSources, guarded by graphMu, seed graphs of a merged segment.
+	mergeSources []mergeSource
+	// graphMappings, guarded by graphMu, back graphs used in place and close
+	// with the segment.
+	graphMappings []io.Closer
 	// id and writer locate persisted vector graphs; writer is nil for
 	// segments not loaded from the directory.
 	id     uint64

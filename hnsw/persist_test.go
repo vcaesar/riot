@@ -138,6 +138,28 @@ func TestGraphPersistEmptyAndRepeated(t *testing.T) {
 	}
 }
 
+func TestReadParams(t *testing.T) {
+	params := Params{M: 6, EfConstruction: 40, EfSearch: 30}
+	g := build(t, vec.Cosine, params, randomVectors(rand.New(rand.NewSource(2)), 20, 3))
+	var links bytes.Buffer
+	if _, err := g.WriteLinksTo(&links); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{"full": encode(t, g), "links": links.Bytes()} {
+		metric, got, err := ReadParams(bytes.NewReader(data))
+		if err != nil || metric != vec.Cosine || got != params {
+			t.Fatalf("%s: %s %+v %v, want %s %+v", name, metric, got, err, vec.Cosine, params)
+		}
+	}
+	bad := bytes.Clone(links.Bytes())
+	bad[len(formatMagic)] = 9
+	for _, data := range [][]byte{nil, []byte("NOPE"), bad} {
+		if _, _, err := ReadParams(bytes.NewReader(data)); err == nil {
+			t.Fatalf("%q: want an error", data)
+		}
+	}
+}
+
 func TestGraphReadConsumesExactly(t *testing.T) {
 	g := build(t, vec.L2, Params{}, randomVectors(rand.New(rand.NewSource(1)), 20, 3))
 	r := bytes.NewReader(append(encode(t, g), "tail"...))

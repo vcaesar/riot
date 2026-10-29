@@ -79,7 +79,10 @@ func (r *Reader) SearchVectors(ctx context.Context, field string, query []float3
 // which never writes; a missing or corrupt graph is rebuilt, so the first
 // search of a merged or in-memory segment pays the build. Results may miss
 // some true neighbors, but every returned score is exact, and deleted or
-// rejected documents are never returned.
+// rejected documents are never returned. A selective accept, or many
+// deletions, switches a segment to an exact scan once that is cheaper.
+// Calls to accept are serial unless params.ConcurrentAccept is set, which
+// lets segments searched in parallel filter without a shared lock.
 func (r *Reader) SearchVectorsANN(ctx context.Context, field string, query []float32, k int,
 	metric Metric, params ANNParams, accept func(uint64) bool) ([]VectorMatch, error) {
 	return r.reader.SearchVectorsANN(ctx, field, query, k, metric, params, accept)

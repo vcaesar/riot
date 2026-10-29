@@ -23,6 +23,7 @@ import (
 	"io"
 	"math"
 	"math/rand/v2"
+	"slices"
 
 	"github.com/vcaesar/ice/vec"
 )
@@ -31,13 +32,18 @@ import (
 // preceding bytes:
 //
 //	magic "HNSW", version u32, metric (u32 length + bytes),
-//	M, EfConstruction, EfSearch u64, dim u32, nodes u64,
+//	M, EfConstruction, EfSearch u64, quantization u32 (not in version 1),
+//	dim u32, nodes u64,
 //	maxLevel u32, entry u32, level generator state (u32 length + bytes),
 //	per node: id u64, dim float32 bits, levels u32,
 //	          per level: count u32, count neighbor u32.
+//
+// Versions 1 and 2, still read, predate quantization: their graphs were
+// built with QuantizationNone.
 const (
-	formatMagic   = "HNSW"
-	formatVersion = 1
+	formatMagic         = "HNSW"
+	formatVersion       = 3
+	legacyFormatVersion = 1
 
 	// maxLevels bounds node levels: Float64 has 53 random bits and M >= 2,
 	// so generated levels stay below 54.
@@ -94,7 +100,7 @@ func (g *Graph) WriteTo(w io.Writer) (int64, error) {
 // stream returns an error rather than a graph that could panic in Search.
 func Read(r io.Reader) (*Graph, error) {
 	d := &decoder{r: r, crc: crc32.NewIEEE()}
-	g, nodes, err := d.graph(formatVersion)
+	g, nodes, err := d.graph(formatVersion, legacyFormatVersion)
 	if err == nil {
 		err = d.nodes(g, nodes)
 	}
@@ -121,7 +127,8 @@ func (g *Graph) appendHeader(buf []byte, version uint32) ([]byte, error) {
 	buf = le.AppendUint64(buf, uint64(g.m))        // #nosec G115 -- validated positive.
 	buf = le.AppendUint64(buf, uint64(g.efCons))   // #nosec G115 -- validated positive.
 	buf = le.AppendUint64(buf, uint64(g.efSearch)) // #nosec G115 -- validated positive.
-	buf = le.AppendUint32(buf, uint32(g.dim))      // #nosec G115 -- vector lengths fit in memory.
+	buf = le.AppendUint32(buf, uint32(g.quant))
+	buf = le.AppendUint32(buf, uint32(g.dim)) // #nosec G115 -- vector lengths fit in memory.
 	buf = le.AppendUint64(buf, uint64(len(g.ids)))
 	buf = le.AppendUint32(buf, uint32(g.maxLevel)) // #nosec G115 -- below maxLevels.
 	buf = le.AppendUint32(buf, g.entry)
@@ -148,6 +155,9 @@ type decoder struct {
 	r   io.Reader
 	crc hash.Hash32
 	buf []byte
+	// arenas for links read by ReadLinks
+	levelArena [][]uint32
+	linkArena  []uint32
 }
 
 // checksum reads the trailing CRC-32 and compares it with the bytes read so far.
@@ -247,34 +257,67 @@ func (d *decoder) u32s(count uint64, each func(uint32)) error {
 	return nil
 }
 
-// graph reads the shared header of a stream in the given layout version
-// and returns the graph without nodes, and the node count.
-func (d *decoder) graph(want uint32) (*Graph, uint64, error) {
+// ReadParams reads the metric and parameters at the start of a graph
+// written by WriteTo, WriteLinksTo or WriteMappedTo, without reading or
+// checking the rest.
+func ReadParams(r io.Reader) (vec.Metric, Params, error) {
+	d := &decoder{r: r, crc: crc32.NewIEEE()}
+	version, metric, params, err := d.config()
+	if err == nil && (version < legacyFormatVersion || version > mappedVersion) {
+		err = fmt.Errorf("unsupported hnsw format version %d", version)
+	}
+	if err != nil {
+		return "", Params{}, fmt.Errorf("error reading hnsw parameters: %w", err)
+	}
+	return metric, params, nil
+}
+
+// config reads the magic, version, metric and parameters of a stream.
+func (d *decoder) config() (version uint32, metric vec.Metric, params Params, err error) {
 	magic, err := d.next(len(formatMagic))
 	if err != nil {
-		return nil, 0, err
+		return 0, "", params, err
 	}
 	if string(magic) != formatMagic {
-		return nil, 0, fmt.Errorf("not an hnsw graph")
+		return 0, "", params, fmt.Errorf("not an hnsw graph")
 	}
-	version, err := d.u32()
+	if version, err = d.u32(); err != nil {
+		return 0, "", params, err
+	}
+	name, err := d.short()
 	if err != nil {
-		return nil, 0, err
+		return 0, "", params, err
 	}
-	if version != want {
-		return nil, 0, fmt.Errorf("unsupported hnsw format version %d, want %d", version, want)
-	}
-	metric, err := d.short()
-	if err != nil {
-		return nil, 0, err
-	}
-	var params Params
 	for _, p := range []*int{&params.M, &params.EfConstruction, &params.EfSearch} {
 		if *p, err = d.param(); err != nil {
-			return nil, 0, err
+			return 0, "", params, err
 		}
 	}
-	g, err := New(vec.Metric(metric), params)
+	params.Quantization = QuantizationNone
+	if version != legacyFormatVersion && version != legacyLinksVersion {
+		quant, err := d.u32()
+		if err != nil {
+			return 0, "", params, err
+		}
+		if quant > uint32(QuantizationNone) {
+			return 0, "", params, fmt.Errorf("unsupported quantization %d", quant)
+		}
+		params.Quantization = Quantization(quant)
+	}
+	return version, vec.Metric(name), params, nil
+}
+
+// graph reads the shared header of a stream in one of the given layout
+// versions and returns the graph without nodes, and the node count.
+func (d *decoder) graph(want ...uint32) (*Graph, uint64, error) {
+	version, metric, params, err := d.config()
+	if err != nil {
+		return nil, 0, err
+	}
+	if !slices.Contains(want, version) {
+		return nil, 0, fmt.Errorf("unsupported hnsw format version %d, want one of %v", version, want)
+	}
+	g, err := New(metric, params)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -368,6 +411,7 @@ func (d *decoder) nodes(g *Graph, nodes uint64) error {
 		if g.metric == vec.Cosine {
 			g.norms = append(g.norms, norm(vector))
 		}
+		g.addCodes(vector)
 		g.links = append(g.links, links)
 	}
 	return g.checkLinks()
