@@ -222,3 +222,55 @@ func TestAdoptedAbandonedGraphRetries(t *testing.T) {
 		t.Fatal("the adopter must only drop its own reference")
 	}
 }
+
+// TestWarmPersistedGraphsOnOpen checks that a reopened writer builds graphs
+// missing for keys persisted before, instead of the first search doing so.
+func TestWarmPersistedGraphsOnOpen(t *testing.T) {
+	path := t.TempDir()
+	before := newGraphTestWriter(t, path, false)
+	searchGraph(t, &segmentWrapper{Segment: testVectorSegment(t), id: 5, writer: before.Writer})
+
+	gw := newGraphTestWriter(t, path, false)
+	kept, merged := testVectorSegment(t), testVectorSegment(t)
+	w5 := &segmentWrapper{Segment: kept, refCounter: noOpRefCounter{}, id: 5, writer: gw.Writer}
+	w6 := &segmentWrapper{Segment: merged, refCounter: noOpRefCounter{}, id: 6, writer: gw.Writer}
+	gw.root = &Snapshot{parent: gw.Writer, refs: 1, segment: []*segmentSnapshot{{id: 5, segment: w5}, {id: 6, segment: w6}}}
+	gw.warmPersistedGraphs()
+	gw.graphPersists.Wait()
+
+	if keys := gw.searchedGraphKeys(); len(keys) != 1 || keys[0] != testGraphKey {
+		t.Fatalf("keys %v, want the persisted %v", keys, testGraphKey)
+	}
+	if readyGraph(t, w5, testGraphKey) == nil || readyGraph(t, w6, testGraphKey) == nil {
+		t.Fatal("root segments must be warmed on open")
+	}
+	if _, err := os.Stat(gw.graphFile(t, 6)); err != nil {
+		t.Fatalf("graph built on open not persisted: %v", err)
+	}
+	visits := merged.visits.Load()
+	searchGraph(t, w6)
+	if merged.visits.Load() != visits {
+		t.Fatal("first search after open rebuilt the graph")
+	}
+	if errs := gw.asyncErrors(); len(errs) != 0 {
+		t.Fatalf("unexpected async errors: %v", errs)
+	}
+}
+
+func TestPersistedGraphKeysSkipsCorrupt(t *testing.T) {
+	gw := newGraphTestWriter(t, t.TempDir(), false)
+	searchGraph(t, &segmentWrapper{Segment: testVectorSegment(t), id: 5, writer: gw.Writer})
+	searchGraph(t, &segmentWrapper{Segment: testVectorSegment(t), id: 6, writer: gw.Writer})
+	if err := os.WriteFile(gw.graphFile(t, 6), []byte("RIOTHNSW"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if keys := gw.persistedGraphKeys(); len(keys) != 1 || keys[0] != testGraphKey {
+		t.Fatalf("keys %v, want %v from the readable item", keys, testGraphKey)
+	}
+	if err := os.WriteFile(gw.graphFile(t, 5), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if keys := gw.persistedGraphKeys(); len(keys) != 0 {
+		t.Fatalf("keys %v from unreadable items", keys)
+	}
+}

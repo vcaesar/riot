@@ -18,6 +18,7 @@ package index
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -149,6 +150,7 @@ func OpenWriter(config Config) (*Writer, error) {
 	if err = rv.removeOrphanGraphs(); err != nil {
 		log.Printf("error removing orphan vector graphs: %v", err)
 	}
+	rv.warmPersistedGraphs()
 
 	rv.introductions = make(chan *segmentIntroduction)
 	persistsCh := make(chan *persistIntroduction)
@@ -604,16 +606,23 @@ func (s *Writer) loadSegment(id uint64, plugin *SegmentPlugin) (*segmentWrapper,
 		}
 		return nil, fmt.Errorf("error loading segment: %v", err)
 	}
-	return &segmentWrapper{
-		Segment: seg,
-		refCounter: &closeOnLastRefCounter{
-			closer: closer,
-			refs:   1,
-		},
+	rv := &segmentWrapper{
+		Segment:   seg,
 		persisted: true,
 		id:        id,
 		writer:    s,
-	}, nil
+	}
+	rv.refCounter = &closeOnLastRefCounter{
+		closer: closerFunc(func() error {
+			err := rv.closeGraphMappings()
+			if closer != nil {
+				err = errors.Join(err, closer.Close())
+			}
+			return err
+		}),
+		refs: 1,
+	}
+	return rv, nil
 }
 
 func analysisWorker(q chan func(), closeCh chan struct{}) {

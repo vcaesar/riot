@@ -12,14 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package hnsw implements an in-memory Hierarchical Navigable Small World
-// graph (Malkov & Yashunin) for approximate nearest neighbor search over
-// float32 vectors. Scores use the same arithmetic as vec.Score, so a document
-// found approximately carries exactly the score exact search would give it.
+// Package hnsw implements a Hierarchical Navigable Small World graph
+// (Malkov & Yashunin) for approximate nearest neighbor search over float32
+// vectors. By default graphs are built and traversed with int8 codes
+// (QuantizationInt8), and search rescores its candidates with the float32
+// vectors using the same arithmetic as vec.Score, so a document found
+// approximately carries exactly the score exact search would give it. Graphs
+// live on the heap, or are used in place from memory such as a mapped file
+// with WriteMappedTo and Map.
 package hnsw
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -37,7 +42,16 @@ const (
 	// A fixed seed keeps graphs, and therefore results, reproducible for the
 	// same insertion order.
 	seed = 0x5eed
+
+	// scanMinVisits is how many nodes a filtered search visits before it may
+	// switch to an exact scan, so the accepted share is estimated from a sample.
+	scanMinVisits = 64
+	// scanCheckEvery spaces cancellation checks during an exact scan.
+	scanCheckEvery = 1024
 )
+
+// errScan stops a filtered graph search once an exact scan is cheaper.
+var errScan = errors.New("hnsw: exact scan is cheaper")
 
 // Params tunes graph construction and search. Zero fields take the defaults.
 type Params struct {
@@ -48,6 +62,13 @@ type Params struct {
 	EfConstruction int
 	// EfSearch is the candidate list size while searching; k raises it when larger.
 	EfSearch int
+	// Quantization selects the vectors compared while building and
+	// traversing; the zero value is QuantizationInt8.
+	Quantization Quantization
+	// ConcurrentAccept declares a search filter safe for concurrent use, so
+	// an index searching segments in parallel calls it without a shared
+	// lock. Graph itself ignores it; it is not persisted.
+	ConcurrentAccept bool
 }
 
 // WithDefaults fills zero fields.
@@ -74,6 +95,9 @@ func (p Params) Validate() error {
 	}
 	if p.EfConstruction < 0 || p.EfSearch < 0 {
 		return fmt.Errorf("hnsw ef parameters must not be negative")
+	}
+	if p.Quantization > QuantizationNone {
+		return fmt.Errorf("unsupported hnsw quantization %v", p.Quantization)
 	}
 	return nil
 }
@@ -215,6 +239,8 @@ type visitedSet struct {
 	epoch   uint32
 	cands   []cand
 	results []cand
+	links   []uint32 // neighbor copies during a concurrent build
+	codes   []int8   // the quantized query
 	ids     map[uint64]int
 }
 
@@ -265,12 +291,18 @@ type Graph struct {
 	ids   []uint64  // node → document number
 	links [][][]uint32
 
+	quant   Quantization
+	codes   []int8    // int8: node-major codes
+	scales  []float32 // int8: value of code 1 per node
+	sqNorms []float64 // int8 L2: squared L2 norm per node
+
 	entry    uint32
 	maxLevel int
 	pcg      *rand.PCG // rng's source, persisted so Add after Read stays reproducible
 	rng      *rand.Rand
 	visited  sync.Pool
 	scratch  []cand // shrink buffer; Add is not concurrent
+	build    *builder
 	// repeated is set once an id is not above the previous one, so search
 	// must deduplicate ids in its beam.
 	repeated bool
@@ -294,6 +326,7 @@ func New(metric vec.Metric, params Params) (*Graph, error) {
 		m0:       2 * params.M,
 		efCons:   params.EfConstruction,
 		efSearch: params.EfSearch,
+		quant:    params.Quantization,
 		levelMul: 1 / math.Log(float64(params.M)),
 		pcg:      pcg,
 		rng:      rand.New(pcg), // #nosec G404 -- levels need reproducibility, not secrecy.
@@ -304,12 +337,15 @@ func New(metric vec.Metric, params Params) (*Graph, error) {
 // Len returns the number of vectors.
 func (g *Graph) Len() int { return len(g.ids) }
 
+// IDs returns the document id of each node, in node order. It must not be modified.
+func (g *Graph) IDs() []uint64 { return g.ids }
+
 // Metric returns the graph's similarity metric.
 func (g *Graph) Metric() vec.Metric { return g.metric }
 
 // Params returns the graph's parameters with defaults applied.
 func (g *Graph) Params() Params {
-	return Params{M: g.m, EfConstruction: g.efCons, EfSearch: g.efSearch}
+	return Params{M: g.m, EfConstruction: g.efCons, EfSearch: g.efSearch, Quantization: g.quant}
 }
 
 // Add inserts vector for document id. Every vector must share one dimension;
@@ -327,7 +363,6 @@ func (g *Graph) Add(id uint64, vector []float32) error {
 		return fmt.Errorf("hnsw graph is full")
 	}
 	node := uint32(len(g.ids)) // #nosec G115 -- bounded above.
-	level := int(math.Floor(-math.Log(1-g.rng.Float64()) * g.levelMul))
 	if node > 0 && id <= g.ids[node-1] {
 		g.repeated = true
 	}
@@ -336,45 +371,77 @@ func (g *Graph) Add(id uint64, vector []float32) error {
 	if g.metric == vec.Cosine {
 		g.norms = append(g.norms, norm(vector))
 	}
-	links := make([][]uint32, level+1)
-	g.links = append(g.links, links)
+	g.addCodes(vector)
+	g.links = append(g.links, make([][]uint32, g.randomLevel()+1))
 	if node == 0 {
-		g.maxLevel = level
+		g.maxLevel = len(g.links[0]) - 1
 		return nil
 	}
-	q, qn := g.vector(node), g.norm(node)
-	ep := g.entry
-	for l := g.maxLevel; l > level; l-- {
+	return g.insert(context.Background(), node, &g.scratch)
+}
+
+func (g *Graph) randomLevel() int {
+	return int(math.Floor(-math.Log(1-g.rng.Float64()) * g.levelMul))
+}
+
+// insert links node, whose vector and levels are set, into the graph. During
+// a concurrent build each caller passes its own scratch.
+func (g *Graph) insert(ctx context.Context, node uint32, scratch *[]cand) error {
+	links := g.links[node]
+	level := len(links) - 1
+	q := g.nodeQuery(node)
+	ep, maxLevel := g.top()
+	visited := g.visited.Get().(*visitedSet)
+	defer g.visited.Put(visited)
+	for l := maxLevel; l > level; l-- {
 		var err error
-		ep, err = g.greedy(context.Background(), q, qn, ep, l)
+		ep, err = g.greedy(ctx, &q, ep, l, visited)
 		if err != nil {
 			return err
 		}
 	}
-	visited := g.visited.Get().(*visitedSet)
-	defer g.visited.Put(visited)
-	for l := min(level, g.maxLevel); l >= 0; l-- {
-		cands, err := g.searchLayer(context.Background(), q, qn, ep, g.efCons, l, nil, false, visited)
+	for l := min(level, maxLevel); l >= 0; l-- {
+		cands, err := g.searchLayer(ctx, &q, ep, g.efCons, l, nil, false, visited)
 		if err != nil {
 			return err
 		}
 		mmax := g.mmax(l)
 		// Bound the reservation by the candidates, leaving room for one backlink.
 		neighbors := g.selectNeighbors(make([]uint32, 0, min(mmax, len(cands))+1), cands, g.m)
+		g.lock(node)
+		// Concurrent inserts that reached node through a higher level may
+		// have linked back already; keep those links.
+		early := links[l]
 		links[l] = neighbors
+		if g.build != nil {
+			// Once published, other inserts may shrink the links in place.
+			neighbors = slices.Clone(neighbors)
+			for _, n := range early {
+				if !slices.Contains(neighbors, n) {
+					links[l] = append(links[l], n)
+				}
+			}
+			if len(links[l]) > mmax {
+				g.shrink(node, l, mmax, scratch)
+			}
+		}
+		g.unlock(node)
 		for _, n := range neighbors {
+			if slices.Contains(early, n) {
+				continue // n already links to node
+			}
+			g.lock(n)
 			g.links[n][l] = append(g.links[n][l], node)
 			if len(g.links[n][l]) > mmax {
-				g.shrink(n, l, mmax)
+				g.shrink(n, l, mmax, scratch)
 			}
+			g.unlock(n)
 		}
 		if len(cands) > 0 {
 			ep = cands[0].node
 		}
 	}
-	if level > g.maxLevel {
-		g.entry, g.maxLevel = node, level
-	}
+	g.raise(node, level)
 	return nil
 }
 
@@ -388,8 +455,11 @@ func (g *Graph) Search(query []float32, k, ef int, accept func(uint64) bool) ([]
 
 // SearchContext is Search with cancellation during descent and layer expansion.
 // Discovered rejected nodes are always expanded as bridges, even with a full
-// accepted beam. Accepted nodes remain score-pruned, so search is approximate;
-// selective filters may traverse an entire connected rejected region.
+// accepted beam. Accepted nodes remain score-pruned, so search is approximate.
+// Once a filtered search has visited more nodes than an exact scan would
+// cost, estimated from the accepted share of the visited nodes, it scores
+// every accepted node exactly instead, as Lucene and Weaviate do for
+// selective filters and heavily deleted segments; results are then exact.
 func (g *Graph) SearchContext(ctx context.Context, query []float32, k, ef int,
 	accept func(uint64) bool) ([]vec.Match, error) {
 	if err := ctx.Err(); err != nil {
@@ -411,25 +481,32 @@ func (g *Graph) SearchContext(ctx context.Context, query []float32, k, ef int,
 		ef = g.efSearch
 	}
 	ef = max(ef, k)
-	var qn float64
-	if g.metric == vec.Cosine {
-		qn = norm(query)
-	}
+	visited := g.visited.Get().(*visitedSet)
+	defer g.visited.Put(visited)
+	q := g.newQuery(query, visited.codes)
+	visited.codes = q.codes
 	ep := g.entry
 	for l := g.maxLevel; l > 0; l-- {
 		var err error
-		ep, err = g.greedy(ctx, query, qn, ep, l)
+		ep, err = g.greedy(ctx, &q, ep, l, visited)
 		if err != nil {
 			return nil, err
 		}
 	}
-	visited := g.visited.Get().(*visitedSet)
-	defer g.visited.Put(visited)
-	cands, err := g.searchLayer(ctx, query, qn, ep, ef, 0, accept, g.repeated, visited)
+	cands, err := g.searchLayer(ctx, &q, ep, ef, 0, accept, g.repeated, visited)
+	switch {
+	case errors.Is(err, errScan):
+		cands, err = g.scan(ctx, &q, k, accept, visited)
+	case err == nil:
+		// cands holds unique ids; rescore them exactly before taking the top k.
+		for i := range cands {
+			cands[i].score = g.exactScore(&q, cands[i].node)
+		}
+		slices.SortFunc(cands, g.compare)
+	}
 	if err != nil {
 		return nil, err
 	}
-	// cands holds unique ids ordered by score, then id.
 	cands = cands[:min(k, len(cands))]
 	matches := make([]vec.Match, len(cands))
 	for i, c := range cands {
@@ -489,25 +566,92 @@ func norm(vector []float32) float64 {
 	return math.Sqrt(sum)
 }
 
-// score mirrors vec.Score, with the query norm precomputed.
-func (g *Graph) score(q []float32, qn float64, node uint32) float64 {
+// score approximates exactScore, from int8 codes or in float32 with
+// independent accumulators; it only steers traversal and neighbor selection.
+func (g *Graph) score(q *query, node uint32) float64 {
+	if g.quant == QuantizationInt8 {
+		return g.scoreInt8(q, node)
+	}
 	v := g.vector(node)
 	switch g.metric {
 	case vec.L2:
-		return -squaredDistance(q, v)
+		return -float64(squaredDistance32(q.values, v))
 	case vec.Cosine:
-		// Same result as math.Max(-1, math.Min(1, x)) for every x, including NaN.
-		x := dot(q, v) / (qn * g.norms[node])
-		if x > 1 {
-			return 1
-		}
-		if x < -1 {
-			return -1
-		}
-		return x
+		return clamp(float64(dot32(q.values, v)) / (q.norm * g.norms[node]))
 	default:
-		return dot(q, v)
+		return float64(dot32(q.values, v))
 	}
+}
+
+// exactScore mirrors vec.Score, with the query norm precomputed.
+func (g *Graph) exactScore(q *query, node uint32) float64 {
+	v := g.vector(node)
+	switch g.metric {
+	case vec.L2:
+		return -squaredDistance(q.values, v)
+	case vec.Cosine:
+		return clamp(dot(q.values, v) / (q.norm * g.norms[node]))
+	default:
+		return dot(q.values, v)
+	}
+}
+
+// clamp gives the same result as math.Max(-1, math.Min(1, x)) for every x, including NaN.
+func clamp(x float64) float64 {
+	if x > 1 {
+		return 1
+	}
+	if x < -1 {
+		return -1
+	}
+	return x
+}
+
+// dot32 and squaredDistance32 keep eight float32 sums so the additions
+// pipeline. len(v) must be at least len(q).
+func dot32(q, v []float32) float32 {
+	v = v[:len(q)]
+	var a0, a1, a2, a3, a4, a5, a6, a7 float32
+	i := 0
+	for ; i+8 <= len(q); i += 8 {
+		q8, v8 := q[i:i+8:i+8], v[i:i+8:i+8]
+		a0 += q8[0] * v8[0]
+		a1 += q8[1] * v8[1]
+		a2 += q8[2] * v8[2]
+		a3 += q8[3] * v8[3]
+		a4 += q8[4] * v8[4]
+		a5 += q8[5] * v8[5]
+		a6 += q8[6] * v8[6]
+		a7 += q8[7] * v8[7]
+	}
+	for ; i < len(q); i++ {
+		a0 += q[i] * v[i]
+	}
+	return ((a0 + a1) + (a2 + a3)) + ((a4 + a5) + (a6 + a7))
+}
+
+func squaredDistance32(q, v []float32) float32 {
+	v = v[:len(q)]
+	var a0, a1, a2, a3, a4, a5, a6, a7 float32
+	i := 0
+	for ; i+8 <= len(q); i += 8 {
+		q8, v8 := q[i:i+8:i+8], v[i:i+8:i+8]
+		d0, d1, d2, d3 := q8[0]-v8[0], q8[1]-v8[1], q8[2]-v8[2], q8[3]-v8[3]
+		d4, d5, d6, d7 := q8[4]-v8[4], q8[5]-v8[5], q8[6]-v8[6], q8[7]-v8[7]
+		a0 += d0 * d0
+		a1 += d1 * d1
+		a2 += d2 * d2
+		a3 += d3 * d3
+		a4 += d4 * d4
+		a5 += d5 * d5
+		a6 += d6 * d6
+		a7 += d7 * d7
+	}
+	for ; i < len(q); i++ {
+		d := q[i] - v[i]
+		a0 += d * d
+	}
+	return ((a0 + a1) + (a2 + a3)) + ((a4 + a5) + (a6 + a7))
 }
 
 // dot and squaredDistance unroll without reordering the float64 additions,
@@ -550,21 +694,22 @@ func squaredDistance(q, v []float32) float64 {
 }
 
 // greedy descends to the local best node on one layer.
-func (g *Graph) greedy(ctx context.Context, q []float32, qn float64, ep uint32, level int) (uint32, error) {
+func (g *Graph) greedy(ctx context.Context, q *query, ep uint32, level int,
+	visited *visitedSet) (uint32, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	cur, best := ep, g.score(q, qn, ep)
+	cur, best := ep, g.score(q, ep)
 	for changed := true; changed; {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
 		changed = false
-		for _, n := range g.links[cur][level] {
+		for _, n := range g.neighbors(cur, level, visited) {
 			if err := ctx.Err(); err != nil {
 				return 0, err
 			}
-			if s := g.score(q, qn, n); s > best {
+			if s := g.score(q, n); s > best {
 				cur, best, changed = n, s, true
 			}
 		}
@@ -572,12 +717,67 @@ func (g *Graph) greedy(ctx context.Context, q []float32, qn float64, ep uint32, 
 	return cur, ctx.Err()
 }
 
+// scan exactly scores every accepted node and returns the best k, one per
+// id, best first. The result aliases visited's buffers like searchLayer's.
+func (g *Graph) scan(ctx context.Context, q *query, k int, accept func(uint64) bool,
+	visited *visitedSet) ([]cand, error) {
+	results := &candHeap{g: g, items: visited.results[:0], ids: visited.resultIDs(g.repeated)}
+	defer func() { visited.results = results.items }()
+	for node := range g.ids {
+		if node%scanCheckEvery == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if !accept(g.ids[node]) {
+			continue
+		}
+		n := uint32(node) // #nosec G115 -- Add bounds nodes by MaxUint32.
+		results.keep(cand{node: n, score: g.exactScore(q, n)}, k)
+	}
+	slices.SortFunc(results.items, g.compare)
+	return results.items, ctx.Err()
+}
+
+// scanCheaper reports whether a filtered search that visited seen of n
+// nodes, accepted of them, costs more than an exact scan. The scan calls
+// accept on every node, taken as a sixteenth of a visit, and scores the
+// accepted share, estimated from the visited nodes: it stops once
+// seen > n/16 + n*accepted/seen.
+func scanCheaper(seen, accepted, n int) bool {
+	s := float64(seen)
+	return seen >= scanMinVisits && 16*s*s > float64(n)*(s+16*float64(accepted))
+}
+
+// scanBudget counts the visits of a filtered search over n nodes; with n
+// zero, for an unfiltered search, it never expires.
+type scanBudget struct{ seen, accepted, n int }
+
+func newScanBudget(filtered bool, n int) scanBudget {
+	if !filtered {
+		return scanBudget{}
+	}
+	return scanBudget{n: n}
+}
+
+func (b *scanBudget) visit(rejected bool) {
+	b.seen++
+	if !rejected {
+		b.accepted++
+	}
+}
+
+func (b *scanBudget) expired() bool {
+	return b.n > 0 && scanCheaper(b.seen, b.accepted, b.n)
+}
+
 // searchLayer is a beam search on one layer returning up to ef results, best
 // first. Rejected candidates bypass beam pruning; accepted candidates below
 // the beam are skipped rather than stopping traversal of pending bridges.
-// unique keeps one result per id. The result aliases visited's buffers and
-// is valid until visited is reused.
-func (g *Graph) searchLayer(ctx context.Context, q []float32, qn float64, ep uint32, ef, level int,
+// unique keeps one result per id. With accept set it returns errScan once
+// scanCheaper holds. The result aliases visited's buffers and is valid until
+// visited is reused.
+func (g *Graph) searchLayer(ctx context.Context, q *query, ep uint32, ef, level int,
 	accept func(uint64) bool, unique bool, visited *visitedSet) ([]cand, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -587,9 +787,11 @@ func (g *Graph) searchLayer(ctx context.Context, q []float32, qn float64, ep uin
 	cands := &candHeap{g: g, items: visited.cands[:0], best: true}
 	results := &candHeap{g: g, items: visited.results[:0], ids: visited.resultIDs(unique)}
 	defer func() { visited.cands, visited.results = cands.items[:0], results.items }()
-	start := cand{node: ep, score: g.score(q, qn, ep)}
+	start := cand{node: ep, score: g.score(q, ep)}
 	start.rejected = accept != nil && !accept(g.ids[ep])
 	cands.push(start)
+	budget := newScanBudget(accept != nil, len(g.ids))
+	budget.visit(start.rejected)
 	if !start.rejected {
 		results.keep(start, ef)
 	}
@@ -604,17 +806,21 @@ func (g *Graph) searchLayer(ctx context.Context, q []float32, qn float64, ep uin
 			}
 			continue
 		}
-		for _, n := range g.links[c.node][level] {
+		for _, n := range g.neighbors(c.node, level, visited) {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 			if !visited.visit(n) {
 				continue
 			}
-			next := cand{node: n, score: g.score(q, qn, n)}
+			next := cand{node: n, score: g.score(q, n)}
 			next.rejected = accept != nil && !accept(g.ids[n])
 			if err := ctx.Err(); err != nil {
 				return nil, err
+			}
+			budget.visit(next.rejected)
+			if budget.expired() {
+				return nil, errScan
 			}
 			if !next.rejected && results.Len() >= ef && !g.better(next, results.top()) {
 				continue
@@ -637,10 +843,10 @@ func (g *Graph) selectNeighbors(out []uint32, cands []cand, m int) []uint32 {
 		if len(out) == m {
 			break
 		}
-		cv, cn := g.vector(c.node), g.norm(c.node)
+		cq := g.nodeQuery(c.node)
 		keep := true
 		for _, o := range out {
-			if g.score(cv, cn, o) > c.score {
+			if g.score(&cq, o) > c.score {
 				keep = false
 				break
 			}
@@ -653,15 +859,15 @@ func (g *Graph) selectNeighbors(out []uint32, cands []cand, m int) []uint32 {
 }
 
 // shrink re-selects node's neighbors on level to at most mmax.
-func (g *Graph) shrink(node uint32, level, mmax int) {
-	nv, nn := g.vector(node), g.norm(node)
+func (g *Graph) shrink(node uint32, level, mmax int, scratch *[]cand) {
+	nq := g.nodeQuery(node)
 	links := g.links[node][level]
-	cands := g.scratch[:0]
+	cands := (*scratch)[:0]
 	for _, n := range links {
-		cands = append(cands, cand{node: n, score: g.score(nv, nn, n)})
+		cands = append(cands, cand{node: n, score: g.score(&nq, n)})
 	}
 	slices.SortFunc(cands, g.compare)
-	g.scratch = cands
+	*scratch = cands
 	// cands holds copies, so the kept nodes can overwrite links in place.
 	g.links[node][level] = g.selectNeighbors(links[:0], cands, mmax)
 }

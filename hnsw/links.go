@@ -33,8 +33,12 @@ import (
 //	          levels, per level: count, count neighbors.
 //
 // followed by a CRC-32 of all preceding bytes. Ids and vectors are left out,
-// which drops most of the size: 4*dim+8 bytes per node.
-const linksVersion = 2
+// which drops most of the size: 4*dim+8 bytes per node. Version 2, still
+// read, predates quantization.
+const (
+	linksVersion       = 4
+	legacyLinksVersion = 2
+)
 
 // WriteLinksTo serializes the graph without its ids and vectors; ReadLinks
 // restores it given the same ids and vectors. It may run concurrently with
@@ -51,7 +55,20 @@ func (g *Graph) WriteLinksTo(w io.Writer) (int64, error) {
 	if _, err := bw.Write(buf); err != nil {
 		return cw.n, err
 	}
-	var block []byte
+	if err := g.writeLinkBlocks(bw); err != nil {
+		return cw.n, err
+	}
+	if err := bw.Flush(); err != nil {
+		return cw.n, err
+	}
+	_, err = cw.Write(binary.LittleEndian.AppendUint32(nil, crc.Sum32()))
+	return cw.n, err
+}
+
+// writeLinkBlocks writes each node's levels and neighbors as a block of
+// uvarints prefixed by its length.
+func (g *Graph) writeLinkBlocks(w io.Writer) error {
+	var buf, block []byte
 	for _, levels := range g.links {
 		block = binary.AppendUvarint(block[:0], uint64(len(levels)))
 		for _, links := range levels {
@@ -61,15 +78,11 @@ func (g *Graph) WriteLinksTo(w io.Writer) (int64, error) {
 			}
 		}
 		buf = binary.AppendUvarint(buf[:0], uint64(len(block)))
-		if _, err := bw.Write(append(buf, block...)); err != nil {
-			return cw.n, err
+		if _, err := w.Write(append(buf, block...)); err != nil {
+			return err
 		}
 	}
-	if err := bw.Flush(); err != nil {
-		return cw.n, err
-	}
-	_, err = cw.Write(binary.LittleEndian.AppendUint32(nil, crc.Sum32()))
-	return cw.n, err
+	return nil
 }
 
 // ReadLinks restores a graph written by WriteLinksTo, consuming exactly its
@@ -85,7 +98,7 @@ func ReadLinks(r io.Reader, ids []uint64, data []float32) (*Graph, error) {
 
 func readLinks(r io.Reader, ids []uint64, data []float32) (*Graph, error) {
 	d := &decoder{r: r, crc: crc32.NewIEEE()}
-	g, nodes, err := d.graph(linksVersion)
+	g, nodes, err := d.graph(linksVersion, legacyLinksVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +115,7 @@ func readLinks(r io.Reader, ids []uint64, data []float32) (*Graph, error) {
 	}
 	g.ids, g.data = ids, data
 	g.links = make([][][]uint32, 0, nodes)
+	g.reserveCodes(len(ids))
 	for node := range nodes {
 		vector := g.vector(uint32(node)) // #nosec G115 -- nodes bounded by MaxUint32.
 		if err := vec.Validate(vector, g.metric); err != nil {
@@ -110,6 +124,7 @@ func readLinks(r io.Reader, ids []uint64, data []float32) (*Graph, error) {
 		if g.metric == vec.Cosine {
 			g.norms = append(g.norms, norm(vector))
 		}
+		g.addCodes(vector)
 		if node > 0 && ids[node] <= ids[node-1] {
 			g.repeated = true
 		}
@@ -140,13 +155,13 @@ func (d *decoder) nodeLinks(g *Graph, node uint64) ([][]uint32, error) {
 	if err := g.checkLevels(node, levels); err != nil {
 		return nil, err
 	}
-	links := make([][]uint32, levels)
+	links := d.levels(int(levels)) // #nosec G115 -- checkLevels bounds levels by maxLevels.
 	for l := range links {
 		count := br.next()
 		if err := g.checkCount(node, l, count); err != nil {
 			return nil, err
 		}
-		links[l] = make([]uint32, count)
+		links[l] = d.neighbors(int(count)) // #nosec G115 -- checkCount bounds count by mmax.
 		for i := range links[l] {
 			n := br.next()
 			if n > math.MaxUint32 {
@@ -159,6 +174,30 @@ func (d *decoder) nodeLinks(g *Graph, node uint64) ([][]uint32, error) {
 		return nil, fmt.Errorf("node %d: malformed link block", node)
 	}
 	return links, nil
+}
+
+// arenaSize is the number of slots allocated at once for decoded links.
+const arenaSize = 16 << 10
+
+// levels and neighbors carve node links out of shared arenas, saving an
+// allocation per node and level. Capacities are capped, so a later append
+// copies instead of overwriting a neighbor's slots.
+func (d *decoder) levels(n int) [][]uint32 {
+	if len(d.levelArena) < n {
+		d.levelArena = make([][]uint32, max(n, arenaSize))
+	}
+	rv := d.levelArena[:n:n]
+	d.levelArena = d.levelArena[n:]
+	return rv
+}
+
+func (d *decoder) neighbors(n int) []uint32 {
+	if len(d.linkArena) < n {
+		d.linkArena = make([]uint32, max(n, arenaSize))
+	}
+	rv := d.linkArena[:n:n]
+	d.linkArena = d.linkArena[n:]
+	return rv
 }
 
 // uvarint reads a checksummed uvarint one byte at a time, so it never reads

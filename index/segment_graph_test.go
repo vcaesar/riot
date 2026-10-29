@@ -49,6 +49,9 @@ func newGraphTestWriter(t *testing.T, path string, readOnly bool) *graphTestWrit
 	}
 	gw := &graphTestWriter{path: path}
 	gw.Writer = &Writer{directory: dir, closeCh: make(chan struct{}), readOnly: readOnly}
+	// Test wrappers have no reference counts to release mappings with;
+	// segment_graph_mapped_test.go covers VectorStorageDisk.
+	gw.config.VectorStorage = VectorStorageMemory
 	t.Cleanup(gw.graphPersists.Wait)
 	gw.config.AsyncError = func(err error) {
 		gw.mu.Lock()
@@ -154,7 +157,7 @@ func TestSegmentVectorGraphPersisted(t *testing.T) {
 		t.Fatalf("graph not persisted: %v", err)
 	}
 
-	if graph, _ := gw.loadGraph(context.Background(), seg, 7, testGraphKey); graph == nil {
+	if graph, _, _ := gw.loadGraph(context.Background(), seg, 7, testGraphKey); graph == nil {
 		t.Fatal("persisted graph must load instead of rebuilding")
 	}
 	seg.visits.Store(0)
@@ -220,7 +223,7 @@ func TestSegmentVectorGraphLoadsFullItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	seg.visits.Store(0)
-	loaded, _ := gw.loadGraph(context.Background(), seg, 9, testGraphKey)
+	loaded, _, _ := gw.loadGraph(context.Background(), seg, 9, testGraphKey)
 	if loaded == nil || loaded.Len() != graph.Len() || seg.visits.Load() != 0 {
 		t.Fatalf("version 1 item must load without stored fields: %v, %d visits", loaded, seg.visits.Load())
 	}
@@ -303,7 +306,7 @@ func TestSegmentVectorGraphReadOnly(t *testing.T) {
 	}
 
 	searchGraph(t, &segmentWrapper{Segment: seg, id: 2, writer: newGraphTestWriter(t, path, false).Writer})
-	if graph, _ := ro.loadGraph(context.Background(), seg, 2, testGraphKey); graph == nil {
+	if graph, _, _ := ro.loadGraph(context.Background(), seg, 2, testGraphKey); graph == nil {
 		t.Fatal("read-only reader must load persisted graphs")
 	}
 	if got := searchGraph(t, &segmentWrapper{Segment: seg, id: 2, writer: ro.Writer}); !reflect.DeepEqual(got, want) {

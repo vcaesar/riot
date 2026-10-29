@@ -48,6 +48,10 @@ type Config struct {
 	// opened after the index is configured.
 	StoredChunkCacheSize int
 
+	// VectorStorage selects where persisted HNSW graphs keep their vectors;
+	// the zero value is VectorStorageDisk.
+	VectorStorage VectorStorage
+
 	// Inclusive segment time bounds; zero leaves that bound unrestricted.
 	// Unknown timestamps are retained. Only read-only OpenReader accepts a range.
 	FilterTimeMin int64
@@ -101,6 +105,28 @@ func (config Config) WithSegmentType(typ string) Config {
 
 func (config Config) WithSegmentVersion(ver uint32) Config {
 	config.SegmentVersion = ver
+	return config
+}
+
+// VectorStorage selects where the HNSW graphs of persisted segments keep
+// their vectors. Either way, graphs of in-memory segments live on the heap
+// and search returns exact scores.
+type VectorStorage uint8
+
+const (
+	// VectorStorageDisk, the default, persists each graph with its float32
+	// vectors and int8 codes and memory-maps it, as Lucene does: opening
+	// reads no vectors, and the OS page cache, not the Go heap, holds them.
+	// Graph files take about 5 bytes more per dimension and vector.
+	VectorStorageDisk VectorStorage = iota
+	// VectorStorageMemory persists links only and reads the vectors from
+	// the segment's stored fields onto the heap when a graph is opened.
+	VectorStorageMemory
+)
+
+// WithVectorStorage selects where persisted HNSW graphs keep their vectors.
+func (config Config) WithVectorStorage(storage VectorStorage) Config {
+	config.VectorStorage = storage
 	return config
 }
 
