@@ -179,6 +179,9 @@ func (s *Writer) introduceSegment(next *segmentIntroduction, introduceSnapshotEp
 	newSnapshot.updateSize()
 
 	s.replaceRoot(newSnapshot, next.persisted, next.persistedCallback)
+	if next.data != nil {
+		s.warmGraphs(next.data, nil)
+	}
 
 	close(next.applied)
 
@@ -203,9 +206,11 @@ func (s *Writer) introducePersist(persist *persistIntroduction, introduceSnapsho
 
 	var docsToPersistCount uint64
 	var memSegments, fileSegments uint64
+	adopted := make(map[*segmentWrapper]map[graphKey]*graphEntry)
 	for i, segSnapshot := range root.segment {
 		// see if this segment has been replaced
 		if replacement, ok := persist.persisted[segSnapshot.id]; ok {
+			adopted[replacement] = replacement.adoptGraphs(segSnapshot.segment)
 			newSegmentSnapshot := &segmentSnapshot{
 				id:      segSnapshot.id,
 				segment: replacement,
@@ -239,6 +244,9 @@ func (s *Writer) introducePersist(persist *persistIntroduction, introduceSnapsho
 	newIndexSnapshot.updateSize()
 
 	s.replaceRoot(newIndexSnapshot, nil, nil)
+	for seg, graphs := range adopted {
+		s.warmGraphs(seg, graphs)
+	}
 
 	close(persist.applied)
 }
@@ -337,6 +345,9 @@ func (s *Writer) introduceMerge(nextMerge *segmentMerge, introduceSnapshotEpoch 
 	newSnapshot.updateSize()
 
 	s.replaceRoot(newSnapshot, nil, nil)
+	if !skipped {
+		s.warmGraphs(nextMerge.new, nil)
+	}
 
 	// notify requester that we incorporated this
 	nextMerge.notifyCh <- &mergeTaskIntroStatus{snapshot: newSnapshot, skipped: skipped}

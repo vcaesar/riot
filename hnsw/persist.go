@@ -54,26 +54,15 @@ const (
 // same Adds before and after a WriteTo/Read round trip are identical. WriteTo
 // may run concurrently with Search but not with Add.
 func (g *Graph) WriteTo(w io.Writer) (int64, error) {
-	state, err := g.pcg.MarshalBinary()
+	buf, err := g.appendHeader(nil, formatVersion)
 	if err != nil {
-		return 0, fmt.Errorf("error encoding hnsw level generator: %w", err)
+		return 0, err
 	}
 	cw := &countWriter{w: w}
 	crc := crc32.NewIEEE()
 	bw := bufio.NewWriterSize(io.MultiWriter(cw, crc), readChunk)
 
 	le := binary.LittleEndian
-	buf := append([]byte(nil), formatMagic...)
-	buf = le.AppendUint32(buf, formatVersion)
-	buf = appendBytes(buf, []byte(g.metric))
-	buf = le.AppendUint64(buf, uint64(g.m))        // #nosec G115 -- validated positive.
-	buf = le.AppendUint64(buf, uint64(g.efCons))   // #nosec G115 -- validated positive.
-	buf = le.AppendUint64(buf, uint64(g.efSearch)) // #nosec G115 -- validated positive.
-	buf = le.AppendUint32(buf, uint32(g.dim))      // #nosec G115 -- vector lengths fit in memory.
-	buf = le.AppendUint64(buf, uint64(len(g.ids)))
-	buf = le.AppendUint32(buf, uint32(g.maxLevel)) // #nosec G115 -- below maxLevels.
-	buf = le.AppendUint32(buf, g.entry)
-	buf = appendBytes(buf, state)
 	if _, err := bw.Write(buf); err != nil {
 		return cw.n, err
 	}
@@ -105,19 +94,38 @@ func (g *Graph) WriteTo(w io.Writer) (int64, error) {
 // stream returns an error rather than a graph that could panic in Search.
 func Read(r io.Reader) (*Graph, error) {
 	d := &decoder{r: r, crc: crc32.NewIEEE()}
-	g, err := d.graph()
+	g, nodes, err := d.graph(formatVersion)
+	if err == nil {
+		err = d.nodes(g, nodes)
+	}
+	if err == nil {
+		err = d.checksum()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("error reading hnsw graph: %w", err)
-	}
-	sum := d.crc.Sum32()
-	stored, err := d.read(4)
-	if err != nil {
-		return nil, fmt.Errorf("error reading hnsw graph: %w", err)
-	}
-	if binary.LittleEndian.Uint32(stored) != sum {
-		return nil, fmt.Errorf("error reading hnsw graph: checksum mismatch")
 	}
 	return g, nil
+}
+
+// appendHeader appends the fields shared by both layouts, up to and
+// including the level generator state.
+func (g *Graph) appendHeader(buf []byte, version uint32) ([]byte, error) {
+	state, err := g.pcg.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("error encoding hnsw level generator: %w", err)
+	}
+	le := binary.LittleEndian
+	buf = append(buf, formatMagic...)
+	buf = le.AppendUint32(buf, version)
+	buf = appendBytes(buf, []byte(g.metric))
+	buf = le.AppendUint64(buf, uint64(g.m))        // #nosec G115 -- validated positive.
+	buf = le.AppendUint64(buf, uint64(g.efCons))   // #nosec G115 -- validated positive.
+	buf = le.AppendUint64(buf, uint64(g.efSearch)) // #nosec G115 -- validated positive.
+	buf = le.AppendUint32(buf, uint32(g.dim))      // #nosec G115 -- vector lengths fit in memory.
+	buf = le.AppendUint64(buf, uint64(len(g.ids)))
+	buf = le.AppendUint32(buf, uint32(g.maxLevel)) // #nosec G115 -- below maxLevels.
+	buf = le.AppendUint32(buf, g.entry)
+	return appendBytes(buf, state), nil
 }
 
 func appendBytes(buf, b []byte) []byte {
@@ -140,6 +148,19 @@ type decoder struct {
 	r   io.Reader
 	crc hash.Hash32
 	buf []byte
+}
+
+// checksum reads the trailing CRC-32 and compares it with the bytes read so far.
+func (d *decoder) checksum() error {
+	sum := d.crc.Sum32()
+	stored, err := d.read(4)
+	if err != nil {
+		return err
+	}
+	if binary.LittleEndian.Uint32(stored) != sum {
+		return fmt.Errorf("checksum mismatch")
+	}
+	return nil
 }
 
 // read returns the next n bytes, valid until the following read.
@@ -226,77 +247,80 @@ func (d *decoder) u32s(count uint64, each func(uint32)) error {
 	return nil
 }
 
-func (d *decoder) graph() (*Graph, error) {
+// graph reads the shared header of a stream in the given layout version
+// and returns the graph without nodes, and the node count.
+func (d *decoder) graph(want uint32) (*Graph, uint64, error) {
 	magic, err := d.next(len(formatMagic))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if string(magic) != formatMagic {
-		return nil, fmt.Errorf("not an hnsw graph")
+		return nil, 0, fmt.Errorf("not an hnsw graph")
 	}
 	version, err := d.u32()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	if version != formatVersion {
-		return nil, fmt.Errorf("unsupported hnsw format version %d", version)
+	if version != want {
+		return nil, 0, fmt.Errorf("unsupported hnsw format version %d, want %d", version, want)
 	}
 	metric, err := d.short()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var params Params
 	for _, p := range []*int{&params.M, &params.EfConstruction, &params.EfSearch} {
 		if *p, err = d.param(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	g, err := New(vec.Metric(metric), params)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	if err := d.header(g); err != nil {
-		return nil, err
+	nodes, err := d.header(g)
+	if err != nil {
+		return nil, 0, err
 	}
-	return g, nil
+	return g, nodes, nil
 }
 
-func (d *decoder) header(g *Graph) error {
+func (d *decoder) header(g *Graph) (uint64, error) {
 	dim, err := d.u32()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	nodes, err := d.u64()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	maxLevel, err := d.u32()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	entry, err := d.u32()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	state, err := d.short()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	switch {
 	case nodes > math.MaxUint32:
-		return fmt.Errorf("node count %d exceeds %d", nodes, uint64(math.MaxUint32))
+		return 0, fmt.Errorf("node count %d exceeds %d", nodes, uint64(math.MaxUint32))
 	case nodes > 0 && (dim == 0 || uint64(entry) >= nodes || maxLevel >= maxLevels):
-		return fmt.Errorf("invalid header: dim %d, entry %d, max level %d", dim, entry, maxLevel)
+		return 0, fmt.Errorf("invalid header: dim %d, entry %d, max level %d", dim, entry, maxLevel)
 	case nodes == 0 && (dim != 0 || entry != 0 || maxLevel != 0):
-		return fmt.Errorf("invalid empty graph header")
+		return 0, fmt.Errorf("invalid empty graph header")
 	}
 	pcg := &rand.PCG{}
 	if err := pcg.UnmarshalBinary(state); err != nil {
-		return fmt.Errorf("invalid level generator state: %w", err)
+		return 0, fmt.Errorf("invalid level generator state: %w", err)
 	}
 	g.pcg, g.rng = pcg, rand.New(pcg) // #nosec G404 -- levels need reproducibility, not secrecy.
 	g.dim, g.entry, g.maxLevel = int(dim), entry, int(maxLevel)
-	return d.nodes(g, nodes)
+	return nodes, nil
 }
 
 func (d *decoder) nodes(g *Graph, nodes uint64) error {
@@ -318,8 +342,8 @@ func (d *decoder) nodes(g *Graph, nodes uint64) error {
 		if err != nil {
 			return err
 		}
-		if levels == 0 || int(levels) > g.maxLevel+1 || (node == uint64(g.entry) && int(levels) != g.maxLevel+1) {
-			return fmt.Errorf("node %d: invalid level count %d", node, levels)
+		if err := g.checkLevels(node, uint64(levels)); err != nil {
+			return err
 		}
 		links := make([][]uint32, levels)
 		for l := range links {
@@ -327,8 +351,8 @@ func (d *decoder) nodes(g *Graph, nodes uint64) error {
 			if err != nil {
 				return err
 			}
-			if int64(count) > int64(g.mmax(l)) {
-				return fmt.Errorf("node %d level %d: %d neighbors exceed %d", node, l, count, g.mmax(l))
+			if err := g.checkCount(node, l, uint64(count)); err != nil {
+				return err
 			}
 			links[l] = make([]uint32, 0, count)
 			err = d.u32s(uint64(count), func(n uint32) { links[l] = append(links[l], n) })
@@ -347,6 +371,22 @@ func (d *decoder) nodes(g *Graph, nodes uint64) error {
 		g.links = append(g.links, links)
 	}
 	return g.checkLinks()
+}
+
+// checkLevels requires 1..maxLevel+1 levels, exactly maxLevel+1 for the entry.
+func (g *Graph) checkLevels(node, levels uint64) error {
+	limit := uint64(g.maxLevel) + 1 // #nosec G115 -- below maxLevels.
+	if levels == 0 || levels > limit || (node == uint64(g.entry) && levels != limit) {
+		return fmt.Errorf("node %d: invalid level count %d", node, levels)
+	}
+	return nil
+}
+
+func (g *Graph) checkCount(node uint64, level int, count uint64) error {
+	if count > uint64(g.mmax(level)) { // #nosec G115 -- validated positive.
+		return fmt.Errorf("node %d level %d: %d neighbors exceed %d", node, level, count, g.mmax(level))
+	}
+	return nil
 }
 
 // checkLinks requires every neighbor to be another node present on that level.

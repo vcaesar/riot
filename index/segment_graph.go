@@ -15,6 +15,7 @@
 package index
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -22,6 +23,8 @@ import (
 	"hash/fnv"
 	"io"
 	"io/fs"
+
+	segment "github.com/vcaesar/bluge_segment_api"
 
 	"github.com/vcaesar/riot/hnsw"
 )
@@ -31,11 +34,16 @@ import (
 //	magic "RIOTHNSW", version u32, segment id u64, document count u64,
 //	field (u32 length + bytes), CRC-32 (IEEE) of the preceding header bytes.
 //
-// The graph carries its own metric, parameters and checksum. Graph items are
-// a cache: a missing, corrupt or mismatched item is rebuilt, never fatal.
+// Version 2 follows with hnsw.Graph.WriteLinksTo, whose ids and vectors are
+// read back from the segment's stored fields; version 1, still read, follows
+// with hnsw.Graph.WriteTo. The graph carries its own metric, parameters and
+// checksum. Graph items are a cache: a missing, corrupt or mismatched item is
+// rebuilt, never fatal.
 const (
-	graphMagic   = "RIOTHNSW"
-	graphVersion = 1
+	graphMagic       = "RIOTHNSW"
+	graphVersion     = 2
+	graphVersionFull = 1
+	graphHeaderFixed = len(graphMagic) + 4 + 8 + 8 + 4
 
 	graphKeyBits  = 16
 	maxGraphField = 1 << 16
@@ -77,60 +85,84 @@ func (g graphItem) WriteTo(w io.Writer, _ chan struct{}) (int64, error) {
 	if err != nil {
 		return int64(n), err
 	}
-	m, err := g.graph.WriteTo(w)
+	m, err := g.graph.WriteLinksTo(w)
 	return int64(n) + m, err
 }
 
-// readGraphItem reads an item of size bytes, all of which it must consume.
-func readGraphItem(r io.Reader, size int64) (graphItem, error) {
+// readGraphHeader reads an item's header and returns its version.
+func readGraphHeader(r io.Reader) (graphItem, uint32, error) {
 	var item graphItem
-	lr := &io.LimitedReader{R: r, N: size}
-	r = lr
-	fixed := make([]byte, len(graphMagic)+4+8+8+4)
+	fixed := make([]byte, graphHeaderFixed)
 	if _, err := io.ReadFull(r, fixed); err != nil {
-		return item, err
+		return item, 0, err
 	}
 	le := binary.LittleEndian
 	if string(fixed[:len(graphMagic)]) != graphMagic {
-		return item, fmt.Errorf("not a vector graph item")
+		return item, 0, fmt.Errorf("not a vector graph item")
 	}
 	rest := fixed[len(graphMagic):]
-	if v := le.Uint32(rest); v != graphVersion {
-		return item, fmt.Errorf("unsupported vector graph item version %d", v)
+	version := le.Uint32(rest)
+	if version != graphVersion && version != graphVersionFull {
+		return item, 0, fmt.Errorf("unsupported vector graph item version %d", version)
 	}
 	item.segmentID, item.count = le.Uint64(rest[4:]), le.Uint64(rest[12:])
 	fieldLen := le.Uint32(rest[20:])
 	if fieldLen > maxGraphField {
-		return item, fmt.Errorf("vector graph field length %d exceeds %d", fieldLen, maxGraphField)
+		return item, 0, fmt.Errorf("vector graph field length %d exceeds %d", fieldLen, maxGraphField)
 	}
 	tail := make([]byte, int(fieldLen)+4)
 	if _, err := io.ReadFull(r, tail); err != nil {
-		return item, err
+		return item, 0, err
 	}
 	if crc32.Update(crc32.ChecksumIEEE(fixed), crc32.IEEETable, tail[:fieldLen]) != le.Uint32(tail[fieldLen:]) {
-		return item, fmt.Errorf("vector graph header checksum mismatch")
+		return item, 0, fmt.Errorf("vector graph header checksum mismatch")
 	}
 	item.field = string(tail[:fieldLen])
-	graph, err := hnsw.Read(r)
+	return item, version, nil
+}
+
+func (g graphItem) matches(segmentID, count uint64, field string) bool {
+	return g.segmentID == segmentID && g.count == count && g.field == field
+}
+
+func graphMatches(graph *hnsw.Graph, key graphKey) bool {
+	params := graph.Params()
+	return graph.Metric() == key.metric && params.M == key.m && params.EfConstruction == key.efConstruction
+}
+
+// errGraphVectors marks a failure reading the segment's vectors, which says
+// nothing about the item itself.
+var errGraphVectors = errors.New("error reading segment vectors")
+
+// readGraph reads the rest of an item of the given version after its header,
+// all of whose bytes lr must hold.
+func readGraph(ctx context.Context, lr *io.LimitedReader, version uint32, seg segment.Segment,
+	field string) (*hnsw.Graph, error) {
+	var graph *hnsw.Graph
+	var err error
+	if version == graphVersionFull {
+		graph, err = hnsw.Read(lr)
+	} else {
+		ids, data, vecErr := segmentVectors(ctx, seg, field)
+		if vecErr != nil {
+			return nil, fmt.Errorf("%w: %w", errGraphVectors, vecErr)
+		}
+		graph, err = hnsw.ReadLinks(lr, ids, data)
+	}
 	if err != nil {
-		return item, err
+		return nil, err
 	}
 	if lr.N != 0 {
-		return item, fmt.Errorf("%d trailing bytes after vector graph", lr.N)
+		return nil, fmt.Errorf("%d trailing bytes after vector graph", lr.N)
 	}
-	item.graph = graph
-	return item, nil
+	return graph, nil
 }
 
-func (g graphItem) matches(segmentID, count uint64, key graphKey) bool {
-	params := g.graph.Params()
-	return g.segmentID == segmentID && g.count == count && g.field == key.field &&
-		g.graph.Metric() == key.metric && params.M == key.m && params.EfConstruction == key.efConstruction
-}
-
-// loadGraph returns the persisted graph for a segment, or nil and whether a
-// freshly built graph should be persisted in its place.
-func (s *Writer) loadGraph(segmentID, count uint64, key graphKey) (*hnsw.Graph, bool) {
+// loadGraph returns the persisted graph of seg, or nil and whether a freshly
+// built graph should be persisted in its place. Version 2 items read seg's
+// vectors, which is far cheaper than a build.
+func (s *Writer) loadGraph(ctx context.Context, seg segment.Segment, segmentID uint64,
+	key graphKey) (*hnsw.Graph, bool) {
 	id, ok := graphItemID(segmentID, key)
 	if !ok {
 		return nil, false
@@ -143,11 +175,21 @@ func (s *Writer) loadGraph(segmentID, count uint64, key graphKey) (*hnsw.Graph, 
 		s.fireAsyncError(fmt.Errorf("error loading vector graph %x: %w", id, err))
 		return nil, false
 	}
-	item, err := readGraphItem(data.Reader(), int64(data.Len()))
+	lr := &io.LimitedReader{R: data.Reader(), N: int64(data.Len())}
+	item, version, err := readGraphHeader(lr)
+	if err == nil && !item.matches(segmentID, seg.Count(), key.field) {
+		err = errGraphMismatch
+	}
+	if err == nil {
+		item.graph, err = readGraph(ctx, lr, version, seg, key.field)
+	}
 	if closer != nil {
 		if closeErr := closer.Close(); closeErr != nil {
 			s.fireAsyncError(fmt.Errorf("error closing vector graph %x: %w", id, closeErr))
 		}
+	}
+	if errors.Is(err, errGraphMismatch) || errors.Is(err, errGraphVectors) {
+		return nil, false
 	}
 	if err != nil {
 		if s.readOnly {
@@ -161,11 +203,15 @@ func (s *Writer) loadGraph(segmentID, count uint64, key graphKey) (*hnsw.Graph, 
 		}
 		return nil, true
 	}
-	if !item.matches(segmentID, count, key) {
+	if !graphMatches(item.graph, key) {
 		return nil, false
 	}
 	return item.graph, false
 }
+
+// errGraphMismatch marks a valid item of another segment or field, e.g. a
+// hash collision, which is kept.
+var errGraphMismatch = errors.New("vector graph item belongs to another segment")
 
 // persistGraph writes graph in the background, keeping disk writes out of
 // the search that built it. It is a no-op once the writer is closing.

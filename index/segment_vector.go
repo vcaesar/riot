@@ -59,16 +59,14 @@ func (s *segmentWrapper) vectorGraph(ctx context.Context, key graphKey) (*hnsw.G
 		if !ok {
 			var persist bool
 			if s.writer != nil {
-				e.graph, persist = s.writer.loadGraph(s.id, s.Count(), key)
+				e.graph, persist = s.writer.loadGraph(ctx, s.Segment, s.id, key)
 			}
 			if e.graph == nil {
 				e.graph, e.err = buildVectorGraph(ctx, s.Segment, key)
 			}
 			if e.err != nil && ctx.Err() != nil {
 				e.abandoned = true
-				s.graphMu.Lock()
-				delete(s.graphs, key)
-				s.graphMu.Unlock()
+				s.forgetGraph(key, e)
 			}
 			close(e.ready)
 			if persist && e.err == nil {
@@ -79,6 +77,8 @@ func (s *segmentWrapper) vectorGraph(ctx context.Context, key graphKey) (*hnsw.G
 		select {
 		case <-e.ready:
 			if e.abandoned {
+				// An entry adopted from another segment is only removed there.
+				s.forgetGraph(key, e)
 				continue
 			}
 			return e.graph, e.err
@@ -88,33 +88,60 @@ func (s *segmentWrapper) vectorGraph(ctx context.Context, key graphKey) (*hnsw.G
 	}
 }
 
+func (s *segmentWrapper) forgetGraph(key graphKey, e *graphEntry) {
+	s.graphMu.Lock()
+	if s.graphs[key] == e {
+		delete(s.graphs, key)
+	}
+	s.graphMu.Unlock()
+}
+
 func buildVectorGraph(ctx context.Context, seg segment.Segment, key graphKey) (*hnsw.Graph, error) {
 	graph, err := hnsw.New(key.metric, hnsw.Params{M: key.m, EfConstruction: key.efConstruction})
 	if err != nil {
 		return nil, err
 	}
+	if err := visitVectors(ctx, seg, key.field, graph.Add); err != nil {
+		return nil, err
+	}
+	return graph, nil
+}
+
+// segmentVectors returns the document numbers and node-major values of
+// field's vectors in the order buildVectorGraph adds them.
+func segmentVectors(ctx context.Context, seg segment.Segment, field string) (ids []uint64, data []float32, err error) {
+	err = visitVectors(ctx, seg, field, func(number uint64, vector []float32) error {
+		ids = append(ids, number)
+		data = append(data, vector...)
+		return nil
+	})
+	return ids, data, err
+}
+
+// visitVectors passes each stored vector of field to fn in document order.
+func visitVectors(ctx context.Context, seg segment.Segment, field string, fn func(uint64, []float32) error) error {
 	for number := uint64(0); number < seg.Count(); number++ {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		var valueErr error
 		err := seg.VisitStoredFields(number, func(name string, data []byte) bool {
-			if name != key.field {
+			if name != field {
 				return true
 			}
 			var vector []float32
 			if vector, valueErr = vec.Decode(data); valueErr != nil {
 				return false
 			}
-			valueErr = graph.Add(number, vector)
+			valueErr = fn(number, vector)
 			return valueErr == nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("vector graph document %d: %w", number, err)
+			return fmt.Errorf("vector graph document %d: %w", number, err)
 		}
 		if valueErr != nil {
-			return nil, fmt.Errorf("vector graph document %d field %q: %w", number, key.field, valueErr)
+			return fmt.Errorf("vector graph document %d field %q: %w", number, field, valueErr)
 		}
 	}
-	return graph, nil
+	return nil
 }

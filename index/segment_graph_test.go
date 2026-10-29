@@ -17,6 +17,8 @@ package index
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
@@ -152,10 +154,13 @@ func TestSegmentVectorGraphPersisted(t *testing.T) {
 		t.Fatalf("graph not persisted: %v", err)
 	}
 
+	if graph, _ := gw.loadGraph(context.Background(), seg, 7, testGraphKey); graph == nil {
+		t.Fatal("persisted graph must load instead of rebuilding")
+	}
 	seg.visits.Store(0)
 	got := searchGraph(t, &segmentWrapper{Segment: seg, id: 7, writer: gw.Writer})
-	if seg.visits.Load() != 0 {
-		t.Fatal("persisted graph must load without reading stored vectors")
+	if seg.visits.Load() > int64(len(seg.vectors)) {
+		t.Fatalf("loading read stored fields %d times, want one pass", seg.visits.Load())
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("loaded graph search %v, want %v", got, want)
@@ -180,6 +185,55 @@ func TestSegmentVectorGraphPersisted(t *testing.T) {
 	}
 	if errs := gw.asyncErrors(); len(errs) != 0 {
 		t.Fatalf("unexpected async errors: %v", errs)
+	}
+}
+
+// fullGraphItem is a version 1 item, which embeds ids and vectors.
+type fullGraphItem graphItem
+
+func (g fullGraphItem) WriteTo(w io.Writer, _ chan struct{}) (int64, error) {
+	var header bytes.Buffer
+	if _, err := graphItem(g).WriteTo(&header, nil); err != nil {
+		return 0, err
+	}
+	fixed := header.Bytes()[:graphHeaderFixed+len(g.field)]
+	binary.LittleEndian.PutUint32(fixed[len(graphMagic):], graphVersionFull)
+	fixed = binary.LittleEndian.AppendUint32(fixed, crc32.ChecksumIEEE(fixed))
+	n, err := w.Write(fixed)
+	if err != nil {
+		return int64(n), err
+	}
+	m, err := g.graph.WriteTo(w)
+	return int64(n) + m, err
+}
+
+func TestSegmentVectorGraphLoadsFullItem(t *testing.T) {
+	gw := newGraphTestWriter(t, t.TempDir(), false)
+	seg := testVectorSegment(t)
+	graph, err := buildVectorGraph(context.Background(), seg, testGraphKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := graphItemID(9, testGraphKey)
+	full := fullGraphItem{segmentID: 9, count: seg.Count(), field: "v", graph: graph}
+	if err := gw.directory.Persist(ItemKindGraph, id, full, nil); err != nil {
+		t.Fatal(err)
+	}
+	seg.visits.Store(0)
+	loaded, _ := gw.loadGraph(context.Background(), seg, 9, testGraphKey)
+	if loaded == nil || loaded.Len() != graph.Len() || seg.visits.Load() != 0 {
+		t.Fatalf("version 1 item must load without stored fields: %v, %d visits", loaded, seg.visits.Load())
+	}
+
+	var v1, v2 bytes.Buffer
+	if _, err := full.WriteTo(&v1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (graphItem(full)).WriteTo(&v2, nil); err != nil {
+		t.Fatal(err)
+	}
+	if v2.Len() >= v1.Len() {
+		t.Fatalf("links-only item %d bytes, full %d", v2.Len(), v1.Len())
 	}
 }
 
@@ -249,12 +303,11 @@ func TestSegmentVectorGraphReadOnly(t *testing.T) {
 	}
 
 	searchGraph(t, &segmentWrapper{Segment: seg, id: 2, writer: newGraphTestWriter(t, path, false).Writer})
-	seg.visits.Store(0)
+	if graph, _ := ro.loadGraph(context.Background(), seg, 2, testGraphKey); graph == nil {
+		t.Fatal("read-only reader must load persisted graphs")
+	}
 	if got := searchGraph(t, &segmentWrapper{Segment: seg, id: 2, writer: ro.Writer}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("read-only load %v, want %v", got, want)
-	}
-	if seg.visits.Load() != 0 {
-		t.Fatal("read-only reader must load persisted graphs")
 	}
 }
 
