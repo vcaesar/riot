@@ -57,6 +57,14 @@ type Writer struct {
 	// closeCh, so close can wait for graphPersists.
 	graphPersistMu sync.Mutex
 	graphPersists  sync.WaitGroup
+	// graphKeys holds the keys searched approximately, built in the
+	// background for new segments; graphWarmMu runs one warm-up at a time.
+	graphKeysMu sync.Mutex
+	graphKeys   map[graphKey]struct{}
+	graphWarmMu sync.Mutex
+	// warmups holds running warm-ups, canceled once their segment leaves the root.
+	warmupsMu sync.Mutex
+	warmups   map[*warmup]struct{}
 
 	closeOnce sync.Once
 }

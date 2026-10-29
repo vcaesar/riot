@@ -58,6 +58,9 @@ func (i *Snapshot) SearchVectorsANN(ctx context.Context, field string, query []f
 	}
 	params = params.WithDefaults()
 	key := graphKey{field: field, metric: metric, m: params.M, efConstruction: params.EfConstruction}
+	if i.parent != nil {
+		i.parent.noteGraphKey(key)
+	}
 	return i.searchVectors(ctx, field, query, k, metric, accept,
 		func(seg *segmentSnapshot, accept func(uint64) bool) ([]vec.Match, error) {
 			graph, err := seg.segment.vectorGraph(ctx, key)
