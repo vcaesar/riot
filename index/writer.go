@@ -62,6 +62,9 @@ type Writer struct {
 	graphKeysMu sync.Mutex
 	graphKeys   map[graphKey]struct{}
 	graphWarmMu sync.Mutex
+	// warmups holds running warm-ups, canceled once their segment leaves the root.
+	warmupsMu sync.Mutex
+	warmups   map[*warmup]struct{}
 
 	closeOnce sync.Once
 }

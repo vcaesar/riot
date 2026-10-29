@@ -17,8 +17,11 @@ package index
 import (
 	"context"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 
+	segment "github.com/vcaesar/bluge_segment_api"
 	"github.com/vcaesar/ice/vec"
 
 	"github.com/vcaesar/riot/hnsw"
@@ -124,6 +127,83 @@ func TestPersistAdoptsGraphs(t *testing.T) {
 	if again := disk.adoptGraphs(mem); len(again) != 0 {
 		t.Fatal("existing entries must not be replaced")
 	}
+}
+
+// blockingVectorSegment blocks its first stored-field visit until release.
+type blockingVectorSegment struct {
+	*storedVectorSegment
+	started, release chan struct{}
+	once             sync.Once
+}
+
+func (s *blockingVectorSegment) VisitStoredFields(number uint64, visitor segment.StoredFieldVisitor) error {
+	s.once.Do(func() {
+		close(s.started)
+		<-s.release
+	})
+	return s.storedVectorSegment.VisitStoredFields(number, visitor)
+}
+
+type countingRefCounter struct{ refs atomic.Int64 }
+
+func (c *countingRefCounter) AddRef()       { c.refs.Add(1) }
+func (c *countingRefCounter) DecRef() error { c.refs.Add(-1); return nil }
+
+// TestWarmGraphsCanceledWhenSegmentLeavesRoot checks that a build for a
+// segment merged away stops and releases the segment instead of finishing.
+func TestWarmGraphsCanceledWhenSegmentLeavesRoot(t *testing.T) {
+	gw := newGraphTestWriter(t, t.TempDir(), false)
+	seg := &blockingVectorSegment{storedVectorSegment: testVectorSegment(t),
+		started: make(chan struct{}), release: make(chan struct{})}
+	refs := &countingRefCounter{}
+	w := &segmentWrapper{Segment: seg, refCounter: refs, id: 5, writer: gw.Writer}
+	gw.root = &Snapshot{parent: gw.Writer, refs: 1, segment: []*segmentSnapshot{{id: 5, segment: w}}}
+	gw.noteGraphKey(testGraphKey)
+
+	gw.warmGraphs(w, nil)
+	<-seg.started
+	gw.replaceRoot(&Snapshot{parent: gw.Writer, refs: 1}, nil, nil)
+	close(seg.release)
+	gw.graphPersists.Wait()
+
+	if visits := seg.visits.Load(); visits >= int64(len(seg.vectors)) {
+		t.Fatalf("build ran to completion (%d visits) after its segment left the root", visits)
+	}
+	if readyGraph(t, w, testGraphKey) != nil {
+		t.Fatal("canceled build must not be cached")
+	}
+	if n := refs.refs.Load(); n != -1 {
+		t.Fatalf("segment refs %d, want the warm-up's ref and the root's released (-1)", n)
+	}
+	if _, err := os.Stat(gw.graphFile(t, 5)); !os.IsNotExist(err) {
+		t.Fatalf("canceled build must not persist, stat: %v", err)
+	}
+}
+
+func TestPruneAndMoveWarmups(t *testing.T) {
+	gw := newGraphTestWriter(t, t.TempDir(), false)
+	mem, disk, other := &segmentWrapper{}, &segmentWrapper{}, &segmentWrapper{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := gw.trackWarmup(mem, cancel)
+
+	gw.moveWarmups(map[*segmentWrapper]*segmentWrapper{mem: disk})
+	if !gw.warmupMoved(w, mem) {
+		t.Fatal("warm-up must follow the persisted copy")
+	}
+	gw.pruneWarmups(&Snapshot{segment: []*segmentSnapshot{{segment: disk}}})
+	if ctx.Err() != nil {
+		t.Fatal("warm-up of a live persisted copy was canceled")
+	}
+	gw.pruneWarmups(&Snapshot{segment: []*segmentSnapshot{{segment: other}}})
+	if ctx.Err() == nil {
+		t.Fatal("warm-up of a removed segment must be canceled")
+	}
+	gw.untrackWarmup(w)
+	if len(gw.warmups) != 0 {
+		t.Fatal("finished warm-up still tracked")
+	}
+	gw.pruneWarmups(nil)
 }
 
 func TestAdoptedAbandonedGraphRetries(t *testing.T) {

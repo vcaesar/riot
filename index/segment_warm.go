@@ -84,14 +84,16 @@ func (s *Writer) warmGraphs(seg *segmentWrapper, adopted map[graphKey]*graphEntr
 	default:
 	}
 	seg.AddRef()
+	ctx, cancel := context.WithCancel(context.Background())
+	w := s.trackWarmup(seg, cancel)
 	s.graphPersists.Go(func() {
 		defer func() {
+			s.untrackWarmup(w)
+			cancel()
 			if err := seg.DecRef(); err != nil {
 				s.fireAsyncError(fmt.Errorf("error releasing segment %d after graph warm-up: %w", seg.id, err))
 			}
 		}()
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 		go func() {
 			select {
 			case <-s.closeCh:
@@ -107,6 +109,10 @@ func (s *Writer) warmGraphs(seg *segmentWrapper, adopted map[graphKey]*graphEntr
 			return
 		}
 		for _, key := range keys {
+			if s.warmupMoved(w, seg) {
+				// The persisted copy's own warm-up builds the rest.
+				return
+			}
 			_, err := seg.vectorGraph(ctx, key)
 			if ctx.Err() != nil {
 				return
@@ -131,6 +137,69 @@ func (s *Writer) persistAdopted(ctx context.Context, seg *segmentWrapper, adopte
 		}
 		if !e.abandoned && e.err == nil {
 			s.persistGraph(seg.id, seg.Count(), key, e.graph)
+		}
+	}
+}
+
+// warmup is a running warm-up; seg is the segment whose presence in the
+// root keeps it alive, guarded by Writer.warmupsMu.
+type warmup struct {
+	seg    *segmentWrapper
+	cancel context.CancelFunc
+}
+
+func (s *Writer) trackWarmup(seg *segmentWrapper, cancel context.CancelFunc) *warmup {
+	w := &warmup{seg: seg, cancel: cancel}
+	s.warmupsMu.Lock()
+	defer s.warmupsMu.Unlock()
+	if s.warmups == nil {
+		s.warmups = make(map[*warmup]struct{})
+	}
+	s.warmups[w] = struct{}{}
+	return w
+}
+
+func (s *Writer) untrackWarmup(w *warmup) {
+	s.warmupsMu.Lock()
+	delete(s.warmups, w)
+	s.warmupsMu.Unlock()
+}
+
+func (s *Writer) warmupMoved(w *warmup, seg *segmentWrapper) bool {
+	s.warmupsMu.Lock()
+	defer s.warmupsMu.Unlock()
+	return w.seg != seg
+}
+
+// moveWarmups ties warm-ups of persisted in-memory segments to their
+// replacements, which adopted their graphs, so the builds are kept.
+func (s *Writer) moveWarmups(replaced map[*segmentWrapper]*segmentWrapper) {
+	s.warmupsMu.Lock()
+	defer s.warmupsMu.Unlock()
+	for w := range s.warmups {
+		if next, ok := replaced[w.seg]; ok {
+			w.seg = next
+		}
+	}
+}
+
+// pruneWarmups cancels warm-ups whose segment is not in root, so a merged
+// away segment releases its files instead of finishing a useless build.
+func (s *Writer) pruneWarmups(root *Snapshot) {
+	s.warmupsMu.Lock()
+	defer s.warmupsMu.Unlock()
+	if len(s.warmups) == 0 {
+		return
+	}
+	live := make(map[*segmentWrapper]struct{})
+	if root != nil {
+		for _, ss := range root.segment {
+			live[ss.segment] = struct{}{}
+		}
+	}
+	for w := range s.warmups {
+		if _, ok := live[w.seg]; !ok {
+			w.cancel()
 		}
 	}
 }

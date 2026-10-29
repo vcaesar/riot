@@ -207,10 +207,12 @@ func (s *Writer) introducePersist(persist *persistIntroduction, introduceSnapsho
 	var docsToPersistCount uint64
 	var memSegments, fileSegments uint64
 	adopted := make(map[*segmentWrapper]map[graphKey]*graphEntry)
+	replaced := make(map[*segmentWrapper]*segmentWrapper)
 	for i, segSnapshot := range root.segment {
 		// see if this segment has been replaced
 		if replacement, ok := persist.persisted[segSnapshot.id]; ok {
 			adopted[replacement] = replacement.adoptGraphs(segSnapshot.segment)
+			replaced[segSnapshot.segment] = replacement
 			newSegmentSnapshot := &segmentSnapshot{
 				id:      segSnapshot.id,
 				segment: replacement,
@@ -243,6 +245,7 @@ func (s *Writer) introducePersist(persist *persistIntroduction, introduceSnapsho
 	atomic.StoreUint64(&s.stats.TotFileSegmentsAtRoot, fileSegments)
 	newIndexSnapshot.updateSize()
 
+	s.moveWarmups(replaced)
 	s.replaceRoot(newIndexSnapshot, nil, nil)
 	for seg, graphs := range adopted {
 		s.warmGraphs(seg, graphs)
@@ -368,6 +371,7 @@ func (s *Writer) replaceRoot(newSnapshot *Snapshot, persistedCh chan error, pers
 		atomic.StoreUint64(&s.stats.CurRootEpoch, s.root.epoch)
 	}
 	s.rootLock.Unlock()
+	s.pruneWarmups(newSnapshot)
 
 	if rootPrev != nil {
 		_ = rootPrev.Close()
