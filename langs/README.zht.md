@@ -20,6 +20,7 @@
   - 數值範圍（Numeric Range）、日期範圍（Date Range）、詞項範圍（Term Range）、IP 範圍（IP Range）
   - 地理矩形（Geo Bounding Box）、地理距離（Geo Distance）、地理多邊形（Geo Polygon）、ANN、KNN
 - BM25 相似度/評分，介面可插拔
+- HNSW 近似向量搜尋，支援 int8 量化；圖隨段持久化，並從磁碟記憶體映射
 - 搜尋結果比對高亮
 - 可擴充的聚合：
   - 分桶（Bucketing）
@@ -357,6 +358,16 @@ KNN: northeast (0.707)
 ANN: east (1.000)
 ANN: northeast (0.707)
 ```
+
+### 持久化向量索引
+
+HNSW 圖隨磁碟段一起儲存，重新開啟索引後無需重建即可搜尋。`WithVectorStorage` 選擇向量的存放位置：`riot.VectorStorageDisk`（預設）將圖連同向量記憶體映射，向量位於作業系統頁快取而非 Go 堆積中；`riot.VectorStorageMemory` 只儲存連結，開啟圖時將向量讀入堆積（檔案更小，記憶體佔用更多）。
+
+```go
+config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStorageDisk)
+```
+
+[`examples/ann_disk`](../examples/ann_disk) 在磁碟上索引向量，並在重新開啟後搜尋：`go run ./examples/ann_disk`。
 
 <!-- ## Repobeats
 

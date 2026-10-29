@@ -20,6 +20,7 @@ riot をベースにした分散検索エンジン、フル機能の Elasticsear
   - Numeric Range、Date Range、Term Range、IP Range
   - Geo Bounding Box、Geo Distance、Geo Polygon、ANN、KNN
 - BM25 による類似度/スコアリング（インターフェースは差し替え可能）
+- int8 量子化による HNSW 近似ベクトル検索。グラフはセグメントと共に永続化され、ディスクからメモリマップされます
 - 検索結果のマッチ箇所ハイライト
 - 拡張可能な集計：
   - バケット集計
@@ -357,6 +358,16 @@ KNN: northeast (0.707)
 ANN: east (1.000)
 ANN: northeast (0.707)
 ```
+
+### 永続化されたベクトルインデックス
+
+HNSW グラフはディスク上のセグメントと共に保存されるため、再オープンしたインデックスは再構築なしで検索できます。`WithVectorStorage` はベクトルの保存先を選びます：`riot.VectorStorageDisk`（デフォルト）はグラフをベクトルごとメモリマップし、ベクトルは Go ヒープではなく OS のページキャッシュに置かれます。`riot.VectorStorageMemory` はリンクのみを保存し、グラフを開くときにベクトルをヒープに読み込みます（ファイルは小さく、メモリは多め）。
+
+```go
+config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStorageDisk)
+```
+
+[`examples/ann_disk`](../examples/ann_disk) はディスク上でベクトルをインデックスし、再オープン後に検索します：`go run ./examples/ann_disk`。
 
 <!-- ## Repobeats
 
