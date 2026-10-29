@@ -20,6 +20,7 @@ riot 기반의 분산 검색 엔진이자 완전한 Elasticsearch의 경량 대�
   - Numeric Range, Date Range, Term Range, IP Range
   - Geo Bounding Box, Geo Distance, Geo Polygon, ANN, KNN
 - 교체 가능한 인터페이스 기반의 BM25 유사도/스코어링
+- int8 양자화를 지원하는 HNSW 근사 벡터 검색; 그래프는 세그먼트와 함께 영속화되고 디스크에서 메모리 매핑됩니다
 - 검색 결과 매치 하이라이팅
 - 확장 가능한 집계:
   - 버킷팅
@@ -358,6 +359,16 @@ KNN: northeast (0.707)
 ANN: east (1.000)
 ANN: northeast (0.707)
 ```
+
+### 영속화된 벡터 인덱스
+
+HNSW 그래프는 디스크 세그먼트와 함께 저장되므로, 다시 연 인덱스는 재구축 없이 검색합니다. `WithVectorStorage`는 벡터를 둘 위치를 선택합니다: `riot.VectorStorageDisk`(기본값)는 그래프를 벡터와 함께 메모리 매핑하여 벡터가 Go 힙이 아닌 OS 페이지 캐시에 머뭅니다. `riot.VectorStorageMemory`는 링크만 저장하고 그래프를 열 때 벡터를 힙으로 읽어 들입니다(파일은 작고 메모리는 더 사용).
+
+```go
+config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStorageDisk)
+```
+
+[`examples/ann_disk`](../examples/ann_disk)는 디스크에 벡터를 인덱싱하고 다시 연 뒤 검색합니다: `go run ./examples/ann_disk`.
 
 <!-- ## Repobeats
 

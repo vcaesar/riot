@@ -20,6 +20,7 @@
   - Numeric Range, Date Range, Term Range, IP Range
   - Geo Bounding Box, Geo Distance, Geo Polygon, ANN, KNN
 - Ранжирование BM25 с подключаемыми интерфейсами
+- Приближённый векторный поиск HNSW с квантованием int8; графы сохраняются вместе с сегментами и отображаются в память с диска
 - Подсветка совпадений в результатах поиска
 - Расширяемые агрегации:
   - Бакетинг
@@ -359,6 +360,16 @@ KNN: northeast (0.707)
 ANN: east (1.000)
 ANN: northeast (0.707)
 ```
+
+### Сохраняемые векторные индексы
+
+Графы HNSW сохраняются вместе с сегментами на диске, поэтому повторно открытый индекс ищет по ним без перестроения. `WithVectorStorage` выбирает, где хранятся векторы: `riot.VectorStorageDisk` (по умолчанию) отображает каждый граф вместе с векторами в память, и они находятся в страничном кэше ОС, а не в куче Go; `riot.VectorStorageMemory` хранит только связи и загружает векторы в кучу при открытии графа (файлы меньше, памяти больше).
+
+```go
+config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStorageDisk)
+```
+
+[`examples/ann_disk`](../examples/ann_disk) индексирует векторы на диске и ищет по ним после повторного открытия: `go run ./examples/ann_disk`.
 
 <!-- ## Repobeats
 

@@ -20,6 +20,7 @@ Eine verteilte Suchmaschine und eine leichtgewichtige Alternative zu einem volls
   - Numeric Range, Date Range, Term Range, IP Range
   - Geo Bounding Box, Geo Distance, Geo Polygon, ANN, KNN
 - BM25-Ähnlichkeit/Scoring mit austauschbaren Schnittstellen
+- Approximative HNSW-Vektorsuche mit int8-Quantisierung; Graphen werden mit den Segmenten persistiert und von der Festplatte memory-mapped
 - Hervorhebung der Treffer in Suchergebnissen
 - Erweiterbare Aggregationen:
   - Bucketing
@@ -359,6 +360,16 @@ KNN: northeast (0.707)
 ANN: east (1.000)
 ANN: northeast (0.707)
 ```
+
+### Persistierte Vektorindizes
+
+HNSW-Graphen werden mit den Segmenten auf der Festplatte gespeichert, sodass ein erneut geöffneter Index sie ohne Neuaufbau durchsucht. `WithVectorStorage` legt fest, wo ihre Vektoren liegen: `riot.VectorStorageDisk` (Standard) mappt jeden Graphen samt Vektoren in den Speicher, sodass diese im Page-Cache des Betriebssystems statt im Go-Heap liegen; `riot.VectorStorageMemory` speichert nur die Verknüpfungen und lädt die Vektoren beim Öffnen eines Graphen in den Heap (kleinere Dateien, mehr Speicher).
+
+```go
+config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStorageDisk)
+```
+
+[`examples/ann_disk`](../examples/ann_disk) indexiert Vektoren auf der Festplatte und durchsucht sie nach dem erneuten Öffnen: `go run ./examples/ann_disk`.
 
 <!-- ## Repobeats
 

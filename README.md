@@ -20,6 +20,7 @@ For a distributed search engine and a lightweight alternative to full Elasticsea
   - Numeric Range, Date Range, Term Range, IP Range
   - Geo Bounding Box, Geo Distance, Geo Polygon, ANN, KNN
 - BM25 Similarity/Scoring with pluggable interfaces
+- HNSW approximate vector search with int8 quantization; graphs persist with segments and are memory-mapped from disk
 - Search result match highlighting
 - Extensible Aggregations:
   - Bucketing
@@ -359,6 +360,16 @@ KNN: northeast (0.707)
 ANN: east (1.000)
 ANN: northeast (0.707)
 ```
+
+### Persisted vector indexes
+
+HNSW graphs are saved with on-disk segments, so a reopened index searches them without rebuilding. `WithVectorStorage` chooses where their vectors live: `riot.VectorStorageDisk` (the default) memory-maps each graph with its vectors, so they sit in the OS page cache instead of the Go heap; `riot.VectorStorageMemory` stores links only and loads vectors onto the heap when a graph opens (smaller files, more memory).
+
+```go
+config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStorageDisk)
+```
+
+[`examples/ann_disk`](examples/ann_disk) indexes vectors on disk and searches them after reopening: `go run ./examples/ann_disk`.
 
 <!-- ## Repobeats
 
