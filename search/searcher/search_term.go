@@ -203,8 +203,10 @@ type blockSkipper interface {
 // monotoneScorer reports whether scorer never scores a higher freq or a
 // smaller norm lower, so a block's bound is its (max freq, min norm) score.
 func monotoneScorer(scorer search.Scorer) bool {
-	switch scorer.(type) {
-	case *similarity.BM25Scorer, similarity.ConstantScorer:
+	switch s := scorer.(type) {
+	case *similarity.BM25Scorer:
+		return s.Monotone()
+	case similarity.ConstantScorer:
 		return true
 	}
 	return false
@@ -339,7 +341,7 @@ func (c *postingsCursor) nextAbove(reader segment.PostingsIterator, scorer searc
 		if total := reader.Count(); total >= c.seen {
 			if n := total - c.seen; n > 0 {
 				c.seen = total
-				skipped(float64(cs), int(n)) //nolint:gosec // bounded by the segment's doc count
+				skipped(float64(cs), int(n)) //nolint:gosec // bounded by the snapshot's doc count
 			}
 			c.done = true
 			return nil, 0, nil

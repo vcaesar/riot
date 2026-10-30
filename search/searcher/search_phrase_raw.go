@@ -47,7 +47,7 @@ type rawPhrase struct {
 // one term searcher per phrase term and no explanation is wanted.
 func newRawPhrase(must search.Searcher, terms [][]string, options search.SearcherOptions) *rawPhrase {
 	conj, ok := must.(*ConjunctionSearcher)
-	if !ok || options.Explain || conj.initialized || len(conj.searchers) != len(terms) {
+	if !ok || options.Explain || conj.initialized || len(terms) == 0 || len(conj.searchers) != len(terms) {
 		return nil
 	}
 	if _, ok := conj.scorer.(*similarity.CompositeSumScorer); !ok {
@@ -145,13 +145,13 @@ func (r *rawPhrase) next(ctx *search.Context, target uint64, floor float64,
 				r.scores[i].Score = ts.scorer.Score(p.Frequency(), p.Norm())
 			}
 			score := r.scorer.ScoreComposite(r.scorePtr)
-			if numeric.Float64ToInt64(score) > floorBits {
+			if skipped == nil || numeric.Float64ToInt64(score) > floorBits {
 				rv = ctx.DocumentMatchPool.Get()
 				rv.SetReader(r.indexReader)
 				rv.Number = maxNum
 				rv.Score = score
 				rv.FieldTermLocations = append(rv.FieldTermLocations[:0], r.out...)
-			} else if skipped == nil || !skipped(score, 1) {
+			} else if !skipped(score, 1) {
 				return nil, nil
 			}
 		}

@@ -47,6 +47,15 @@ func TestOrBitmapsMatchesFastOr(t *testing.T) {
 			}
 		}
 	}
+	// a dense (bitmap container) posting after sparse ones must not erase them
+	even := roaring.New()
+	for i := uint32(0); i < 20000; i += 2 {
+		even.Add(i)
+	}
+	dense := []*roaring.Bitmap{roaring.BitmapOf(1, 3), roaring.BitmapOf(5, 9), even, roaring.BitmapOf(7)}
+	if got, want := orBitmaps(dense, 20000), roaring.FastOr(dense...); !got.Equals(want) {
+		t.Fatalf("dense container: got %d docs, want %d", got.GetCardinality(), want.GetCardinality())
+	}
 	// postings beyond the stated size must still be ORed correctly
 	over := roaring.BitmapOf(5, 1_000_000)
 	if got := orBitmaps([]*roaring.Bitmap{over, roaring.BitmapOf(1), roaring.BitmapOf(2)}, 10); !got.Equals(roaring.BitmapOf(1, 2, 5, 1_000_000)) {

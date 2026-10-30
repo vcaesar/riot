@@ -18,19 +18,12 @@ package searcher
 import (
 	segment "github.com/vcaesar/bluge_segment_api"
 	"github.com/vcaesar/riot/search"
-	"github.com/vcaesar/riot/search/similarity"
 )
 
 // termsIteratorReader is implemented by readers that can list terms
 // without reading their postings (index.Snapshot).
 type termsIteratorReader interface {
 	TermsIterator(field string, automaton segment.Automaton, start, end []byte) (segment.DictionaryIterator, error)
-}
-
-// rangeBitmapReader is implemented by readers that can OR the postings of
-// a term range in one dictionary pass (index.Snapshot); nil means cannot.
-type rangeBitmapReader interface {
-	DocsMatchingRange(field string, automaton segment.Automaton, start, end []byte) (segment.PostingsIterator, error)
 }
 
 func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
@@ -61,9 +54,11 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 	}()
 
 	var terms []string
+	var bterms [][]byte
 	tfd, err := fieldDict.Next()
 	for err == nil && tfd != nil {
 		terms = append(terms, tfd.Term())
+		bterms = append(bterms, []byte(tfd.Term()))
 		if tooManyClauses(len(terms)) {
 			return nil, tooManyClausesErr(field, len(terms))
 		}
@@ -76,15 +71,9 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 	// a prefix scores every match the same, as in Lucene and tantivy,
 	// whatever the number of terms it expands to
 	if score, ok := constantScoreEligible(boost, scorer, compScorer, options); ok && len(terms) > 0 {
-		if rr, ok := indexReader.(rangeBitmapReader); ok {
-			it, err := rr.DocsMatchingRange(field, nil, kBeg, kEnd)
-			if err != nil {
-				return nil, err
-			}
-			if it != nil {
-				return newTermSearcherFromReader(indexReader, it,
-					multiTermConstantScoreTerm, field, score, similarity.ConstantScorer(score), options)
-			}
+		rv, err := newConstantScoreMultiTermSearcher(indexReader, bterms, field, score, options)
+		if err != nil || rv != nil {
+			return rv, err
 		}
 	}
 

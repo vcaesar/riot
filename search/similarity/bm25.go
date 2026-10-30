@@ -111,6 +111,12 @@ func (b *BM25Scorer) Score(freq int, norm float64) float64 {
 	return b.weight - b.weight/(1+float64(freq)*normInverse)
 }
 
+// Monotone reports whether Score never decreases with freq nor increases
+// with document length, which a negative boost or out of range k1/b breaks.
+func (b *BM25Scorer) Monotone() bool {
+	return b.weight >= 0 && b.k1 >= 0 && b.b >= 0 && b.b <= 1
+}
+
 func (b *BM25Scorer) explainTf(freq int, norm float64) *search.Explanation {
 	docLen := math.Float32bits(float32(norm))
 	normInverse := 1 / (b.k1 * ((1 - b.b) + b.b*float64(docLen)/b.avgDocLen))

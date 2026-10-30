@@ -18,6 +18,8 @@ import (
 	"math"
 	"strconv"
 	"testing"
+
+	"github.com/vcaesar/riot/search"
 )
 
 func TestBM25ComputeNormBounds(t *testing.T) {
@@ -75,5 +77,34 @@ func TestBM25Idf(t *testing.T) {
 	// rarer terms must score higher, and common terms must not dominate
 	if sim.Idf(1, 10000) <= sim.Idf(5000, 10000) || sim.Idf(5000, 10000) > 1 {
 		t.Fatalf("idf ordering broken: rare %v common %v", sim.Idf(1, 10000), sim.Idf(5000, 10000))
+	}
+}
+
+func TestBM25ScorerMonotone(t *testing.T) {
+	idf := NewBM25Similarity().Idf(10, 1000)
+	for _, test := range []struct {
+		name         string
+		boost, k1, b float64
+		want         bool
+	}{
+		{name: "default", boost: 1, k1: 1.2, b: 0.75, want: true},
+		{name: "zero boost", boost: 0, k1: 1.2, b: 0.75, want: true},
+		{name: "negative boost", boost: -1, k1: 1.2, b: 0.75},
+		{name: "negative k1", boost: 1, k1: -1, b: 0.75},
+		{name: "b above 1", boost: 1, k1: 1.2, b: 1.5},
+		{name: "negative b", boost: 1, k1: 1.2, b: -0.1},
+	} {
+		s := NewBM25Scorer(test.boost, test.k1, test.b, 10, &search.Explanation{Value: idf})
+		if got := s.Monotone(); got != test.want {
+			t.Errorf("%s: Monotone() = %v, want %v", test.name, got, test.want)
+		}
+		if !test.want || test.boost == 0 {
+			continue
+		}
+		// higher freq and shorter docs must never score lower
+		long, short := float64(math.Float32frombits(50)), float64(math.Float32frombits(5))
+		if s.Score(1, long) > s.Score(5, long) || s.Score(5, long) > s.Score(5, short) {
+			t.Errorf("%s: scores not monotone", test.name)
+		}
 	}
 }
