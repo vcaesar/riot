@@ -107,7 +107,7 @@ func (r *rawPhrase) next(ctx *search.Context, target uint64, floor float64,
 		r.started = true
 		for i, ts := range r.children {
 			p, err := ts.reader.Next()
-			if err = r.set(i, p, err); err != nil {
+			if err := r.set(i, p, err); err != nil {
 				return nil, err
 			}
 		}
@@ -124,7 +124,7 @@ func (r *rawPhrase) next(ctx *search.Context, target uint64, floor float64,
 				continue
 			}
 			p, err := ts.reader.Advance(maxNum)
-			if err = r.set(i, p, err); err != nil {
+			if err := r.set(i, p, err); err != nil {
 				return nil, err
 			}
 			if r.done {
@@ -157,7 +157,7 @@ func (r *rawPhrase) next(ctx *search.Context, target uint64, floor float64,
 		}
 		for i, ts := range r.children {
 			p, err := ts.reader.Next()
-			if err = r.set(i, p, err); err != nil {
+			if err := r.set(i, p, err); err != nil {
 				return nil, err
 			}
 		}

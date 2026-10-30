@@ -339,7 +339,7 @@ func (c *postingsCursor) nextAbove(reader segment.PostingsIterator, scorer searc
 		if total := reader.Count(); total >= c.seen {
 			if n := total - c.seen; n > 0 {
 				c.seen = total
-				skipped(float64(cs), int(n))
+				skipped(float64(cs), int(n)) //nolint:gosec // bounded by the segment's doc count
 			}
 			c.done = true
 			return nil, 0, nil
@@ -382,7 +382,7 @@ func (c *postingsCursor) nextAboveBatch(reader segment.PostingsIterator, scorer 
 			}
 			if n > 0 {
 				c.seen += n
-				if !skipped(floor, int(n)) {
+				if !skipped(floor, int(n)) { //nolint:gosec // bounded by the segment's doc count
 					return nil, 0, nil
 				}
 			}
