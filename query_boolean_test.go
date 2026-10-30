@@ -268,7 +268,7 @@ func TestBooleanMinShouldRewrite(t *testing.T) {
 		}, &searcher.ConjunctionSearcher{}, 1},
 		{"required shoulds with mustnot", func() *BooleanQuery {
 			return NewBooleanQuery().AddShould(term("red"), term("apple")).AddMustNot(term("pie")).SetMinShould(2)
-		}, &searcher.BooleanSearcher{}, 1},
+		}, &searcher.ConjunctionSearcher{}, 1}, // the must-not is folded into the postings
 		{"boosted required shoulds", func() *BooleanQuery {
 			return NewBooleanQuery().AddShould(term("red"), term("apple")).SetMinShould(2).SetBoost(2)
 		}, &searcher.BooleanSearcher{}, 2},
