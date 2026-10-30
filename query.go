@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -227,7 +228,28 @@ func (q *BooleanQuery) unwrapped(i search.Reader, options search.SearcherOptions
 	return rv, true, err
 }
 
+// shouldsAsMusts rewrites a query whose minShould requires every should
+// clause into one where they are musts, as tantivy's BooleanWeight does: a
+// conjunction leapfrogs with Advance and prunes by block-max, while a
+// disjunction with min > 1 steps every posting of every clause. A custom
+// scorer sees the must and should groups as separate constituents, so it
+// keeps the original shape.
+func (q *BooleanQuery) shouldsAsMusts() *BooleanQuery {
+	if q.scorer != nil || len(q.shoulds) == 0 || q.minShould != len(q.shoulds) {
+		return q
+	}
+	rv := *q
+	rv.musts = append(slices.Clip(rv.musts), q.shoulds...)
+	rv.shoulds, rv.minShould = nil, 0
+	return &rv
+}
+
 func (q *BooleanQuery) Searcher(i search.Reader, options search.SearcherOptions) (rv search.Searcher, err error) {
+	if len(q.shoulds) > 0 && q.minShould > len(q.shoulds) {
+		// minShould can never be reached
+		return searcher.NewMatchNoneSearcher(i, options)
+	}
+	q = q.shouldsAsMusts()
 	if rv, ok, err := q.unwrapped(i, options); ok {
 		return rv, err
 	}
