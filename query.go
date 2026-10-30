@@ -17,6 +17,7 @@ package riot
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -263,6 +264,15 @@ func (q *BooleanQuery) Searcher(i search.Reader, options search.SearcherOptions)
 	shouldSearcher = replaceMatchNoneWithNil(shouldSearcher)
 	mustNotSearcher = replaceMatchNoneWithNil(mustNotSearcher)
 
+	if mustNotSearcher, err = excludeFromMusts(mustSearcher, mustNotSearcher); err != nil {
+		return nil, closeSearchers(err, mustSearcher, shouldSearcher, mustNotSearcher)
+	}
+	if mustSearcher != nil && shouldSearcher == nil && mustNotSearcher == nil &&
+		q.scorer == nil && q.boost.Value() == 1 && !options.Explain {
+		// the must-nots were folded into the musts: as unwrapped
+		return mustSearcher, nil
+	}
+
 	if mustSearcher == nil && shouldSearcher == nil && mustNotSearcher == nil {
 		// if all 3 are nil, return MatchNone
 		return searcher.NewMatchNoneSearcher(i, options)
@@ -287,6 +297,30 @@ func (q *BooleanQuery) Searcher(i search.Reader, options search.SearcherOptions)
 	}
 
 	return searcher.NewBooleanSearcher(mustSearcher, shouldSearcher, mustNotSearcher, scorer, options)
+}
+
+// excludeFromMusts folds the must-not clauses into the musts' postings when
+// both are plain terms (see searcher.ExcludeFromConjunction), closing and
+// dropping the must-not searcher; otherwise it returns mustNot unchanged.
+func excludeFromMusts(must, mustNot search.Searcher) (search.Searcher, error) {
+	if must == nil || mustNot == nil {
+		return mustNot, nil
+	}
+	ok, err := searcher.ExcludeFromConjunction(must, mustNot)
+	if err != nil || !ok {
+		return mustNot, err
+	}
+	return nil, mustNot.Close()
+}
+
+// closeSearchers closes the non-nil searchers, joining their errors to err.
+func closeSearchers(err error, searchers ...search.Searcher) error {
+	for _, s := range searchers {
+		if s != nil {
+			err = errors.Join(err, s.Close())
+		}
+	}
+	return err
 }
 
 func replaceMatchNoneWithNil(s search.Searcher) search.Searcher {

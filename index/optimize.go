@@ -30,6 +30,10 @@ func (i *postingsIterator) Optimize(kind string,
 		return i.optimizeConjunction(octx)
 	}
 
+	if i.snapshot.parent.config.OptimizeConjunction && (kind == optimizeExclusionInclude || kind == optimizeExclusionExclude) {
+		return i.optimizeExclusion(kind == optimizeExclusionExclude, octx)
+	}
+
 	if i.snapshot.parent.config.OptimizeConjunctionUnadorned && kind == "conjunction:unadorned" {
 		return i.optimizeConjunctionUnadorned(octx)
 	}
@@ -108,6 +112,144 @@ func (o *optimizeConjunction) Finish() (segment.PostingsIterator, error) {
 		}
 	}
 
+	return nil, nil
+}
+
+// ----------------------------------------------------------------
+
+// Optimize kinds of the exclusion optimization: the conjunction's terms
+// register as includes, the must-not terms as excludes.
+const (
+	optimizeExclusionInclude = "exclusion:include"
+	optimizeExclusionExclude = "exclusion:exclude"
+)
+
+// optimizeExclusion collects the include (a conjunction's terms) and
+// exclude (must-not terms) iterators of an exclusion optimization.
+func (i *postingsIterator) optimizeExclusion(exclude bool,
+	octx segment.OptimizableContext) (segment.OptimizableContext, error) {
+	if octx == nil {
+		octx = &optimizeExclusion{snapshot: i.snapshot}
+	}
+	o, ok := octx.(*optimizeExclusion)
+	if !ok {
+		return nil, nil
+	}
+	if o.snapshot != i.snapshot {
+		return nil, fmt.Errorf("tried to optimize exclusion across different snapshots")
+	}
+	if exclude {
+		o.excludes = append(o.excludes, i)
+	} else {
+		o.includes = append(o.includes, i)
+	}
+	return o, nil
+}
+
+// optimizeExclusion removes the documents of the excludes from the actual
+// bitmap the includes iterate, like Lucene's ReqExclBulkScorer masks
+// excluded documents before the required scorer sees them. The includes
+// keep their freq/norm and block bounds, and share one bitmap per segment,
+// so a block-max conjunction still counts skipped windows exactly.
+type optimizeExclusion struct {
+	snapshot *Snapshot
+	includes []*postingsIterator
+	excludes []*postingsIterator
+	excluded bool
+}
+
+// Excluded reports whether Finish removed the excludes from the includes.
+func (o *optimizeExclusion) Excluded() bool { return o.excluded }
+
+// segmentDocs classifies one segment's postings: a bitmap, a single doc
+// (1-hit), or neither for no docs; ok is false when they cannot be read.
+func segmentDocs(itr segment.PostingsIterator) (bm *roaring.Bitmap, doc uint64, oneHit, ok bool) {
+	if itr.Empty() {
+		return nil, 0, false, true
+	}
+	o, ok := itr.(segment.OptimizablePostingsIterator)
+	if !ok {
+		return nil, 0, false, false
+	}
+	if doc, oneHit = o.DocNum1Hit(); oneHit {
+		return nil, doc, true, doc <= math.MaxUint32
+	}
+	return o.ActualBitmap(), 0, false, true
+}
+
+// excludedDocs ORs the excludes' documents of segment seg.
+func (o *optimizeExclusion) excludedDocs(seg int) (*roaring.Bitmap, bool) {
+	excl := roaring.New()
+	for _, tfr := range o.excludes {
+		bm, doc, oneHit, ok := segmentDocs(tfr.iterators[seg])
+		if !ok {
+			return nil, false
+		}
+		if oneHit {
+			excl.Add(uint32(doc)) // #nosec G115 -- segmentDocs checked doc <= MaxUint32
+		} else if bm != nil {
+			excl.Or(bm)
+		}
+	}
+	return excl, true
+}
+
+// includedDocs ANDs the includes' bitmaps of segment seg. oneHit marks a
+// segment where an include holds a single doc, which a bitmap cannot
+// replace; nil with !oneHit means the segment matches nothing.
+func (o *optimizeExclusion) includedDocs(seg int) (bm *roaring.Bitmap, doc uint64, oneHit, ok bool) {
+	for _, tfr := range o.includes {
+		b, d, hit, ok := segmentDocs(tfr.iterators[seg])
+		switch {
+		case !ok:
+			return nil, 0, false, false
+		case hit:
+			return nil, d, true, true
+		case b == nil:
+			return nil, 0, false, true
+		case bm == nil:
+			bm = b
+		case bm != b: // the conjunction optimization may already share one
+			bm = roaring.And(bm, b)
+		}
+	}
+	return bm, 0, false, true
+}
+
+// Finish applies the exclusion to every segment, or to none when one
+// segment cannot take it; Excluded reports which.
+func (o *optimizeExclusion) Finish() (segment.PostingsIterator, error) {
+	if len(o.includes) == 0 || len(o.excludes) == 0 {
+		return nil, nil
+	}
+	replaced := make([]*roaring.Bitmap, len(o.snapshot.segment))
+	for seg := range o.snapshot.segment {
+		excl, ok := o.excludedDocs(seg)
+		if !ok {
+			return nil, nil
+		}
+		bm, doc, oneHit, ok := o.includedDocs(seg)
+		switch {
+		case !ok:
+			return nil, nil
+		case oneHit:
+			// matches at most doc, which a 1-hit iterator cannot drop
+			if excl.Contains(uint32(doc)) { // #nosec G115 -- segmentDocs checked doc <= MaxUint32
+				return nil, nil
+			}
+		case bm != nil && !excl.IsEmpty() && bm.Intersects(excl):
+			replaced[seg] = roaring.AndNot(bm, excl)
+		}
+	}
+	for seg, bm := range replaced {
+		if bm == nil {
+			continue
+		}
+		for _, tfr := range o.includes {
+			tfr.iterators[seg].(segment.OptimizablePostingsIterator).ReplaceActual(bm)
+		}
+	}
+	o.excluded = true
 	return nil, nil
 }
 
