@@ -394,7 +394,7 @@ func (i *Snapshot) recyclePostingsIterator(tfr *postingsIterator) {
 	i.m2.Unlock()
 }
 
-func (i *Snapshot) unadornedPostingsIterator(
+func (i *Snapshot) unadornedPostingsIterator( //nolint:unparam // conjunction and disjunction fields share "*"
 	term []byte, field string) *postingsIterator {
 	// This IndexSnapshotTermFieldReader will not be recycled, more
 	// conversation here: https://github.com/blevesearch/bleve/pull/1438

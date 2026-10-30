@@ -371,25 +371,25 @@ func (r *rawDisjunction) next(ctx *search.Context, target uint64, floor float64,
 	skipped func(float64, int) bool) (*search.DocumentMatch, error) {
 	floorBits := numeric.Float64ToInt64(floor)
 	for {
-		minNum, any := uint64(0), false
+		minNum, found := uint64(0), false
 		for i, ts := range r.terms {
 			if !r.live[i] {
 				continue
 			}
 			if r.nums[i] < target {
 				p, err := ts.cursor.advance(ts.reader, target)
-				if err = r.step(i, p, err); err != nil {
+				if err := r.step(i, p, err); err != nil {
 					return nil, err
 				}
 				if !r.live[i] {
 					continue
 				}
 			}
-			if !any || r.nums[i] < minNum {
-				minNum, any = r.nums[i], true
+			if !found || r.nums[i] < minNum {
+				minNum, found = r.nums[i], true
 			}
 		}
-		if !any {
+		if !found {
 			return nil, nil
 		}
 		target = 0
@@ -408,7 +408,7 @@ func (r *rawDisjunction) next(ctx *search.Context, target uint64, floor float64,
 		for _, i := range r.matchIdx {
 			ts := r.terms[i]
 			p, err := ts.cursor.next(ts.reader)
-			if err = r.step(i, p, err); err != nil {
+			if err := r.step(i, p, err); err != nil {
 				return nil, err
 			}
 		}
