@@ -15,6 +15,7 @@
 package index
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/RoaringBitmap/roaring/v2"
@@ -71,10 +72,31 @@ func TestOptimizeExclusionFinish(t *testing.T) {
 			want:     []*roaring.Bitmap{nil},
 		},
 		{
-			name:     "1-hit include excluded falls back",
+			name:     "1-hit include outside the other include",
 			includes: [][]segment.PostingsIterator{{bmOf(1, 2), hitOf(5)}, {bmOf(1, 2), bmOf(5)}},
+			excludes: [][]segment.PostingsIterator{{bmOf(1), bmOf(6)}},
+			excluded: true,
+			want:     []*roaring.Bitmap{roaring.BitmapOf(2), nil},
+		},
+		{
+			name:     "1-hit include excluded empties the bitmap includes",
+			includes: [][]segment.PostingsIterator{{hitOf(5)}, {bmOf(4, 5)}},
+			excludes: [][]segment.PostingsIterator{{hitOf(5)}},
+			excluded: true,
+			want:     []*roaring.Bitmap{roaring.New()},
+		},
+		{
+			name:     "only a 1-hit include, excluded, falls back",
+			includes: [][]segment.PostingsIterator{{bmOf(1, 2), hitOf(5)}},
 			excludes: [][]segment.PostingsIterator{{bmOf(1), bmOf(5)}},
 			want:     []*roaring.Bitmap{nil, nil},
+		},
+		{
+			name:     "1-hit excludes and several bitmaps",
+			includes: [][]segment.PostingsIterator{{bmOf(1, 2, 3, 4, 5)}, {bmOf(2, 3, 4, 5)}, {bmOf(1, 3, 4, 5)}},
+			excludes: [][]segment.PostingsIterator{{hitOf(4)}, {bmOf(9)}, {bmOf(5, 9)}},
+			excluded: true,
+			want:     []*roaring.Bitmap{roaring.BitmapOf(3)},
 		},
 		{
 			name:     "unreadable exclude falls back",
@@ -99,8 +121,22 @@ func TestOptimizeExclusionFinish(t *testing.T) {
 			for _, its := range tc.excludes {
 				o.excludes = append(o.excludes, &postingsIterator{snapshot: snap, iterators: its})
 			}
+			// segment bitmaps belong to the index: Finish must copy, not modify
+			var orig, copies []*roaring.Bitmap
+			for _, its := range append(slices.Clone(tc.includes), tc.excludes...) {
+				for _, it := range its {
+					if f, ok := it.(*fakeSegPostings); ok && f.bm != nil {
+						orig, copies = append(orig, f.bm), append(copies, f.bm.Clone())
+					}
+				}
+			}
 			if _, err := o.Finish(); err != nil {
 				t.Fatal(err)
+			}
+			for k, bm := range orig {
+				if !bm.Equals(copies[k]) {
+					t.Fatalf("segment bitmap modified: %v, was %v", bm, copies[k])
+				}
 			}
 			if o.Excluded() != tc.excluded {
 				t.Fatalf("excluded %v, want %v", o.Excluded(), tc.excluded)
@@ -109,7 +145,10 @@ func TestOptimizeExclusionFinish(t *testing.T) {
 				var shared *roaring.Bitmap
 				for term, tfr := range o.includes {
 					f, ok := tfr.iterators[seg].(*fakeSegPostings)
-					if !ok {
+					if !ok || f.oneHit {
+						if ok && f.replaced != nil {
+							t.Fatalf("segment %d term %d: 1-hit iterator replaced", seg, term)
+						}
 						continue
 					}
 					switch {

@@ -19,17 +19,19 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/vcaesar/riot/search"
 	"github.com/vcaesar/riot/search/searcher"
+	"github.com/vcaesar/riot/search/similarity"
 )
 
-// exclusionIndex writes the same docs, in several segments with deletions,
-// to a writer opened with cfg.
-func exclusionIndex(t testing.TB, cfg *Config, docs []string) (*Writer, *Reader) {
+// exclusionIndex writes docs in several segments, then deletes every 37th.
+func exclusionIndex(t testing.TB, docs []string) (*Writer, *Reader) {
 	t.Helper()
-	w, err := OpenWriter(*cfg)
+	w, err := OpenWriter(InMemoryOnlyConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,17 +60,22 @@ func exclusionIndex(t testing.TB, cfg *Config, docs []string) (*Writer, *Reader)
 	return w, r
 }
 
+// exclusionDocs is deterministic: terms are drawn in slice order.
 func exclusionDocs(n int) []string {
 	r := rand.New(rand.NewSource(7))
+	terms := []struct {
+		term string
+		pct  int
+	}{{"rag", 45}, {"chunk", 35}, {"edge", 20}, {"vector", 15}}
 	docs := make([]string, n)
 	for i := range docs {
 		var words []string
 		for range 1 + r.Intn(12) {
 			words = append(words, fmt.Sprintf("w%d", r.Intn(50)))
 		}
-		for term, pct := range map[string]int{"rag": 45, "chunk": 35, "edge": 20, "vector": 15} {
-			for k := 0; k < 3 && r.Intn(100) < pct; k++ {
-				words = append(words, term)
+		for _, tp := range terms {
+			for k := 0; k < 3 && r.Intn(100) < tp.pct; k++ {
+				words = append(words, tp.term)
 			}
 		}
 		docs[i] = strings.Join(words, " ")
@@ -76,6 +83,7 @@ func exclusionDocs(n int) []string {
 	// single-doc terms; merged segments may store them 1-hit encoded
 	docs[5] += " solo"
 	docs[n-2] += " rag chunk lone"
+	docs[n-4] += " rag chunk edge gone"
 	return docs
 }
 
@@ -115,14 +123,37 @@ func exclusionSearch(t *testing.T, r *Reader, q Query, n int, explain bool) excl
 	return rv
 }
 
+type exclusionCase struct {
+	name                    string
+	musts, shoulds, mustNot []Query
+	boost                   float64
+	sumScorer               bool
+	folded, empty           bool
+}
+
+func (c *exclusionCase) query(withMustNot bool) *BooleanQuery {
+	q := NewBooleanQuery().AddMust(c.musts...).AddShould(c.shoulds...)
+	if withMustNot {
+		q.AddMustNot(c.mustNot...)
+	}
+	if c.boost != 0 {
+		q.SetBoost(c.boost)
+	}
+	if c.sumScorer {
+		q.scorer = similarity.NewCompositeSumScorer()
+	}
+	return q
+}
+
 // TestBooleanMustNotFoldedIntoPostings: must-nots folded into the musts'
-// postings return the same hits, scores and exact totals as the per-hit
-// must-not check (conjunction optimization disabled), including top-N
-// searches that skip blocks, deletions and 1-hit postings.
+// postings return exactly the query without them minus the documents any
+// must-not matches, with the same scores and exact totals, for top-N
+// searches that skip blocks, explain, deletions and single-doc terms. The
+// reference runs on the same reader, so the BM25 stats are shared (two
+// indexes would not: their merges drop deleted docs at different times).
 func TestBooleanMustNotFoldedIntoPostings(t *testing.T) {
 	docs := exclusionDocs(3000)
-	cfg := InMemoryOnlyConfig()
-	w, r := exclusionIndex(t, &cfg, docs)
+	w, r := exclusionIndex(t, docs)
 	defer func() {
 		if err := r.Close(); err != nil {
 			t.Error(err)
@@ -131,84 +162,163 @@ func TestBooleanMustNotFoldedIntoPostings(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	refCfg := InMemoryOnlyConfig().DisableOptimizeConjunction()
-	rw, rr := exclusionIndex(t, &refCfg, docs)
-	defer func() {
-		if err := rr.Close(); err != nil {
-			t.Error(err)
-		}
-		if err := rw.Close(); err != nil {
-			t.Error(err)
-		}
-	}()
 
 	term := func(s string) Query { return NewTermQuery(s).SetField("body") }
-	for _, tc := range []struct {
-		name   string
-		q      *BooleanQuery
-		folded bool
-		empty  bool
-	}{
-		{"two musts one mustnot", NewBooleanQuery().AddMust(term("rag"), term("chunk")).AddMustNot(term("edge")), true, false},
-		{"one must", NewBooleanQuery().AddMust(term("rag")).AddMustNot(term("edge")), true, false},
-		{"two mustnots", NewBooleanQuery().AddMust(term("rag"), term("chunk")).AddMustNot(term("edge"), term("vector")), true, false},
-		{"single-doc mustnot", NewBooleanQuery().AddMust(term("rag")).AddMustNot(term("lone")), true, false},
-		{"single-doc must kept", NewBooleanQuery().AddMust(term("lone")).AddMustNot(term("edge")), true, false},
-		{"single-doc must excluded", NewBooleanQuery().AddMust(term("lone"), term("rag")).AddMustNot(term("chunk")), true, true},
-		{"missing mustnot", NewBooleanQuery().AddMust(term("rag")).AddMustNot(term("absent")), true, false},
-		{"with should", NewBooleanQuery().AddMust(term("rag")).AddShould(term("chunk")).AddMustNot(term("edge")), true, false},
-		{"boosted", NewBooleanQuery().AddMust(term("rag"), term("chunk")).AddMustNot(term("edge")).SetBoost(3), true, false},
-		{"phrase mustnot", NewBooleanQuery().AddMust(term("rag")).AddMustNot(NewMatchPhraseQuery("rag chunk").SetField("body")), false, false},
+	phrase := NewMatchPhraseQuery("rag chunk").SetField("body")
+	for _, tc := range []exclusionCase{
+		{name: "two musts one mustnot", musts: []Query{term("rag"), term("chunk")}, mustNot: []Query{term("edge")}, folded: true},
+		{name: "one must", musts: []Query{term("rag")}, mustNot: []Query{term("edge")}, folded: true},
+		{name: "two mustnots", musts: []Query{term("rag"), term("chunk")}, mustNot: []Query{term("edge"), term("vector")}, folded: true},
+		{name: "single-doc mustnot", musts: []Query{term("rag")}, mustNot: []Query{term("lone")}, folded: true},
+		{name: "single-doc must kept", musts: []Query{term("lone")}, mustNot: []Query{term("edge")}, folded: true},
+		{name: "single-doc must excluded", musts: []Query{term("gone"), term("rag")}, mustNot: []Query{term("chunk")},
+			folded: true, empty: true},
+		{name: "same term twice", musts: []Query{term("rag"), term("rag")}, mustNot: []Query{term("edge")}, folded: true},
+		{name: "missing mustnot", musts: []Query{term("rag")}, mustNot: []Query{term("absent")}, folded: true},
+		{name: "with should", musts: []Query{term("rag")}, shoulds: []Query{term("chunk")}, mustNot: []Query{term("edge")}},
+		{name: "boosted", musts: []Query{term("rag"), term("chunk")}, mustNot: []Query{term("edge")}, boost: 3},
+		{name: "custom scorer", musts: []Query{term("rag")}, mustNot: []Query{term("edge")}, sumScorer: true},
+		{name: "phrase mustnot", musts: []Query{term("rag")}, mustNot: []Query{phrase}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := searchOptionsFromConfig(r.config, SearchOptions{})
-			s, err := tc.q.Searcher(r.reader, opts)
+			s, err := tc.query(true).Searcher(r.reader, searchOptionsFromConfig(r.config, SearchOptions{}))
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, isBool := s.(*searcher.BooleanSearcher)
-			if foldedOnly := tc.folded && len(tc.q.shoulds) == 0 && tc.q.boost == nil; foldedOnly == isBool {
-				t.Errorf("searcher %T, folded %v", s, tc.folded)
+			if _, isBool := s.(*searcher.BooleanSearcher); tc.folded == isBool {
+				t.Errorf("searcher %T, want folded %v", s, tc.folded)
 			}
 			if err = s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			for _, n := range []int{10, len(docs)} {
-				for _, explain := range []bool{false, true} {
-					got := exclusionSearch(t, r, tc.q, n, explain)
-					want := exclusionSearch(t, rr, tc.q, n, explain)
-					if got.total != want.total || len(got.scores) != len(want.scores) {
-						t.Fatalf("n=%d explain=%v: total %d (%d hits), want %d (%d hits)",
-							n, explain, got.total, len(got.scores), want.total, len(want.scores))
+
+			excluded := exclusionSearch(t, r, NewBooleanQuery().AddShould(tc.mustNot...), len(docs), false).scores
+			for _, explain := range []bool{false, true} {
+				want := exclusionSearch(t, r, tc.query(false), len(docs), explain).scores
+				for id := range excluded {
+					delete(want, id)
+				}
+				if (len(want) == 0) != tc.empty {
+					t.Fatalf("%d expected hits, want empty %v", len(want), tc.empty)
+				}
+				for _, n := range []int{10, len(docs)} {
+					got := exclusionSearch(t, r, tc.query(true), n, explain)
+					if got.total != uint64(len(want)) {
+						t.Fatalf("n=%d explain=%v: total %d, want %d", n, explain, got.total, len(want))
 					}
-					if n == len(docs) && (want.total == 0) != tc.empty {
-						t.Fatalf("total %d, want empty %v", want.total, tc.empty)
-					}
-					checkSameScores(t, n, got.scores, want.scores)
+					checkTopScores(t, n, got.scores, want)
 				}
 			}
 		})
 	}
 }
 
-// checkSameScores compares the hits; top-N hits can differ only among
-// documents tied at the cut-off score.
-func checkSameScores(t *testing.T, n int, got, want map[string]float64) {
+// checkTopScores checks that got holds min(n, len(want)) of the best hits
+// of want with their scores; hits tied at the cut-off may be any of them.
+func checkTopScores(t *testing.T, n int, got, want map[string]float64) {
 	t.Helper()
-	low := math.Inf(1)
-	for _, s := range want {
-		low = min(low, s)
+	if len(got) != min(n, len(want)) {
+		t.Fatalf("n=%d: %d hits, want %d", n, len(got), min(n, len(want)))
 	}
+	if len(got) == 0 {
+		return
+	}
+	scores := make([]float64, 0, len(want))
+	for _, s := range want {
+		scores = append(scores, s)
+	}
+	slices.Sort(scores)
+	slices.Reverse(scores)
+	cutoff := scores[len(got)-1]
 	for id, s := range got {
 		w, ok := want[id]
-		if !ok {
-			if math.Abs(s-low) > 1e-9 {
-				t.Fatalf("n=%d: extra hit %s (%v)", n, id, s)
-			}
-			continue
+		if !ok || math.Abs(s-w) > 1e-9 {
+			t.Fatalf("n=%d: hit %s scored %v, want %v (expected hit: %v)", n, id, s, w, ok)
 		}
-		if math.Abs(s-w) > 1e-9 {
-			t.Fatalf("n=%d: hit %s scored %v, want %v", n, id, s, w)
+		if s < cutoff-1e-9 {
+			t.Fatalf("n=%d: hit %s scored %v below the cut-off %v", n, id, s, cutoff)
+		}
+	}
+}
+
+// TestExcludedPostingsSurviveBackwardSeek: a backwards Advance rebuilds a
+// postings iterator; the exclusion must be re-applied, not dropped.
+func TestExcludedPostingsSurviveBackwardSeek(t *testing.T) {
+	w, r := exclusionIndex(t, exclusionDocs(3000))
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	opts := searchOptionsFromConfig(r.config, SearchOptions{})
+	termSearcher := func(text string) search.Searcher {
+		t.Helper()
+		s, err := NewTermQuery(text).SetField("body").Searcher(r.reader, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	ctx := search.NewSearchContext(8, 0)
+	drain := func(s search.Searcher, first *search.DocumentMatch) (nums []uint64) {
+		t.Helper()
+		var err error
+		for m := first; m != nil; m, err = s.Next(ctx) {
+			nums = append(nums, m.Number)
+			ctx.DocumentMatchPool.Put(m)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return nums
+	}
+
+	edge := termSearcher("edge")
+	first, err := edge.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edgeDocs := drain(edge, first)
+	if err = edge.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rag := termSearcher("rag")
+	conj, err := searcher.NewConjunctionSearcher(r.reader, []search.Searcher{rag}, similarity.NewCompositeSumScorer(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := conj.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	mustNot := termSearcher("edge")
+	if ok, err := searcher.ExcludeFromConjunction(conj, mustNot); err != nil || !ok {
+		t.Fatalf("exclusion not applied: %v %v", ok, err)
+	}
+	if err = mustNot.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if first, err = rag.Next(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := drain(rag, first)
+	again, err := rag.Advance(ctx, 0) // backwards: rebuilds the iterator
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := drain(rag, again)
+	if len(before) == 0 || !slices.Equal(before, after) {
+		t.Fatalf("after a backwards seek read %d docs, before %d", len(after), len(before))
+	}
+	for _, n := range after {
+		if slices.Contains(edgeDocs, n) {
+			t.Fatalf("excluded doc %d returned", n)
 		}
 	}
 }

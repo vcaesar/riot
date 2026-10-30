@@ -40,6 +40,19 @@ type postingsIterator struct {
 	// batched is set once NextBatch has moved the iterators, standing in
 	// for currPosting when Advance checks for a backwards seek
 	batched bool
+	// actuals holds, per segment, the bitmap an exclusion optimization
+	// replaced the actual bitmap with (nil: untouched), so a backwards
+	// seek, which rebuilds the iterators, cannot bring excluded docs back
+	actuals []*roaring.Bitmap
+}
+
+// replaceActual makes segment seg iterate bm and remembers it for restarts.
+func (i *postingsIterator) replaceActual(seg int, bm *roaring.Bitmap) {
+	if i.actuals == nil {
+		i.actuals = make([]*roaring.Bitmap, len(i.iterators))
+	}
+	i.actuals[seg] = bm
+	i.iterators[seg].(segment.OptimizablePostingsIterator).ReplaceActual(bm)
 }
 
 func (i *postingsIterator) Size() int {
@@ -96,7 +109,15 @@ func (i *postingsIterator) Advance(number uint64) (segment.Posting, error) {
 		// that is still in use sitting in the snapshot's free list
 		i2p := i2.(*postingsIterator)
 		*i, *i2p = *i2p, *i
-		_ = i2p.Close()
+		for seg, bm := range i2p.actuals {
+			if bm != nil {
+				i.replaceActual(seg, bm)
+			}
+		}
+		i2p.actuals = nil
+		if err := i2p.Close(); err != nil {
+			return nil, err
+		}
 	}
 	segIndex, ldocNum := i.snapshot.segmentIndexAndLocalDocNumFromGlobal(number)
 	if segIndex >= len(i.snapshot.segment) {

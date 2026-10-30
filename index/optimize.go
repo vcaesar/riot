@@ -18,6 +18,7 @@ package index
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sync/atomic"
 
 	"github.com/RoaringBitmap/roaring/v2"
@@ -177,43 +178,87 @@ func segmentDocs(itr segment.PostingsIterator) (bm *roaring.Bitmap, doc uint64, 
 	return o.ActualBitmap(), 0, false, true
 }
 
-// excludedDocs ORs the excludes' documents of segment seg.
-func (o *optimizeExclusion) excludedDocs(seg int) (*roaring.Bitmap, bool) {
-	excl := roaring.New()
-	for _, tfr := range o.excludes {
-		bm, doc, oneHit, ok := segmentDocs(tfr.iterators[seg])
-		if !ok {
-			return nil, false
-		}
-		if oneHit {
-			excl.Add(uint32(doc)) // #nosec G115 -- segmentDocs checked doc <= MaxUint32
-		} else if bm != nil {
-			excl.Or(bm)
-		}
-	}
-	return excl, true
-}
-
-// includedDocs ANDs the includes' bitmaps of segment seg. oneHit marks a
-// segment where an include holds a single doc, which a bitmap cannot
-// replace; nil with !oneHit means the segment matches nothing.
-func (o *optimizeExclusion) includedDocs(seg int) (bm *roaring.Bitmap, doc uint64, oneHit, ok bool) {
+// includedDocs ANDs the includes' documents of segment seg into bm, which
+// owned marks as allocated here, and returns in hit the doc that 1-hit
+// includes pin it to; empty means the segment matches nothing.
+func (o *optimizeExclusion) includedDocs(seg int) (bm *roaring.Bitmap, hit []uint32, owned, empty, ok bool) {
 	for _, tfr := range o.includes {
-		b, d, hit, ok := segmentDocs(tfr.iterators[seg])
+		b, d, oneHit, ok := segmentDocs(tfr.iterators[seg])
 		switch {
 		case !ok:
-			return nil, 0, false, false
-		case hit:
-			return nil, d, true, true
+			return nil, nil, false, false, false
+		case oneHit:
+			if len(hit) > 0 && uint64(hit[0]) != d {
+				return nil, nil, false, true, true
+			}
+			hit = []uint32{uint32(d)} // #nosec G115 -- segmentDocs checked d <= MaxUint32
 		case b == nil:
-			return nil, 0, false, true
+			return nil, nil, false, true, true
 		case bm == nil:
 			bm = b
-		case bm != b: // the conjunction optimization may already share one
-			bm = roaring.And(bm, b)
+		case bm == b: // the conjunction optimization already shares one
+		case owned:
+			bm.And(b)
+		default:
+			bm, owned = roaring.And(bm, b), true
 		}
 	}
-	return bm, 0, false, true
+	if len(hit) > 0 && bm != nil && !bm.Contains(hit[0]) {
+		return nil, nil, false, true, true
+	}
+	return bm, hit, owned, bm != nil && bm.IsEmpty(), true
+}
+
+// excludedDocs appends the excludes' bitmaps and 1-hit docs of segment seg.
+func (o *optimizeExclusion) excludedDocs(seg int, bms []*roaring.Bitmap, docs []uint32) (
+	[]*roaring.Bitmap, []uint32, bool) {
+	for _, tfr := range o.excludes {
+		b, d, oneHit, ok := segmentDocs(tfr.iterators[seg])
+		switch {
+		case !ok:
+			return nil, nil, false
+		case oneHit:
+			docs = append(docs, uint32(d)) // #nosec G115 -- segmentDocs checked d <= MaxUint32
+		case b != nil:
+			bms = append(bms, b)
+		}
+	}
+	return bms, docs, true
+}
+
+func excludesDoc(doc uint32, bms []*roaring.Bitmap, docs []uint32) bool {
+	return slices.Contains(docs, doc) || slices.ContainsFunc(bms, func(b *roaring.Bitmap) bool { return b.Contains(doc) })
+}
+
+// andNotAll removes the excluded docs from bm, copying it once unless
+// owned; nil means none of them were in bm.
+func andNotAll(bm *roaring.Bitmap, owned bool, bms []*roaring.Bitmap, docs []uint32) *roaring.Bitmap {
+	changed := false
+	for _, e := range bms {
+		switch {
+		case !bm.Intersects(e):
+			continue
+		case owned:
+			bm.AndNot(e)
+		default:
+			bm, owned = roaring.AndNot(bm, e), true
+		}
+		changed = true
+	}
+	for _, d := range docs {
+		if !bm.Contains(d) {
+			continue
+		}
+		if !owned {
+			bm, owned = bm.Clone(), true
+		}
+		bm.Remove(d)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return bm
 }
 
 // Finish applies the exclusion to every segment, or to none when one
@@ -223,30 +268,41 @@ func (o *optimizeExclusion) Finish() (segment.PostingsIterator, error) {
 		return nil, nil
 	}
 	replaced := make([]*roaring.Bitmap, len(o.snapshot.segment))
+	var exclBMs []*roaring.Bitmap
+	var exclDocs []uint32
 	for seg := range o.snapshot.segment {
-		excl, ok := o.excludedDocs(seg)
+		bm, hit, owned, empty, ok := o.includedDocs(seg)
 		if !ok {
 			return nil, nil
 		}
-		bm, doc, oneHit, ok := o.includedDocs(seg)
-		switch {
-		case !ok:
-			return nil, nil
-		case oneHit:
-			// matches at most doc, which a 1-hit iterator cannot drop
-			if excl.Contains(uint32(doc)) { // #nosec G115 -- segmentDocs checked doc <= MaxUint32
-				return nil, nil
-			}
-		case bm != nil && !excl.IsEmpty() && bm.Intersects(excl):
-			replaced[seg] = roaring.AndNot(bm, excl)
+		if empty {
+			continue
 		}
+		if exclBMs, exclDocs, ok = o.excludedDocs(seg, exclBMs[:0], exclDocs[:0]); !ok {
+			return nil, nil
+		}
+		if len(hit) == 0 {
+			replaced[seg] = andNotAll(bm, owned, exclBMs, exclDocs)
+			continue
+		}
+		if !excludesDoc(hit[0], exclBMs, exclDocs) {
+			continue
+		}
+		if bm == nil {
+			// only 1-hit includes, whose single doc cannot be dropped
+			return nil, nil
+		}
+		// a bitmap include iterating nothing empties the conjunction
+		replaced[seg] = roaring.New()
 	}
 	for seg, bm := range replaced {
 		if bm == nil {
 			continue
 		}
 		for _, tfr := range o.includes {
-			tfr.iterators[seg].(segment.OptimizablePostingsIterator).ReplaceActual(bm)
+			if b, _, _, _ := segmentDocs(tfr.iterators[seg]); b != nil {
+				tfr.replaceActual(seg, bm)
+			}
 		}
 	}
 	o.excluded = true
