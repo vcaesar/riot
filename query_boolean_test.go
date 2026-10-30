@@ -16,9 +16,12 @@ package riot
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"testing"
 
 	"github.com/vcaesar/riot/search/searcher"
+	"github.com/vcaesar/riot/search/similarity"
 )
 
 // TestBooleanShouldOnlyShortcut: a should-only boolean with default scoring
@@ -188,5 +191,178 @@ func TestBooleanShouldOnlyShortcut(t *testing.T) {
 	}
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestBooleanMinShouldRewrite: a minShould that requires every should turns
+// them into musts, and an unreachable minShould matches nothing; hits and
+// scores equal the unrewritten BooleanSearcher (forced by a custom scorer).
+func TestBooleanMinShouldRewrite(t *testing.T) {
+	w, err := OpenWriter(InMemoryOnlyConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	b := NewBatch()
+	for id, text := range map[string]string{
+		"a": "red apple pie", "b": "green apple pie", "c": "red red wine", "d": "red apple", "e": "blue sky",
+	} {
+		b.Update(Identifier(id), NewDocument(id).AddField(NewTextField("text", text)))
+	}
+	if err = w.Batch(b); err != nil {
+		t.Fatal(err)
+	}
+	r, err := w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	hits := func(q Query) map[string]float64 {
+		t.Helper()
+		dmi, err := r.Search(context.Background(), NewTopNSearch(10, q))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rv := map[string]float64{}
+		m, err := dmi.Next()
+		for err == nil && m != nil {
+			score := m.Score
+			if err = m.VisitStoredFields(func(field string, value []byte) bool {
+				if field == "_id" {
+					rv[string(value)] = score
+				}
+				return true
+			}); err != nil {
+				t.Fatal(err)
+			}
+			m, err = dmi.Next()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rv
+	}
+
+	term := func(s string) Query { return NewTermQuery(s).SetField("text") }
+	opts := searchOptionsFromConfig(r.config, SearchOptions{})
+	for _, tc := range []struct {
+		name  string
+		q     func() *BooleanQuery
+		want  any
+		nHits int
+	}{
+		{"shoulds all required", func() *BooleanQuery {
+			return NewBooleanQuery().AddShould(term("red"), term("apple")).SetMinShould(2)
+		}, &searcher.ConjunctionSearcher{}, 2},
+		{"must and required shoulds", func() *BooleanQuery {
+			return NewBooleanQuery().AddMust(term("pie")).AddShould(term("red"), term("apple")).SetMinShould(2)
+		}, &searcher.ConjunctionSearcher{}, 1},
+		{"required shoulds with mustnot", func() *BooleanQuery {
+			return NewBooleanQuery().AddShould(term("red"), term("apple")).AddMustNot(term("pie")).SetMinShould(2)
+		}, &searcher.BooleanSearcher{}, 1},
+		{"boosted required shoulds", func() *BooleanQuery {
+			return NewBooleanQuery().AddShould(term("red"), term("apple")).SetMinShould(2).SetBoost(2)
+		}, &searcher.BooleanSearcher{}, 2},
+		{"unreachable minShould", func() *BooleanQuery {
+			return NewBooleanQuery().AddMust(term("red")).AddShould(term("apple")).SetMinShould(2)
+		}, &searcher.MatchNoneSearcher{}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := tc.q()
+			s, err := q.Searcher(r.reader, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := fmt.Sprintf("%T", s), fmt.Sprintf("%T", tc.want); got != want {
+				t.Fatalf("searcher %s, want %s", got, want)
+			}
+			if err = s.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			ref := tc.q()
+			ref.scorer = similarity.NewCompositeSumScorerWithBoost(ref.boost.Value())
+			got, want := hits(q), hits(ref)
+			if len(got) != tc.nHits || len(got) != len(want) {
+				t.Fatalf("got %v, want %d hits like %v", got, tc.nHits, want)
+			}
+			for id, score := range want {
+				if g, ok := got[id]; !ok || math.Abs(g-score) > 1e-9 {
+					t.Fatalf("hit %s: got %v, want %v", id, got, want)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkBooleanMinShouldRewrite compares minShould == len(shoulds) run as
+// the rewritten conjunction against the original disjunction (custom scorer).
+func BenchmarkBooleanMinShouldRewrite(b *testing.B) {
+	w, err := OpenWriter(InMemoryOnlyConfig())
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			b.Error(err)
+		}
+	}()
+	batch := NewBatch()
+	for i := range 20000 {
+		text := "common"
+		if i%100 == 0 {
+			text += " rare"
+		}
+		if i%3 == 0 {
+			text += " mid"
+		}
+		id := fmt.Sprint(i)
+		batch.Update(Identifier(id), NewDocument(id).AddField(NewTextField("text", text)))
+	}
+	if err = w.Batch(batch); err != nil {
+		b.Fatal(err)
+	}
+	r, err := w.Reader()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			b.Error(err)
+		}
+	}()
+	query := func() *BooleanQuery {
+		return NewBooleanQuery().SetMinShould(3).AddShould(
+			NewTermQuery("common").SetField("text"),
+			NewTermQuery("mid").SetField("text"),
+			NewTermQuery("rare").SetField("text"))
+	}
+	for _, rewrite := range []bool{false, true} {
+		b.Run(fmt.Sprintf("rewrite=%v", rewrite), func(b *testing.B) {
+			q := query()
+			if !rewrite {
+				q.scorer = similarity.NewCompositeSumScorer()
+			}
+			for b.Loop() {
+				dmi, err := r.Search(context.Background(), NewTopNSearch(10, q))
+				if err != nil {
+					b.Fatal(err)
+				}
+				for m, err := dmi.Next(); m != nil || err != nil; m, err = dmi.Next() {
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
 	}
 }
