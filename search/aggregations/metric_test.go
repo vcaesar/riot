@@ -43,3 +43,23 @@ func TestSingleValueMetricScoreNoAlloc(t *testing.T) {
 		t.Fatalf("sum score = %v, want 6", sum.Value())
 	}
 }
+
+func TestSingleValueConsumeScoreN(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		m    *SingleValueMetric
+		want float64
+	}{
+		{"count", CountMatches(), 6},
+		{"sum", Sum(search.DocumentScore()), 1.5*1 + 0.5*5},
+		{"max", Max(search.DocumentScore()), 1.5},
+		{"min", Min(search.DocumentScore()), 0.5},
+	} {
+		calc := tc.m.Calculator().(*SingleValueCalculator)
+		calc.ConsumeScore(1.5, 1)
+		calc.ConsumeScore(0.5, 5)
+		if calc.Value() != tc.want {
+			t.Errorf("%s = %v, want %v", tc.name, calc.Value(), tc.want)
+		}
+	}
+}

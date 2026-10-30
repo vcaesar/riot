@@ -95,14 +95,16 @@ func TestPrefixQueryConstantScore(t *testing.T) {
 		}
 	}
 
-	// below the threshold every expanded term is scored
+	// a prefix is constant score even below the threshold, as in Lucene
 	q = NewPrefixQuery("t00").SetField("tag")
 	hits = collectHits(t, r, NewTopNSearch(multiTermDocs, q))
 	if len(hits) != 10 {
 		t.Fatalf("got %d hits, want 10", len(hits))
 	}
-	if hits[0].Score == 1 {
-		t.Fatalf("expected BM25 score for a small expansion, got %v", hits[0].Score)
+	for _, hit := range hits {
+		if hit.Score != 1 {
+			t.Fatalf("doc %d score = %v, want constant 1 for a small expansion", hit.Number, hit.Score)
+		}
 	}
 
 	// requesting locations needs the per-term searchers

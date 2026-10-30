@@ -286,16 +286,19 @@ func (s *Writer) Batch(batch *Batch) (err error) {
 
 	var allDocsAnalyzed sync.WaitGroup
 
-	for _, doc := range batch.documents {
+	// queue documents in chunks: a queue hand-off per document costs about
+	// as much as analyzing a short one
+	chunk := min(max(numUpdates/(8*max(s.config.NumAnalysisWorkers, 1)), 1), maxAnalysisChunk)
+	for lo := 0; lo < numUpdates; lo += chunk {
+		docs := batch.documents[lo:min(lo+chunk, numUpdates)]
 		allDocsAnalyzed.Add(1)
-		doc := doc // capture variable
-		if doc != nil {
-			aw := func() {
-				doc.Analyze()
-				allDocsAnalyzed.Done()
+		s.config.AnalysisChan <- func() {
+			for _, doc := range docs {
+				if doc != nil {
+					doc.Analyze()
+				}
 			}
-			// put the work on the queue
-			s.config.AnalysisChan <- aw
+			allDocsAnalyzed.Done()
 		}
 	}
 
@@ -624,6 +627,9 @@ func (s *Writer) loadSegment(id uint64, plugin *SegmentPlugin) (*segmentWrapper,
 	}
 	return rv, nil
 }
+
+// maxAnalysisChunk bounds the documents one analysis worker task handles.
+const maxAnalysisChunk = 256
 
 func analysisWorker(q chan func(), closeCh chan struct{}) {
 	for {

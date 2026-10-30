@@ -25,6 +25,19 @@ type Collector interface {
 	BackingSize() int
 }
 
+// ScoreSkipper is implemented by searchers that can score a hit without
+// building a DocumentMatch, so a top-N collector only materializes hits
+// that can still enter its results.
+type ScoreSkipper interface {
+	// NextAbove returns the next hit whose score sorts above floor (as
+	// numeric.Float64ToInt64 orders scores). Hits at or below floor are
+	// passed to skipped instead, in index order, as n consecutive hits
+	// sharing score; returning false from skipped stops the search and
+	// NextAbove returns nil. When ctx.SkipBlocks is set, skipped hits may
+	// be reported with floor, an upper bound, instead of their own score.
+	NextAbove(ctx *Context, floor float64, skipped func(score float64, n int) bool) (*DocumentMatch, error)
+}
+
 type Collectible interface {
 	Next(ctx *Context) (*DocumentMatch, error)
 	DocumentMatchPoolSize() int

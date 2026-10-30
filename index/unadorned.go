@@ -25,6 +25,7 @@ import (
 type unadornedPostingsIteratorBitmap struct {
 	actual   roaring.IntPeekable
 	actualBM *roaring.Bitmap
+	next     unadornedPosting // reused across Next() calls
 }
 
 func (i *unadornedPostingsIteratorBitmap) Next() (segment.Posting, error) {
@@ -40,8 +41,8 @@ func (i *unadornedPostingsIteratorBitmap) nextAtOrAfter(atOrAfter uint64) (segme
 	if !exists {
 		return nil, nil
 	}
-	up := unadornedPosting(docNum)
-	return &up, nil
+	i.next = unadornedPosting(docNum)
+	return &i.next, nil
 }
 
 func (i *unadornedPostingsIteratorBitmap) nextDocNumAtOrAfter(atOrAfter uint64) (uint64, bool) {

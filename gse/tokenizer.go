@@ -19,11 +19,12 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
+	"unsafe"
 
 	gogse "github.com/go-ego/gse"
 
 	"github.com/vcaesar/riot/analysis"
-	"github.com/vcaesar/riot/analysis/tokenizer"
 )
 
 // Tokenizer adapts a loaded gse.Segmenter to the analysis.Tokenizer interface.
@@ -46,9 +47,17 @@ func NewTokenizer(seg *gogse.Segmenter, search bool, hmm ...bool) *Tokenizer {
 func (t *Tokenizer) Tokenize(input []byte) analysis.TokenStream {
 	// gse lowercases ASCII letters only, so byte offsets stay stable.
 	text := lowerASCII(input)
-	var tokens analysis.TokenStream
+	words := t.seg.Cut(text, t.hmm...)
+	// one token block and one term arena for the whole stream; terms get
+	// their own bytes since search mode sub-words overlap
+	block := make([]analysis.Token, 0, len(words))
+	arenaCap := len(text)
+	if t.search {
+		arenaCap *= 2 // sub-words roughly double the term bytes
+	}
+	arena := make([]byte, 0, arenaCap)
 	cursor := 0
-	for _, word := range t.seg.Cut(text, t.hmm...) {
+	for _, word := range words {
 		idx := strings.Index(text[cursor:], word)
 		if idx < 0 {
 			continue
@@ -59,10 +68,12 @@ func (t *Tokenizer) Tokenize(input []byte) analysis.TokenStream {
 			continue
 		}
 		subs := []string{word}
-		if t.search {
+		// a single rune has no sub-words, CutSearch would return just it;
+		// nor does an ASCII word, which gse keeps whole unless AlphaNum
+		if t.search && utf8.RuneCountInString(word) > 1 && (t.seg.AlphaNum || !isASCII(word)) {
 			subs = t.seg.CutSearch(word, t.hmm...)
-			// gse's plain search mode returns only the sub-words (nothing at
-			// all for a single rune); the segment itself must stay searchable.
+			// gse's plain search mode returns only the sub-words; the
+			// segment itself must stay searchable.
 			if !slices.Contains(subs, word) {
 				subs = append(subs, word)
 			}
@@ -73,15 +84,20 @@ func (t *Tokenizer) Tokenize(input []byte) analysis.TokenStream {
 				continue
 			}
 			subStart := start + strings.Index(word, sub)
-			tokens = append(tokens, &analysis.Token{
+			arena = append(arena, sub...)
+			block = append(block, analysis.Token{
 				Start:        subStart,
 				End:          subStart + len(sub),
-				Term:         []byte(sub),
+				Term:         arena[len(arena)-len(sub) : len(arena) : len(arena)],
 				PositionIncr: posIncr,
 				Type:         tokenType(sub),
 			})
 			posIncr = 0
 		}
+	}
+	tokens := make(analysis.TokenStream, len(block))
+	for i := range block {
+		tokens[i] = &block[i]
 	}
 	return tokens
 }
@@ -89,11 +105,20 @@ func (t *Tokenizer) Tokenize(input []byte) analysis.TokenStream {
 // tokenType classifies a term like analysis/tokenizer does so that filters
 // such as the cjk bigram filter treat Latin and numeric terms correctly.
 func tokenType(term string) analysis.TokenType {
-	if tokenizer.IdeographRegexp.MatchString(term) {
-		return analysis.Ideographic
+	for _, r := range term {
+		if r < utf8.RuneSelf {
+			continue
+		}
+		if unicode.In(r, unicode.Han, unicode.Hangul, unicode.Hiragana, unicode.Katakana) {
+			return analysis.Ideographic
+		}
 	}
-	if _, err := strconv.ParseFloat(term, 64); err == nil {
-		return analysis.Numeric
+	// ParseFloat only accepts digits, a sign, a dot, "inf" or "nan" first;
+	// checking that skips its error allocation for ordinary words.
+	if term != "" && strings.IndexByte("0123456789+-.iInN", term[0]) >= 0 {
+		if _, err := strconv.ParseFloat(term, 64); err == nil {
+			return analysis.Numeric
+		}
 	}
 	return analysis.AlphaNumeric
 }
@@ -117,5 +142,14 @@ func lowerASCII(b []byte) string {
 		}
 		out[i] = c
 	}
-	return string(out)
+	return unsafe.String(unsafe.SliceData(out), len(out)) // out is never written again
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }

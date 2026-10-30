@@ -107,6 +107,34 @@ func (s *SingleValueCalculator) Consume(d *search.DocumentMatch) {
 	}
 }
 
+// ScoreOnly reports whether the calculator counts hits or aggregates the score.
+func (s *SingleValueCalculator) ScoreOnly() bool {
+	return s.count || s.score
+}
+
+// ConsumeScore is Consume for n hits known only by their shared score; see
+// ScoreOnly. Results equal n separate Consume calls.
+func (s *SingleValueCalculator) ConsumeScore(score float64, n int) {
+	switch {
+	case s.count && s.op == opSum:
+		s.apply(float64(n)) // exact: counts stay far below 2^53
+	case s.count:
+		s.apply(1)
+	case s.op == opSum:
+		for range n {
+			s.apply(score)
+		}
+	default:
+		s.apply(score) // min and max ignore repeats
+	}
+}
+
+// BoundOnly reports whether the calculator counts hits or takes the max
+// score, which a bound at or below an already seen score cannot change.
+func (s *SingleValueCalculator) BoundOnly() bool {
+	return s.count || (s.score && s.op == opMax)
+}
+
 func (s *SingleValueCalculator) Merge(other search.Calculator) {
 	if other, ok := other.(*SingleValueCalculator); ok {
 		s.apply(other.val)

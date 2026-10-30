@@ -44,6 +44,12 @@ type DurationCalculator struct {
 
 func (d *DurationCalculator) Consume(*search.DocumentMatch) {}
 
+func (d *DurationCalculator) ScoreOnly() bool { return true }
+
+func (d *DurationCalculator) ConsumeScore(float64, int) {}
+
+func (d *DurationCalculator) BoundOnly() bool { return true }
+
 func (d *DurationCalculator) Finish() {
 	d.since = time.Since(d.origin)
 }

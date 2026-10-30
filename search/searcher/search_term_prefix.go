@@ -16,8 +16,22 @@
 package searcher
 
 import (
+	segment "github.com/vcaesar/bluge_segment_api"
 	"github.com/vcaesar/riot/search"
+	"github.com/vcaesar/riot/search/similarity"
 )
+
+// termsIteratorReader is implemented by readers that can list terms
+// without reading their postings (index.Snapshot).
+type termsIteratorReader interface {
+	TermsIterator(field string, automaton segment.Automaton, start, end []byte) (segment.DictionaryIterator, error)
+}
+
+// rangeBitmapReader is implemented by readers that can OR the postings of
+// a term range in one dictionary pass (index.Snapshot); nil means cannot.
+type rangeBitmapReader interface {
+	DocsMatchingRange(field string, automaton segment.Automaton, start, end []byte) (segment.PostingsIterator, error)
+}
 
 func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 	boost float64, scorer search.Scorer, compScorer search.CompositeScorer,
@@ -25,7 +39,13 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 	// find the terms with this prefix
 	kBeg := []byte(prefix)
 	kEnd := incrementBytes(kBeg)
-	fieldDict, err := indexReader.DictionaryIterator(field, nil, kBeg, kEnd)
+	var fieldDict segment.DictionaryIterator
+	if tr, ok := indexReader.(termsIteratorReader); ok {
+		// only the terms are needed, not their counts
+		fieldDict, err = tr.TermsIterator(field, nil, kBeg, kEnd)
+	} else {
+		fieldDict, err = indexReader.DictionaryIterator(field, nil, kBeg, kEnd)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +71,21 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	// a prefix scores every match the same, as in Lucene and tantivy,
+	// whatever the number of terms it expands to
+	if score, ok := constantScoreEligible(boost, scorer, compScorer, options); ok && len(terms) > 0 {
+		if rr, ok := indexReader.(rangeBitmapReader); ok {
+			it, err := rr.DocsMatchingRange(field, nil, kBeg, kEnd)
+			if err != nil {
+				return nil, err
+			}
+			if it != nil {
+				return newTermSearcherFromReader(indexReader, it,
+					multiTermConstantScoreTerm, field, score, similarity.ConstantScorer(score), options)
+			}
+		}
 	}
 
 	return NewMultiTermSearcher(indexReader, terms, field, boost, scorer, compScorer, options, true)

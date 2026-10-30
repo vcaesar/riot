@@ -326,6 +326,7 @@ func (i *Snapshot) PostingsIterator(term []byte, field string, includeFreq,
 	rv.includeTermVectors = includeTermVectors
 	rv.currPosting = nil
 	rv.currID = 0
+	rv.batched = false
 
 	if rv.dicts == nil {
 		rv.dicts = make([]segment.Dictionary, len(i.segment))

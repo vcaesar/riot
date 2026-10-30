@@ -18,8 +18,10 @@ package riot
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/vcaesar/riot/search/aggregations"
@@ -1379,5 +1381,323 @@ func TestBooleanSearchBoost(t *testing.T) {
 	err = indexWriter.Close()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// fastPathIndex builds a three segment index with deletions whose body
+// field shares a term across most documents and has more prefix terms than
+// MultiTermConstantScoreThreshold.
+func fastPathIndex(t *testing.T) (r *Reader, done func()) {
+	t.Helper()
+	w, err := OpenWriter(InMemoryOnlyConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := 0
+	for seg := range 3 {
+		batch := NewBatch()
+		for range 400 {
+			body := fmt.Sprintf("common w%d x%d", id%37, id%5)
+			if id%3 == 0 {
+				body += " common"
+			}
+			doc := NewDocument(strconv.Itoa(id)).AddField(NewTextField("body", body)).
+				AddField(NewNumericField("n", float64(id)).Aggregatable())
+			batch.Insert(doc)
+			id++
+		}
+		for d := seg; d < id; d += 7 {
+			batch.Delete(Identifier(strconv.Itoa(d)))
+		}
+		if err := w.Batch(batch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err = w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r, func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+// TestScoreSkipFastPathsMatchSlowPaths compares term, match_all and wide
+// prefix searches with only score aggregations (skip path, prefix bitmap)
+// against the same searches with a field aggregation, which disables the
+// skip path.
+func TestScoreSkipFastPathsMatchSlowPaths(t *testing.T) {
+	r, done := fastPathIndex(t)
+	defer done()
+	run := func(q Query, n int, slow bool) (ids []string, total uint64, maxScore float64) {
+		req := NewTopNSearch(n, q).WithStandardAggregations()
+		if slow {
+			req.AddAggregation("sum", aggregations.Sum(search.Field("n")))
+		}
+		it, err := r.Search(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			m, err := it.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m == nil {
+				break
+			}
+			err = m.VisitStoredFields(func(field string, value []byte) bool {
+				if field == "_id" {
+					ids = append(ids, string(value))
+				}
+				return true
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		return ids, it.Aggregations().Count(), it.Aggregations().Metric("max_score")
+	}
+	for _, tc := range []struct {
+		name string
+		q    Query
+	}{
+		{"term", NewTermQuery("common").SetField("body")},
+		{"match_all", NewMatchAllQuery()},
+		{"prefix_wide", NewPrefixQuery("w").SetField("body")},
+		{"prefix_narrow", NewPrefixQuery("x").SetField("body")},
+		{"and", NewBooleanQuery().AddMust(NewTermQuery("common").SetField("body")).
+			AddMust(NewTermQuery("x1").SetField("body"))},
+		{"or", NewBooleanQuery().AddShould(NewTermQuery("x1").SetField("body")).
+			AddShould(NewTermQuery("w3").SetField("body")).AddShould(NewTermQuery("common").SetField("body"))},
+		{"prefix_scored", NewPrefixQuery("x").SetField("body")},
+		{"and3", NewBooleanQuery().AddMust(NewTermQuery("x2").SetField("body")).
+			AddMust(NewTermQuery("common").SetField("body")).AddMust(NewTermQuery("w3").SetField("body"))},
+	} {
+		for _, n := range []int{0, 1, 10, 2000} {
+			fastIDs, fastTotal, fastMax := run(tc.q, n, false)
+			slowIDs, slowTotal, slowMax := run(tc.q, n, true)
+			if !reflect.DeepEqual(fastIDs, slowIDs) || fastTotal != slowTotal || fastMax != slowMax {
+				t.Fatalf("%s n=%d: fast %d ids total %d max %v, slow %d ids total %d max %v\nfast %v\nslow %v",
+					tc.name, n, len(fastIDs), fastTotal, fastMax, len(slowIDs), slowTotal, slowMax, fastIDs, slowIDs)
+			}
+			if fastTotal == 0 {
+				t.Fatalf("%s: no hits", tc.name)
+			}
+		}
+	}
+}
+
+// TestPrefixBitmapMatchesTermUnion checks the dictionary-ORed prefix
+// bitmap against the union of the individual term searches, deletions
+// included.
+func TestPrefixBitmapMatchesTermUnion(t *testing.T) {
+	r, done := fastPathIndex(t)
+	defer done()
+	all := func(q Query) map[uint64]bool {
+		it, err := r.Search(context.Background(), NewAllMatches(q))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rv := map[uint64]bool{}
+		for {
+			m, err := it.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m == nil {
+				return rv
+			}
+			rv[m.Number] = true
+		}
+	}
+	union := NewBooleanQuery()
+	for i := range 37 {
+		union.AddShould(NewTermQuery(fmt.Sprintf("w%d", i)).SetField("body"))
+	}
+	got, want := all(NewPrefixQuery("w").SetField("body")), all(union)
+	if len(want) == 0 || !reflect.DeepEqual(got, want) {
+		t.Fatalf("prefix matched %d docs, term union %d", len(got), len(want))
+	}
+}
+
+// TestRawPhraseMatchesGeneralPath compares exact phrase hits, scores and
+// locations from the raw postings path against the general path, which
+// ExplainScores forces, across segments with deletions and repeated terms.
+func TestRawPhraseMatchesGeneralPath(t *testing.T) {
+	w, err := OpenWriter(InMemoryOnlyConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	words := []string{"a", "b", "c", "d"}
+	id := 0
+	for range 3 {
+		batch := NewBatch()
+		for range 300 {
+			var body []string
+			for k := range 3 + id%11 {
+				body = append(body, words[(id*7+k*k+k/3)%len(words)])
+			}
+			doc := NewDocument(strconv.Itoa(id)).
+				AddField(NewTextField("body", strings.Join(body, " ")).SearchTermPositions())
+			batch.Insert(doc)
+			id++
+		}
+		for d := 0; d < id; d += 13 {
+			batch.Delete(Identifier(strconv.Itoa(d)))
+		}
+		if err := w.Batch(batch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	type hit struct {
+		number uint64
+		score  float64
+		locs   string
+	}
+	run := func(q Query, n int, explain bool) ([]hit, uint64) {
+		req := NewTopNSearch(n, q).WithStandardAggregations().IncludeLocations()
+		if explain {
+			req.ExplainScores()
+		}
+		it, err := r.Search(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hits []hit
+		for {
+			m, err := it.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m == nil {
+				return hits, it.Aggregations().Count()
+			}
+			hits = append(hits, hit{m.Number, m.Score, fmt.Sprint(m.FieldTermLocations)})
+		}
+	}
+	var anyHits uint64
+	for _, terms := range [][]string{{"a", "b"}, {"b", "a"}, {"c", "d", "a"}, {"d", "c"}} {
+		pq := make([][]string, len(terms))
+		for i, term := range terms {
+			pq[i] = []string{term}
+		}
+		q := NewMultiPhraseQuery(pq).SetField("body")
+		for _, n := range []int{1, 10, 5000} {
+			fast, fastTotal := run(q, n, false)
+			slow, slowTotal := run(q, n, true)
+			if fastTotal != slowTotal || !reflect.DeepEqual(fast, slow) {
+				t.Fatalf("%v n=%d: raw %d hits (total %d), general %d hits (total %d)\nraw %v\ngeneral %v",
+					terms, n, len(fast), fastTotal, len(slow), slowTotal, fast, slow)
+			}
+			anyHits += fastTotal
+		}
+	}
+	if anyHits == 0 {
+		t.Fatal("no phrase matched, the test data is too sparse")
+	}
+}
+
+// TestBlockSkipMatchesSlowPath checks term and OR searches that skip
+// postings blocks by their bounds return the same hits, total and max
+// score as searches with a field aggregation, which disables skipping.
+func TestBlockSkipMatchesSlowPath(t *testing.T) {
+	w, err := OpenWriter(InMemoryOnlyConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	batch := NewBatch()
+	for id := range 30000 {
+		// "t" mostly once in a long doc, rarely often in a short one, so
+		// most chunks cannot beat the top 10
+		words := []string{"t"}
+		if id%997 == 0 {
+			words = append(words, "t", "t", "t")
+		} else {
+			words = append(words, "pad", "pad", "pad", "pad", "pad", "pad")
+		}
+		if id%3 == 0 {
+			words = append(words, "u")
+		}
+		doc := NewDocument(strconv.Itoa(id)).
+			AddField(NewTextField("body", strings.Join(words, " "))).
+			AddField(NewNumericField("n", float64(id)).Aggregatable())
+		batch.Insert(doc)
+	}
+	if err := w.Batch(batch); err != nil {
+		t.Fatal(err)
+	}
+	r, err := w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	type hit struct {
+		number uint64
+		score  float64
+	}
+	run := func(q Query, slow bool) ([]hit, uint64, float64) {
+		req := NewTopNSearch(10, q).WithStandardAggregations()
+		if slow {
+			req.AddAggregation("sum", aggregations.Sum(search.Field("n")))
+		}
+		it, err := r.Search(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hits []hit
+		for {
+			m, err := it.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m == nil {
+				return hits, it.Aggregations().Count(), it.Aggregations().Metric("max_score")
+			}
+			hits = append(hits, hit{m.Number, m.Score})
+		}
+	}
+	for _, q := range []Query{
+		NewTermQuery("t").SetField("body"),
+		NewBooleanQuery().AddShould(NewTermQuery("t").SetField("body")).AddShould(NewTermQuery("u").SetField("body")),
+		NewBooleanQuery().AddMust(NewTermQuery("t").SetField("body")).AddMust(NewTermQuery("u").SetField("body")),
+	} {
+		fast, fastTotal, fastMax := run(q, false)
+		slow, slowTotal, slowMax := run(q, true)
+		if !reflect.DeepEqual(fast, slow) || fastTotal != slowTotal || fastMax != slowMax {
+			t.Fatalf("fast %v total %d max %v\nslow %v total %d max %v",
+				fast, fastTotal, fastMax, slow, slowTotal, slowMax)
+		}
+		if fastTotal != 30000 && fastTotal != 10000 {
+			t.Fatalf("total %d, want 30000 or 10000", fastTotal)
+		}
 	}
 }

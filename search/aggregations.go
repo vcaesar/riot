@@ -44,6 +44,20 @@ type Calculator interface {
 	Merge(Calculator)
 }
 
+// ScoreCalculator is a Calculator that can be fed only a hit's score, for
+// hits that were never built into a DocumentMatch.
+type ScoreCalculator interface {
+	Calculator
+	// ScoreOnly reports whether ConsumeScore is equivalent to Consume.
+	ScoreOnly() bool
+	// ConsumeScore consumes n hits that all scored score.
+	ConsumeScore(score float64, n int)
+	// BoundOnly reports whether ConsumeScore(bound, n) is exact for n hits
+	// whose scores are only known to be at most bound, given a hit scoring
+	// at least bound was consumed before.
+	BoundOnly() bool
+}
+
 type MetricCalculator interface {
 	Calculator
 	Value() float64
@@ -65,6 +79,8 @@ type Bucket struct {
 	// calculators mirrors aggregations; iterated per hit because ranging
 	// over a map is far slower than a slice
 	calculators []Calculator
+	// scoreCalcs is set when every calculator only reads the score
+	scoreCalcs []ScoreCalculator
 }
 
 func NewBucket(name string, aggregations map[string]Aggregation) *Bucket {
@@ -78,7 +94,45 @@ func NewBucket(name string, aggregations map[string]Aggregation) *Bucket {
 		rv.aggregations[name] = calc
 		rv.calculators = append(rv.calculators, calc)
 	}
+	rv.scoreCalcs = scoreCalculators(rv.calculators)
 	return rv
+}
+
+func scoreCalculators(calcs []Calculator) []ScoreCalculator {
+	rv := make([]ScoreCalculator, 0, len(calcs))
+	for _, calc := range calcs {
+		sc, ok := calc.(ScoreCalculator)
+		if !ok || !sc.ScoreOnly() {
+			return nil
+		}
+		rv = append(rv, sc)
+	}
+	return rv
+}
+
+// ScoreOnly reports whether every aggregation only reads the hit score, so
+// ConsumeScore may stand in for Consume.
+func (b *Bucket) ScoreOnly() bool {
+	return b.scoreCalcs != nil
+}
+
+// BoundOnly reports whether every aggregation accepts hits known only by an
+// upper bound on their score; see ScoreCalculator.BoundOnly.
+func (b *Bucket) BoundOnly() bool {
+	for _, calc := range b.scoreCalcs {
+		if !calc.BoundOnly() {
+			return false
+		}
+	}
+	return b.scoreCalcs != nil
+}
+
+// ConsumeScore aggregates n hits known only by their shared score; see
+// ScoreOnly.
+func (b *Bucket) ConsumeScore(score float64, n int) {
+	for _, calc := range b.scoreCalcs {
+		calc.ConsumeScore(score, n)
+	}
 }
 
 func (b *Bucket) Merge(other *Bucket) {
@@ -90,6 +144,7 @@ func (b *Bucket) Merge(other *Bucket) {
 			b.calculators = append(b.calculators, otherCalculator)
 		}
 	}
+	b.scoreCalcs = scoreCalculators(b.calculators)
 }
 
 func (b *Bucket) Name() string {

@@ -18,6 +18,7 @@ package searcher
 import (
 	"fmt"
 
+	segment "github.com/vcaesar/bluge_segment_api"
 	"github.com/vcaesar/riot/search"
 	"github.com/vcaesar/riot/search/similarity"
 )
@@ -254,8 +255,18 @@ func optimizeMultiTermSearcherBytes(indexReader search.Reader, terms [][]byte,
 // custom composite scorers need the per-term searchers.
 func constantScoreMultiTerm(numTerms int, boost float64, scorer search.Scorer,
 	compScorer search.CompositeScorer, options search.SearcherOptions) (float64, bool) {
-	if MultiTermConstantScoreThreshold <= 0 || numTerms <= MultiTermConstantScoreThreshold ||
-		options.IncludeTermVectors {
+	if numTerms <= MultiTermConstantScoreThreshold {
+		return 0, false
+	}
+	return constantScoreEligible(boost, scorer, compScorer, options)
+}
+
+// constantScoreEligible reports whether a multi-term query may be served
+// as a constant-score bitmap union, regardless of its term count, and the
+// score to use.
+func constantScoreEligible(boost float64, scorer search.Scorer,
+	compScorer search.CompositeScorer, options search.SearcherOptions) (float64, bool) {
+	if MultiTermConstantScoreThreshold <= 0 || options.IncludeTermVectors {
 		return 0, false
 	}
 	if _, ok := compScorer.(*similarity.CompositeSumScorer); !ok && compScorer != nil {
@@ -272,6 +283,13 @@ func constantScoreMultiTerm(numTerms int, boost float64, scorer search.Scorer,
 
 var multiTermConstantScoreTerm = []byte("<multi-term:constant-score>")
 
+// termsBitmapReader is implemented by readers that can OR the postings of
+// many terms straight from their dictionaries (index.Snapshot). A nil
+// iterator means the reader cannot, and the caller ORs term searchers.
+type termsBitmapReader interface {
+	DocsMatchingTerms(field string, terms [][]byte) (segment.PostingsIterator, error)
+}
+
 // newConstantScoreMultiTermSearcher ORs the postings of every term into
 // one bitmap per segment and returns a searcher scoring each document
 // with score. It returns nil when the index cannot take part in the
@@ -279,6 +297,16 @@ var multiTermConstantScoreTerm = []byte("<multi-term:constant-score>")
 // disjunction.
 func newConstantScoreMultiTermSearcher(indexReader search.Reader, terms [][]byte, field string,
 	score float64, options search.SearcherOptions) (search.Searcher, error) {
+	if r, ok := indexReader.(termsBitmapReader); ok {
+		it, err := r.DocsMatchingTerms(field, terms)
+		if err != nil {
+			return nil, err
+		}
+		if it != nil {
+			return newTermSearcherFromReader(indexReader, it,
+				multiTermConstantScoreTerm, field, score, similarity.ConstantScorer(score), options)
+		}
+	}
 	// only the document numbers are needed from the constituent terms
 	termOptions := options
 	termOptions.Score = optionScoringNone

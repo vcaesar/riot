@@ -45,11 +45,12 @@ func TestDefaultConfigOnlyRegistersLocalICE(t *testing.T) {
 		t.Fatalf("unexpected default segment: %s/%d", config.SegmentType, config.SegmentVersion)
 	}
 	plugins := config.supportedSegmentPlugins[ice.Type]
-	// current version plus the previous term-doc-value format, still loadable
-	if len(config.supportedSegmentPlugins) != 1 || len(plugins) != 2 {
+	// every version ice still loads, oldest to current
+	want := int(ice.Version - ice.MinReadableVersion + 1)
+	if len(config.supportedSegmentPlugins) != 1 || len(plugins) != want {
 		t.Fatalf("expected only local ICE plugins, got %v", config.supportedSegmentPlugins)
 	}
-	for _, ver := range []uint32{ice.Version, ice.Version - 1} {
+	for ver := ice.MinReadableVersion; ver <= ice.Version; ver++ {
 		plugin := plugins[ver]
 		if plugin == nil || plugin.New == nil || plugin.Load == nil || plugin.Merge == nil {
 			t.Fatalf("local ICE plugin %d is missing or incomplete", ver)

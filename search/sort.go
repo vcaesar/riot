@@ -76,6 +76,12 @@ func (o SortOrder) Complete(match *DocumentMatch) {
 	}
 }
 
+// ScoreDescOnly reports whether o orders by descending score alone, the
+// default relevance order.
+func (o SortOrder) ScoreDescOnly() bool {
+	return len(o) == 1 && o[0].score && o[0].desc
+}
+
 func (o SortOrder) scoreOnly() bool {
 	for _, sort := range o {
 		if !sort.score {
