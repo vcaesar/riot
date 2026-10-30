@@ -51,6 +51,9 @@ OUTER:
 		case ew = <-persisterNotifier:
 			persistWatchers.Add(ew)
 			lastMergedEpoch = ew.epoch
+			// the merger may ask after an epoch already persisted; with no
+			// further introductions it would otherwise wait forever
+			persistWatchers.NotifySatisfiedWatchers(lastPersistedEpoch)
 		case <-introducerEpochWatcher.notifyCh:
 			// woken up, next loop should pick up work
 			atomic.AddUint64(&s.stats.TotPersistLoopWaitNotified, 1)
