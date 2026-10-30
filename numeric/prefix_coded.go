@@ -38,7 +38,7 @@ func NewPrefixCodedInt64Prealloc(in int64, shift uint, prealloc []byte) (
 
 	size := int(nChars + 1)
 	if len(prealloc) >= size {
-		rv = PrefixCoded(prealloc[0:size])
+		rv = PrefixCoded(prealloc[0:size:size])
 		preallocRest = prealloc[size:]
 	} else {
 		rv = make(PrefixCoded, size)

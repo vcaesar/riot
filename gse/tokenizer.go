@@ -69,8 +69,10 @@ func (t *Tokenizer) Tokenize(input []byte) analysis.TokenStream {
 		}
 		subs := []string{word}
 		// a single rune has no sub-words, CutSearch would return just it;
-		// nor does an ASCII word, which gse keeps whole unless AlphaNum
-		if t.search && utf8.RuneCountInString(word) > 1 && (t.seg.AlphaNum || !isASCII(word)) {
+		// nor does a plain ASCII letter/digit word without hmm, which gse
+		// keeps whole unless AlphaNum
+		if t.search && utf8.RuneCountInString(word) > 1 &&
+			(t.seg.AlphaNum || len(t.hmm) > 0 || !isASCIIAlnum(word)) {
 			subs = t.seg.CutSearch(word, t.hmm...)
 			// gse's plain search mode returns only the sub-words; the
 			// segment itself must stay searchable.
@@ -145,9 +147,10 @@ func lowerASCII(b []byte) string {
 	return unsafe.String(unsafe.SliceData(out), len(out)) // out is never written again
 }
 
-func isASCII(s string) bool {
+func isASCIIAlnum(s string) bool {
 	for i := 0; i < len(s); i++ {
-		if s[i] >= utf8.RuneSelf {
+		c := s[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
 			return false
 		}
 	}

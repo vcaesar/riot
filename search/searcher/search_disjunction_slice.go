@@ -412,14 +412,14 @@ func (r *rawDisjunction) next(ctx *search.Context, target uint64, floor float64,
 				return nil, err
 			}
 		}
-		if numeric.Float64ToInt64(score) > floorBits {
+		if skipped == nil || numeric.Float64ToInt64(score) > floorBits {
 			rv := ctx.DocumentMatchPool.Get()
 			rv.SetReader(r.indexReader)
 			rv.Number = minNum
 			rv.Score = score
 			return rv, nil
 		}
-		if skipped == nil || !skipped(score, 1) {
+		if !skipped(score, 1) {
 			return nil, nil
 		}
 	}

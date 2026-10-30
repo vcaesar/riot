@@ -509,7 +509,7 @@ func (r *rawConjunction) next(ctx *search.Context, target uint64, floor float64,
 		}
 		score := r.scorer.ScoreComposite(r.scorePtr)
 		var rv *search.DocumentMatch
-		if numeric.Float64ToInt64(score) > floorBits {
+		if skipped == nil || numeric.Float64ToInt64(score) > floorBits {
 			rv = ctx.DocumentMatchPool.Get()
 			rv.SetReader(r.indexReader)
 			rv.Number = maxNum
@@ -525,7 +525,7 @@ func (r *rawConjunction) next(ctx *search.Context, target uint64, floor float64,
 		if rv != nil {
 			return rv, nil
 		}
-		if skipped == nil || !skipped(score, 1) {
+		if !skipped(score, 1) {
 			return nil, nil
 		}
 	}

@@ -263,10 +263,35 @@ func TestTokenizerTermsDoNotAlias(t *testing.T) {
 	}
 }
 
-func TestIsASCII(t *testing.T) {
-	for in, want := range map[string]bool{"": true, "bm25": true, "Go语言": false, "é": false} {
-		if got := isASCII(in); got != want {
-			t.Errorf("isASCII(%q) = %v, want %v", in, got, want)
+func TestTokenizerASCIIDictWordsMatchReference(t *testing.T) {
+	seg, err := NewSegmenter(Option{Dicts: "embed, zh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{"wi-fi", "e-mail"} {
+		if err := seg.AddToken(w, 10000); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, mode := range []string{"search", "search-hmm", "search-dag"} {
+		search, hmm, err := cutMode(mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tk := NewTokenizer(seg, search, hmm...)
+		for _, in := range []string{"wi-fi e-mail", "computer programming language"} {
+			got, want := tokenTerms(tk.Tokenize([]byte(in))), tokenTerms(referenceTokenize(tk, []byte(in)))
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("mode %q input %q: terms %v, want %v", mode, in, got, want)
+			}
+		}
+	}
+}
+
+func TestIsASCIIAlnum(t *testing.T) {
+	for in, want := range map[string]bool{"": true, "bm25": true, "BM25": true, "Go语言": false, "é": false, "wi-fi": false, "a.b": false} {
+		if got := isASCIIAlnum(in); got != want {
+			t.Errorf("isASCIIAlnum(%q) = %v, want %v", in, got, want)
 		}
 	}
 }
