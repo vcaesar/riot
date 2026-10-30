@@ -244,3 +244,67 @@ func TestTokenFrequenciesMergeAllExistingTermsNoAlloc(t *testing.T) {
 		t.Fatalf("frequency = %d, want 52", composite["x"].Frequency())
 	}
 }
+
+// TestTokenFrequencySliceDedupPaths covers the linear scan (short streams)
+// and the pooled map (long streams), with and without term vectors, and
+// checks a reused scratch map carries nothing over between calls.
+func TestTokenFrequencySliceDedupPaths(t *testing.T) {
+	stream := func(n int) TokenStream {
+		var tokens TokenStream
+		for i := range n {
+			term := []byte{byte('a' + i%7), byte('a' + i%3)}
+			tokens = append(tokens, &Token{Term: term, Start: 3 * i, End: 3*i + 2, PositionIncr: 1})
+		}
+		return tokens
+	}
+	for _, n := range []int{0, 1, linearDedupMax, linearDedupMax + 1, 200} {
+		for _, vectors := range []bool{false, true} {
+			tokens := stream(n)
+			tfs, pos := TokenFrequencySlice(tokens, vectors, 10)
+			wantPos := 0
+			if vectors {
+				wantPos = 10 + n
+			}
+			if pos != wantPos {
+				t.Fatalf("n=%d vectors=%v: pos %d, want %d", n, vectors, pos, wantPos)
+			}
+			freq := map[string]int{}
+			var order []string
+			for _, tok := range tokens {
+				if freq[string(tok.Term)] == 0 {
+					order = append(order, string(tok.Term))
+				}
+				freq[string(tok.Term)]++
+			}
+			if len(tfs) != len(order) {
+				t.Fatalf("n=%d: %d terms, want %d", n, len(tfs), len(order))
+			}
+			total := 0
+			for i, tf := range tfs {
+				if string(tf.Term()) != order[i] || tf.Frequency() != freq[order[i]] {
+					t.Fatalf("n=%d term %d: %q x%d, want %q x%d", n, i, tf.Term(), tf.Frequency(), order[i], freq[order[i]])
+				}
+				if vectors != (len(tf.Locations) == tf.Frequency()) && n > 0 {
+					t.Fatalf("n=%d term %q: %d locations for freq %d", n, tf.Term(), len(tf.Locations), tf.Frequency())
+				}
+				for _, loc := range tf.Locations {
+					if tok := tokens[loc.Pos()-11]; string(tok.Term) != order[i] || tok.Start != loc.Start() {
+						t.Fatalf("n=%d term %q: location %+v points at %q", n, tf.Term(), *loc, tok.Term)
+					}
+				}
+				total += tf.Frequency()
+			}
+			if total != n {
+				t.Fatalf("n=%d: frequencies sum to %d", n, total)
+			}
+		}
+	}
+}
+
+func TestNewTokenFrequenciesPointsIntoSlice(t *testing.T) {
+	tfs, _ := TokenFrequencySlice(TokenStream{{Term: []byte("x")}, {Term: []byte("y")}}, false, 0)
+	m := NewTokenFrequencies(tfs)
+	if len(m) != 2 || m["x"] != &tfs[0] || m["y"] != &tfs[1] {
+		t.Fatalf("map %v does not index the slice", m)
+	}
+}

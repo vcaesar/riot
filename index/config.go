@@ -138,7 +138,7 @@ func (config Config) WithStoredChunkCacheSize(n int) Config {
 }
 
 func (config Config) withIcePlugins(opts iceV1.Options) Config {
-	for _, ver := range []uint32{iceV1.Version, iceV1.Version - 1} {
+	for ver := iceV1.MinReadableVersion; ver <= iceV1.Version; ver++ {
 		config = config.WithSegmentPlugin(&SegmentPlugin{
 			Type:    iceV1.Type,
 			Version: ver,
@@ -275,7 +275,7 @@ func defaultConfig() Config {
 		supportedSegmentPlugins: map[string]map[uint32]*SegmentPlugin{},
 	}
 
-	// ice Version and Version-1: older segments predate numeric columns and
-	// remain readable; merges rewrite them as Version.
+	// every readable ice version: older segments lack numeric columns (3)
+	// or postings block bounds (4); merges rewrite them as Version.
 	return rv.withIcePlugins(iceV1.DefaultOptions())
 }

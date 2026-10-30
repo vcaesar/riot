@@ -349,6 +349,11 @@ type Context struct {
 	dvReaders         map[DocumentValueReadable]segment.DocumentValueReader
 	// Ctx is the caller's cancellation context; collectors set it from Collect.
 	Ctx context.Context
+	// SkipBlocks lets a ScoreSkipper pass over postings blocks whose score
+	// bound is at or below the floor, reporting them to skipped with the
+	// floor as their score; set when the aggregations allow it (see
+	// Bucket.BoundOnly).
+	SkipBlocks bool
 }
 
 func NewSearchContext(size, sortSize int) *Context {

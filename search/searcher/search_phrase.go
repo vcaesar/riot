@@ -45,6 +45,8 @@ type PhraseSearcher struct {
 	exactOut    []search.FieldTermLocation
 	initialized bool
 	slop        int
+	// raw serves exact phrases from the term postings; see rawPhrase
+	raw *rawPhrase
 }
 
 func (s *PhraseSearcher) Size() int {
@@ -142,6 +144,7 @@ func NewSloppyMultiPhraseSearcher(indexReader search.Reader, terms [][]string, f
 	if rv.exact {
 		rv.exactLocs = make([][]int, len(terms))
 		rv.exactPtr = make([]int, len(terms))
+		rv.raw = newRawPhrase(mustSearcher, terms, options)
 	}
 
 	return &rv, nil
@@ -191,6 +194,9 @@ func (s *PhraseSearcher) advanceNextMust(ctx *search.Context) error {
 }
 
 func (s *PhraseSearcher) Next(ctx *search.Context) (*search.DocumentMatch, error) {
+	if s.raw != nil {
+		return s.nextRaw(ctx, 0)
+	}
 	if !s.initialized {
 		err := s.initSearchers(ctx)
 		if err != nil {
@@ -525,6 +531,9 @@ func editDistance(p1, p2 int) int {
 }
 
 func (s *PhraseSearcher) Advance(ctx *search.Context, number uint64) (*search.DocumentMatch, error) {
+	if s.raw != nil {
+		return s.nextRaw(ctx, number)
+	}
 	if !s.initialized {
 		err := s.initSearchers(ctx)
 		if err != nil {

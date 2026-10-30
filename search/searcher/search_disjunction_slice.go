@@ -16,10 +16,12 @@
 package searcher
 
 import (
+	"math"
 	"sort"
 
 	segment "github.com/vcaesar/bluge_segment_api"
 
+	"github.com/vcaesar/riot/numeric"
 	"github.com/vcaesar/riot/search"
 )
 
@@ -33,6 +35,8 @@ type DisjunctionSliceSearcher struct {
 	matchingIdxs []int
 	initialized  bool
 	options      search.SearcherOptions
+	// raw is set once NextAbove steps the term postings directly
+	raw *rawDisjunction
 }
 
 func newDisjunctionSliceSearcher(qsearchers []search.Searcher, minMatches int, scorer search.CompositeScorer,
@@ -140,6 +144,9 @@ func (s *DisjunctionSliceSearcher) updateMatches() error {
 
 func (s *DisjunctionSliceSearcher) Next(ctx *search.Context) (
 	*search.DocumentMatch, error) {
+	if s.raw != nil {
+		return s.raw.next(ctx, 0, math.Inf(-1), nil)
+	}
 	if !s.initialized {
 		err := s.initSearchers(ctx)
 		if err != nil {
@@ -180,6 +187,9 @@ func (s *DisjunctionSliceSearcher) Next(ctx *search.Context) (
 
 func (s *DisjunctionSliceSearcher) Advance(ctx *search.Context,
 	number uint64) (*search.DocumentMatch, error) {
+	if s.raw != nil {
+		return s.raw.next(ctx, number, math.Inf(-1), nil)
+	}
 	if !s.initialized {
 		err := s.initSearchers(ctx)
 		if err != nil {
@@ -277,4 +287,140 @@ func (s *DisjunctionSliceSearcher) buildDocumentMatch(constituents []*search.Doc
 		rv.FieldTermLocations, constituents[1:])
 
 	return rv
+}
+
+// NextAbove implements search.ScoreSkipper. For a sum of plain term
+// searchers it steps their postings directly and only builds a
+// DocumentMatch for hits scoring above floor; otherwise it is Next.
+func (s *DisjunctionSliceSearcher) NextAbove(ctx *search.Context, floor float64,
+	skipped func(score float64, n int) bool) (*search.DocumentMatch, error) {
+	if s.raw == nil {
+		if s.min > 1 || !rawTermChildren(s.options, s.scorer, s.searchers) {
+			return s.Next(ctx)
+		}
+		if !s.initialized {
+			if err := s.initSearchers(ctx); err != nil {
+				return nil, err
+			}
+		}
+		s.raw = newRawDisjunction(s, ctx)
+	}
+	return s.raw.next(ctx, 0, floor, skipped)
+}
+
+// rawDisjunction is a disjunction of term postings positioned on
+// (number, freq, norm) per child; children are scored in searcher order,
+// as updateMatches orders them, so composite sums are bit identical.
+type rawDisjunction struct {
+	indexReader search.Reader
+	scorer      search.CompositeScorer
+	terms       []*TermSearcher
+	live        []bool
+	nums        []uint64
+	freqs       []int // < 0: score carried over from a DocumentMatch
+	norms       []float64
+	scores      []search.DocumentMatch
+	matching    []*search.DocumentMatch
+	matchIdx    []int
+}
+
+func newRawDisjunction(s *DisjunctionSliceSearcher, ctx *search.Context) *rawDisjunction {
+	n := len(s.searchers)
+	r := &rawDisjunction{
+		scorer:   s.scorer,
+		terms:    make([]*TermSearcher, n),
+		live:     make([]bool, n),
+		nums:     make([]uint64, n),
+		freqs:    make([]int, n),
+		norms:    make([]float64, n),
+		scores:   make([]search.DocumentMatch, n),
+		matching: make([]*search.DocumentMatch, 0, n),
+		matchIdx: make([]int, 0, n),
+	}
+	for i, child := range s.searchers {
+		ts := child.(*TermSearcher)
+		r.indexReader = ts.indexReader
+		r.terms[i] = ts
+		ts.cursor.startBatch(ts.reader, false)
+		if s.currs[i] == nil {
+			continue
+		}
+		r.live[i] = true
+		r.nums[i] = s.currs[i].Number
+		r.freqs[i] = -1
+		r.scores[i].Score = s.currs[i].Score
+		ctx.DocumentMatchPool.Put(s.currs[i])
+		s.currs[i] = nil
+	}
+	return r
+}
+
+func (r *rawDisjunction) step(i int, p segment.Posting, err error) error {
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		r.live[i] = false
+		return nil
+	}
+	r.nums[i], r.freqs[i], r.norms[i] = p.Number(), p.Frequency(), p.Norm()
+	return nil
+}
+
+func (r *rawDisjunction) next(ctx *search.Context, target uint64, floor float64,
+	skipped func(float64, int) bool) (*search.DocumentMatch, error) {
+	floorBits := numeric.Float64ToInt64(floor)
+	for {
+		minNum, any := uint64(0), false
+		for i, ts := range r.terms {
+			if !r.live[i] {
+				continue
+			}
+			if r.nums[i] < target {
+				p, err := ts.cursor.advance(ts.reader, target)
+				if err = r.step(i, p, err); err != nil {
+					return nil, err
+				}
+				if !r.live[i] {
+					continue
+				}
+			}
+			if !any || r.nums[i] < minNum {
+				minNum, any = r.nums[i], true
+			}
+		}
+		if !any {
+			return nil, nil
+		}
+		target = 0
+		r.matching, r.matchIdx = r.matching[:0], r.matchIdx[:0]
+		for i, ts := range r.terms {
+			if !r.live[i] || r.nums[i] != minNum {
+				continue
+			}
+			if r.freqs[i] >= 0 {
+				r.scores[i].Score = ts.scorer.Score(r.freqs[i], r.norms[i])
+			}
+			r.matching = append(r.matching, &r.scores[i])
+			r.matchIdx = append(r.matchIdx, i)
+		}
+		score := r.scorer.ScoreComposite(r.matching)
+		for _, i := range r.matchIdx {
+			ts := r.terms[i]
+			p, err := ts.cursor.next(ts.reader)
+			if err = r.step(i, p, err); err != nil {
+				return nil, err
+			}
+		}
+		if numeric.Float64ToInt64(score) > floorBits {
+			rv := ctx.DocumentMatchPool.Get()
+			rv.SetReader(r.indexReader)
+			rv.Number = minNum
+			rv.Score = score
+			return rv, nil
+		}
+		if skipped == nil || !skipped(score, 1) {
+			return nil, nil
+		}
+	}
 }

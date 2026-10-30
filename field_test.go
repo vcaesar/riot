@@ -16,9 +16,14 @@
 package riot
 
 import (
+	"bytes"
+	"math"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/vcaesar/riot/analysis"
+	"github.com/vcaesar/riot/numeric"
 )
 
 func TestIndexingOptions(t *testing.T) {
@@ -220,7 +225,7 @@ func TestNumericField(t *testing.T) {
 	if numTokens != 17 {
 		t.Errorf("expected 17 tokens, got %d ", numTokens)
 	}
-	tokenFreqs := nf.analyzedTokenFreqs
+	tokenFreqs := nf.AnalyzedTokenFrequencies()
 	if len(tokenFreqs) != 17 {
 		t.Errorf("expected 17 token freqs, got %d", len(tokenFreqs))
 	}
@@ -257,4 +262,40 @@ func TestDateTimeAndGeoFieldsOmitOriginalValueToken(t *testing.T) {
 			t.Errorf("unexpected decimal token %q in geo field", term)
 		}
 	}
+}
+
+func TestAddShiftTokensMatchesPrefixCoding(t *testing.T) {
+	for _, v := range []int64{0, -1, 42, math.MinInt64, math.MaxInt64} {
+		for _, shiftBy := range []uint{4, 8, 16, 63} {
+			tokens := addShiftTokens(nil, v, shiftBy, analysis.Numeric)
+			i := 0
+			for shift := shiftBy; shift < 64; shift += shiftBy {
+				want, err := numeric.NewPrefixCodedInt64(v, shift)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tok := tokens[i]
+				if !bytes.Equal(tok.Term, want) || tok.End != len(want) || tok.Start != 0 ||
+					tok.PositionIncr != 0 || tok.Type != analysis.Numeric {
+					t.Fatalf("v=%d shiftBy=%d token %d = %+v, want term %v", v, shiftBy, i, *tok, want)
+				}
+				i++
+			}
+			if len(tokens) != i {
+				t.Fatalf("v=%d shiftBy=%d: %d tokens, want %d", v, shiftBy, len(tokens), i)
+			}
+			// terms must not share bytes
+			tokens[0].Term[len(tokens[0].Term)-1] ^= 0xff
+			if i > 1 && !bytes.Equal(tokens[1].Term, mustPrefixCoded(numeric.NewPrefixCodedInt64(v, 2*shiftBy))) {
+				t.Fatalf("v=%d shiftBy=%d: terms overlap", v, shiftBy)
+			}
+		}
+	}
+}
+
+func mustPrefixCoded(p numeric.PrefixCoded, err error) numeric.PrefixCoded {
+	if err != nil {
+		panic(err)
+	}
+	return p
 }

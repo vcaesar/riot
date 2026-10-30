@@ -25,6 +25,7 @@ type MatchAllSearcher struct {
 	scorer      search.Scorer
 	indexReader search.Reader
 	options     search.SearcherOptions
+	cursor      postingsCursor
 }
 
 func NewMatchAllSearcher(indexReader search.Reader, _ float64, scorer search.Scorer,
@@ -52,7 +53,7 @@ func (s *MatchAllSearcher) Count() uint64 {
 }
 
 func (s *MatchAllSearcher) Next(ctx *search.Context) (*search.DocumentMatch, error) {
-	tfd, err := s.reader.Next()
+	tfd, err := s.cursor.next(s.reader)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +70,7 @@ func (s *MatchAllSearcher) Next(ctx *search.Context) (*search.DocumentMatch, err
 }
 
 func (s *MatchAllSearcher) Advance(ctx *search.Context, number uint64) (*search.DocumentMatch, error) {
-	tfd, err := s.reader.Advance(number)
+	tfd, err := s.cursor.advance(s.reader, number)
 	if err != nil {
 		return nil, err
 	}
@@ -97,17 +98,33 @@ func (s *MatchAllSearcher) DocumentMatchPoolSize() int {
 	return 1
 }
 
+// NextAbove implements search.ScoreSkipper.
+func (s *MatchAllSearcher) NextAbove(ctx *search.Context, floor float64,
+	skipped func(score float64, n int) bool) (*search.DocumentMatch, error) {
+	if s.options.Explain {
+		return s.Next(ctx)
+	}
+	posting, score, err := s.cursor.nextAbove(s.reader, s.scorer, floor, false, skipped)
+	if err != nil || posting == nil {
+		return nil, err
+	}
+	return s.buildScoredMatch(ctx, posting, score), nil
+}
+
 func (s *MatchAllSearcher) buildDocumentMatch(ctx *search.Context, termMatch segment.Posting) *search.DocumentMatch {
+	if s.options.Explain {
+		explanation := s.scorer.Explain(termMatch.Frequency(), termMatch.Norm())
+		rv := s.buildScoredMatch(ctx, termMatch, explanation.Value)
+		rv.Explanation = explanation
+		return rv
+	}
+	return s.buildScoredMatch(ctx, termMatch, s.scorer.Score(termMatch.Frequency(), termMatch.Norm()))
+}
+
+func (s *MatchAllSearcher) buildScoredMatch(ctx *search.Context, termMatch segment.Posting, score float64) *search.DocumentMatch {
 	rv := ctx.DocumentMatchPool.Get()
 	rv.SetReader(s.indexReader)
 	rv.Number = termMatch.Number()
-
-	if s.options.Explain {
-		rv.Explanation = s.scorer.Explain(termMatch.Frequency(), termMatch.Norm())
-		rv.Score = rv.Explanation.Value
-	} else {
-		rv.Score = s.scorer.Score(termMatch.Frequency(), termMatch.Norm())
-	}
-
+	rv.Score = score
 	return rv
 }

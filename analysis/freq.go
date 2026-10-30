@@ -16,7 +16,10 @@
 package analysis
 
 import (
+	"bytes"
 	"reflect"
+	"sync"
+	"unsafe"
 
 	segment "github.com/vcaesar/bluge_segment_api"
 )
@@ -163,57 +166,96 @@ func (tfs TokenFrequencies) MergeOneBytes(remoteField string, tfk []byte, tf *To
 
 func TokenFrequency(tokens TokenStream, includeTermVectors bool, startOffset int) (
 	tokenFreqs TokenFrequencies, position int) {
-	tokenFreqs = make(map[string]*TokenFreq, len(tokens))
-	// one block for all distinct terms; bounded by len(tokens) so it is
-	// never grown and the pointers stored in the map stay valid
-	tfs := make([]TokenFreq, 0, len(tokens))
+	tfs, position := TokenFrequencySlice(tokens, includeTermVectors, startOffset)
+	return NewTokenFrequencies(tfs), position
+}
 
+// NewTokenFrequencies indexes tfs by term; the map points into tfs.
+func NewTokenFrequencies(tfs []TokenFreq) TokenFrequencies {
+	tokenFreqs := make(TokenFrequencies, len(tfs))
+	for i := range tfs {
+		tokenFreqs[string(tfs[i].TermVal)] = &tfs[i]
+	}
+	return tokenFreqs
+}
+
+// linearDedupMax is the stream length up to which terms are deduplicated
+// by scanning instead of hashing.
+const linearDedupMax = 16
+
+// maxPooledDedup bounds the scratch maps kept for reuse.
+const maxPooledDedup = 1 << 14
+
+// dedupMaps recycles the term -> index scratch maps of TokenFrequencySlice.
+// Keys alias token bytes and are cleared before the map is put back.
+var dedupMaps = sync.Pool{New: func() any { return make(map[string]int32) }}
+
+// TokenFrequencySlice is TokenFrequency without the map: the distinct terms
+// in first occurrence order. As with TokenFrequency, position is only
+// tracked (from startOffset) when includeTermVectors is set.
+func TokenFrequencySlice(tokens TokenStream, includeTermVectors bool, startOffset int) (
+	tfs []TokenFreq, position int) {
+	// bounded by len(tokens) so it is never grown and pointers into it stay valid
+	tfs = make([]TokenFreq, 0, len(tokens))
+	var tls []TokenLocation
+	var tlPtrs []*TokenLocation
 	if includeTermVectors {
-		tls := make([]TokenLocation, len(tokens))
-		tlPtrs := make([]*TokenLocation, len(tokens))
-		tlNext := 0
-
+		tls = make([]TokenLocation, len(tokens))
+		tlPtrs = make([]*TokenLocation, len(tokens))
 		position = startOffset
-		for _, token := range tokens {
-			position += token.PositionIncr
-			tls[tlNext] = TokenLocation{
-				StartVal:    token.Start,
-				EndVal:      token.End,
-				PositionVal: position,
+	}
+	var seen map[string]int32
+	if len(tokens) > linearDedupMax {
+		seen = dedupMaps.Get().(map[string]int32)
+		defer func() {
+			if len(seen) <= maxPooledDedup {
+				clear(seen)
+				dedupMaps.Put(seen)
 			}
-			tlPtrs[tlNext] = &tls[tlNext]
-
-			curr, ok := tokenFreqs[string(token.Term)]
-			if ok {
-				curr.Locations = append(curr.Locations, &tls[tlNext])
-				curr.frequency++
-			} else {
-				tfs = append(tfs, TokenFreq{
-					TermVal: token.Term,
-					// cap 1 so a second location reallocates rather than
-					// overwriting the next term's pointer in tlPtrs
-					Locations: tlPtrs[tlNext : tlNext+1 : tlNext+1],
-					frequency: 1,
-				})
-				tokenFreqs[string(token.Term)] = &tfs[len(tfs)-1]
-			}
-
-			tlNext++
-		}
-	} else {
-		for _, token := range tokens {
-			curr, exists := tokenFreqs[string(token.Term)]
-			if exists {
-				curr.frequency++
-			} else {
-				tfs = append(tfs, TokenFreq{
-					TermVal:   token.Term,
-					frequency: 1,
-				})
-				tokenFreqs[string(token.Term)] = &tfs[len(tfs)-1]
-			}
-		}
+		}()
 	}
 
-	return tokenFreqs, position
+	for i, token := range tokens {
+		idx := -1
+		if seen != nil {
+			if j, ok := seen[unsafe.String(unsafe.SliceData(token.Term), len(token.Term))]; ok {
+				idx = int(j)
+			}
+		} else {
+			for j := range tfs {
+				if bytes.Equal(tfs[j].TermVal, token.Term) {
+					idx = j
+					break
+				}
+			}
+		}
+		if idx < 0 {
+			idx = len(tfs)
+			tfs = append(tfs, TokenFreq{TermVal: token.Term})
+			if seen != nil {
+				//nolint:gosec // G115: idx < len(tokens), far below 2^31 terms per field.
+				seen[unsafe.String(unsafe.SliceData(token.Term), len(token.Term))] = int32(idx)
+			}
+		}
+		tf := &tfs[idx]
+		tf.frequency++
+		if !includeTermVectors {
+			continue
+		}
+		position += token.PositionIncr
+		tls[i] = TokenLocation{
+			StartVal:    token.Start,
+			EndVal:      token.End,
+			PositionVal: position,
+		}
+		tlPtrs[i] = &tls[i]
+		if tf.Locations == nil {
+			// cap 1 so a second location reallocates rather than
+			// overwriting the next term's pointer in tlPtrs
+			tf.Locations = tlPtrs[i : i+1 : i+1]
+		} else {
+			tf.Locations = append(tf.Locations, tlPtrs[i])
+		}
+	}
+	return tfs, position
 }

@@ -18,6 +18,7 @@ package riot
 import (
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"time"
 
@@ -70,11 +71,14 @@ type Field interface {
 
 type TermField struct {
 	FieldOptions
-	name                 string
-	value                []byte
-	numPlainTextBytes    int
-	analyzedLength       int
-	analyzedTokenFreqs   analysis.TokenFrequencies
+	name               string
+	value              []byte
+	numPlainTextBytes  int
+	analyzedLength     int
+	analyzedTokenFreqs analysis.TokenFrequencies
+	// analyzedTerms holds the terms Analyze produced; the map form is only
+	// built on demand by AnalyzedTokenFrequencies.
+	analyzedTerms        []analysis.TokenFreq
 	analyzer             Analyzer
 	positionIncrementGap int
 }
@@ -103,6 +107,9 @@ func (b *TermField) AnalyzedLength() int {
 }
 
 func (b *TermField) AnalyzedTokenFrequencies() analysis.TokenFrequencies {
+	if b.analyzedTokenFreqs == nil && b.analyzedTerms != nil {
+		return analysis.NewTokenFrequencies(b.analyzedTerms)
+	}
 	return b.analyzedTokenFreqs
 }
 
@@ -150,6 +157,9 @@ func (b *TermField) HighlightMatches() *TermField {
 }
 
 func (b *TermField) EachTerm(vt segment.VisitTerm) {
+	for i := range b.analyzedTerms {
+		vt(&b.analyzedTerms[i])
+	}
 	for _, v := range b.analyzedTokenFreqs {
 		vt(v)
 	}
@@ -179,7 +189,7 @@ func (b *TermField) WithAnalyzer(fieldAnalyzer Analyzer) *TermField {
 func (b *TermField) Analyze(startOffset int) (lastPos int) {
 	if !b.Index() {
 		b.analyzedLength = 0
-		b.analyzedTokenFreqs = nil
+		b.analyzedTerms = nil
 		return startOffset
 	}
 	var tokens analysis.TokenStream
@@ -196,7 +206,7 @@ func (b *TermField) Analyze(startOffset int) (lastPos int) {
 		tokens = b.baseAnalayze(analysis.AlphaNumeric)
 	}
 	b.analyzedLength = len(tokens) // number of tokens in this doc field
-	b.analyzedTokenFreqs, lastPos = analysis.TokenFrequency(tokens, b.IncludeLocations(), startOffset)
+	b.analyzedTerms, lastPos = analysis.TokenFrequencySlice(tokens, b.IncludeLocations(), startOffset)
 	return lastPos
 }
 
@@ -240,21 +250,30 @@ const defaultNumericIndexingOptions = Index | Sortable | Aggregatable
 const defaultNumericPrecisionStep uint = 4
 
 func addShiftTokens(tokens analysis.TokenStream, original int64, shiftBy uint, typ analysis.TokenType) analysis.TokenStream {
-	shift := shiftBy
-	for shift < 64 {
-		shiftEncoded, err := numeric.NewPrefixCodedInt64(original, shift)
+	// size one token block and one term buffer for every shift up front
+	n, size := 0, 0
+	for shift := shiftBy; shift < 64; shift += shiftBy {
+		n++
+		size += int((63-shift)/7) + 2
+	}
+	block := make([]analysis.Token, n)
+	buf := make([]byte, size)
+	tokens = slices.Grow(tokens, n)
+	i := 0
+	for shift := shiftBy; shift < 64; shift += shiftBy {
+		var shiftEncoded numeric.PrefixCoded
+		var err error
+		shiftEncoded, buf, err = numeric.NewPrefixCodedInt64Prealloc(original, shift, buf)
 		if err != nil {
 			break
 		}
-		token := analysis.Token{
-			Start:        0,
-			End:          len(shiftEncoded),
-			Term:         shiftEncoded,
-			PositionIncr: 0,
-			Type:         typ,
+		block[i] = analysis.Token{
+			End:  len(shiftEncoded),
+			Term: shiftEncoded,
+			Type: typ,
 		}
-		tokens = append(tokens, &token)
-		shift += shiftBy
+		tokens = append(tokens, &block[i])
+		i++
 	}
 	return tokens
 }

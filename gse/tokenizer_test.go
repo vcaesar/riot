@@ -16,12 +16,16 @@ package gse
 
 import (
 	"reflect"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
 	gogse "github.com/go-ego/gse"
 
 	"github.com/vcaesar/riot/analysis"
+	"github.com/vcaesar/riot/analysis/tokenizer"
 )
 
 var (
@@ -168,5 +172,101 @@ func TestLowerASCII(t *testing.T) {
 	in := "Go 语言 ÀB"
 	if got := lowerASCII([]byte(in)); got != "go 语言 Àb" || len(got) != len(in) {
 		t.Fatalf("lowerASCII = %q", got)
+	}
+}
+
+// referenceTokenize is the straightforward Tokenize the optimized one must
+// match: one CutSearch per segment, regexp typing, a copy per term.
+func referenceTokenize(t *Tokenizer, input []byte) analysis.TokenStream {
+	text := lowerASCII(input)
+	var tokens analysis.TokenStream
+	cursor := 0
+	for _, word := range t.seg.Cut(text, t.hmm...) {
+		idx := strings.Index(text[cursor:], word)
+		if idx < 0 {
+			continue
+		}
+		start := cursor + idx
+		cursor = start + len(word)
+		if t.skip(word) {
+			continue
+		}
+		subs := []string{word}
+		if t.search {
+			subs = t.seg.CutSearch(word, t.hmm...)
+			if !slices.Contains(subs, word) {
+				subs = append(subs, word)
+			}
+		}
+		posIncr := 1
+		for _, sub := range subs {
+			if sub != word && t.skip(sub) {
+				continue
+			}
+			subStart := start + strings.Index(word, sub)
+			typ := analysis.AlphaNumeric
+			if tokenizer.IdeographRegexp.MatchString(sub) {
+				typ = analysis.Ideographic
+			} else if _, err := strconv.ParseFloat(sub, 64); err == nil {
+				typ = analysis.Numeric
+			}
+			tokens = append(tokens, &analysis.Token{
+				Start: subStart, End: subStart + len(sub), Term: []byte(sub),
+				PositionIncr: posIncr, Type: typ,
+			})
+			posIncr = 0
+		}
+	}
+	return tokens
+}
+
+func TestTokenizerMatchesReference(t *testing.T) {
+	seg := loadSeg(t)
+	inputs := []string{
+		benchText,
+		"搜索引擎好, 四条腿好, All animals is equal.",
+		"今天是星期几？NaN inf +Inf 0x1p-2 -3.5 1_000 こんにちは 한국어 カタカナ",
+		"天气天气 中华人民共和国国歌 北京大学生前来应聘 Ω σς",
+		"a 好 。 x1 2026年",
+		"",
+	}
+	for _, mode := range []string{"", "hmm", "dag", "search", "search-hmm", "search-dag"} {
+		search, hmm, err := cutMode(mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tk := NewTokenizer(seg, search, hmm...)
+		for _, in := range inputs {
+			got, want := tk.Tokenize([]byte(in)), referenceTokenize(tk, []byte(in))
+			if len(got) != len(want) {
+				t.Fatalf("mode %q input %q: %d tokens, want %d", mode, in, len(got), len(want))
+			}
+			for i := range want {
+				if !reflect.DeepEqual(*got[i], *want[i]) {
+					t.Fatalf("mode %q input %q token %d = %+v, want %+v", mode, in, i, *got[i], *want[i])
+				}
+			}
+		}
+	}
+}
+
+func TestTokenizerTermsDoNotAlias(t *testing.T) {
+	tokens := NewTokenizer(loadSeg(t), true).Tokenize([]byte("搜索引擎"))
+	if len(tokens) < 2 {
+		t.Fatalf("want sub-words, got %v", tokenTerms(tokens))
+	}
+	tokens[0].Term[0] = 'X'
+	for _, tok := range tokens[1:] {
+		if tok.Term[0] == 'X' {
+			t.Fatalf("token %q shares bytes with the first token", tok.Term)
+		}
+	}
+}
+
+func TestIsASCII(t *testing.T) {
+	for in, want := range map[string]bool{"": true, "bm25": true, "Go语言": false, "é": false} {
+		if got := isASCII(in); got != want {
+			t.Errorf("isASCII(%q) = %v, want %v", in, got, want)
+		}
 	}
 }

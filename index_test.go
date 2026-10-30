@@ -1818,3 +1818,48 @@ func TestBug87(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestBatchAnalyzesEveryChunk indexes a batch large enough to be split into
+// many analysis chunks, with a short final chunk, and checks every document
+// was analyzed.
+func TestBatchAnalyzesEveryChunk(t *testing.T) {
+	const n = 10_003
+	w, err := OpenWriter(InMemoryOnlyConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	batch := NewBatch()
+	for i := range n {
+		doc := NewDocument(strconv.Itoa(i)).AddField(NewKeywordField("k", "t"+strconv.Itoa(i)))
+		batch.Insert(doc)
+	}
+	if err := w.Batch(batch); err != nil {
+		t.Fatal(err)
+	}
+	r, err := w.Reader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if count, err := r.Count(); err != nil || count != n {
+		t.Fatalf("count %d, %v; want %d", count, err, n)
+	}
+	for _, i := range []int{0, 255, 256, n / 2, n - 1} {
+		it, err := r.Search(context.Background(), NewTopNSearch(1, NewTermQuery("t"+strconv.Itoa(i)).SetField("k")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m, err := it.Next(); err != nil || m == nil {
+			t.Fatalf("doc %d not found: %v", i, err)
+		}
+	}
+}

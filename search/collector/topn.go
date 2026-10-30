@@ -18,6 +18,7 @@ package collector
 import (
 	"context"
 
+	"github.com/vcaesar/riot/numeric"
 	"github.com/vcaesar/riot/search"
 )
 
@@ -53,6 +54,8 @@ type TopNCollector struct {
 
 	lowestMatchOutsideResults *search.DocumentMatch
 	searchAfter               *search.DocumentMatch
+	// scoreDesc is set during Collect when only the score orders hits
+	scoreDesc bool
 }
 
 // CheckDoneEvery controls how frequently we check the context deadline
@@ -143,13 +146,26 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 	// add fields needed by aggregations
 	hc.neededFields = uniqueFields(append(hc.neededFields, aggs.Fields()...))
 	bucket := search.NewBucket("", aggs)
+	hc.scoreDesc = hc.sort.ScoreDescOnly()
+	searchContext.SkipBlocks = bucket.BoundOnly()
 
 	var hitNumber int
+	// skipErr is the cancellation seen while a ScoreSkipper passed over hits
+	var skipErr error
+	nextHit := hc.nextHitFunc(searcher, searchContext, bucket, func(score float64, n int) bool {
+		before := hitNumber
+		hitNumber += n
+		bucket.ConsumeScore(score, n)
+		if hitNumber/CheckDoneEvery != before/CheckDoneEvery {
+			skipErr = ctx.Err()
+		}
+		return skipErr == nil
+	})
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		next, err = searcher.Next(searchContext)
+		next, err = nextHit()
 	}
 	for err == nil && next != nil {
 		if hitNumber%CheckDoneEvery == 0 {
@@ -168,7 +184,10 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 			return nil, err
 		}
 
-		next, err = searcher.Next(searchContext)
+		next, err = nextHit()
+	}
+	if err == nil {
+		err = skipErr
 	}
 	if err != nil {
 		return nil, err
@@ -191,6 +210,24 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 	return rv, nil
 }
 
+// nextHitFunc returns how Collect advances searcher. Once the results are
+// full, a ScoreSkipper only builds hits that beat the best evicted score and
+// hands the rest to skipped; that is exact when hits are ordered by score
+// alone and the aggregations only read the score.
+func (hc *TopNCollector) nextHitFunc(searcher search.Collectible, sctx *search.Context, bucket *search.Bucket,
+	skipped func(float64, int) bool) func() (*search.DocumentMatch, error) {
+	skipper, ok := searcher.(search.ScoreSkipper)
+	if !ok || !hc.scoreDesc || hc.searchAfter != nil || len(hc.neededFields) > 0 || !bucket.ScoreOnly() {
+		return func() (*search.DocumentMatch, error) { return searcher.Next(sctx) }
+	}
+	return func() (*search.DocumentMatch, error) {
+		if hc.lowestMatchOutsideResults == nil {
+			return searcher.Next(sctx)
+		}
+		return skipper.NextAbove(sctx, hc.lowestMatchOutsideResults.Score, skipped)
+	}
+}
+
 func (hc *TopNCollector) collectSingle(ctx *search.Context, d *search.DocumentMatch, bucket *search.Bucket) error {
 	var err error
 
@@ -201,8 +238,10 @@ func (hc *TopNCollector) collectSingle(ctx *search.Context, d *search.DocumentMa
 		}
 	}
 
-	// compute this hits sort value
-	hc.sort.Compute(d)
+	// compute this hits sort value; a score-only order has none to compute
+	if !hc.scoreDesc {
+		hc.sort.Compute(d)
+	}
 
 	// calculate aggregations
 	bucket.Consume(d)
@@ -222,13 +261,10 @@ func (hc *TopNCollector) collectSingle(ctx *search.Context, d *search.DocumentMa
 	// optimization, we track lowest sorting hit already removed from heap
 	// with this one comparison, we can avoid all heap operations if
 	// this hit would have been added and then immediately removed
-	if hc.lowestMatchOutsideResults != nil {
-		cmp := hc.sort.Compare(d, hc.lowestMatchOutsideResults)
-		if cmp >= 0 {
-			// this hit can't possibly be in the result set, so avoid heap ops
-			ctx.DocumentMatchPool.Put(d)
-			return nil
-		}
+	if hc.lowestMatchOutsideResults != nil && hc.outsideResults(d) {
+		// this hit can't possibly be in the result set, so avoid heap ops
+		ctx.DocumentMatchPool.Put(d)
+		return nil
 	}
 
 	removed := hc.store.AddNotExceedingSize(d, hc.size+hc.skip)
@@ -245,6 +281,17 @@ func (hc *TopNCollector) collectSingle(ctx *search.Context, d *search.DocumentMa
 		}
 	}
 	return nil
+}
+
+// outsideResults reports whether d sorts at or after the lowest hit already
+// evicted, so it cannot enter the results.
+func (hc *TopNCollector) outsideResults(d *search.DocumentMatch) bool {
+	if hc.scoreDesc {
+		// Compare on the sortable score bits; on a tie the earlier evicted
+		// hit wins by hit number.
+		return numeric.Float64ToInt64(d.Score) <= numeric.Float64ToInt64(hc.lowestMatchOutsideResults.Score)
+	}
+	return hc.sort.Compare(d, hc.lowestMatchOutsideResults) >= 0
 }
 
 // finalizeResults starts with the heap containing the final top size+skip

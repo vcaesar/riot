@@ -18,7 +18,11 @@ package collector
 import (
 	"context"
 	"math"
+	"reflect"
+	"sort"
 	"testing"
+
+	"github.com/vcaesar/riot/numeric"
 
 	"github.com/vcaesar/riot/search/aggregations"
 
@@ -400,4 +404,162 @@ func BenchmarkTop10000of1000000Scores(b *testing.B) {
 	benchHelper(1000000, func() search.Collector {
 		return NewTopNCollector(10000, 0, search.SortOrder{search.SortBy(search.DocumentScore()).Desc()})
 	}, b)
+}
+
+// TestTopNScoreDescFastPath checks the score-only shortcut keeps exactly the
+// hits the generic SortOrder.Compare ordering would, including ties, signed
+// zeros and NaN.
+func TestTopNScoreDescFastPath(t *testing.T) {
+	scores := []float64{1, 2, 2, 0, math.Copysign(0, -1), math.NaN(), 3, 2, 1, 5, 5, -1, math.Inf(1), 2, 0, 4, 4, 1}
+	order := search.SortOrder{search.SortBy(search.DocumentScore()).Desc()}
+	if !order.ScoreDescOnly() {
+		t.Fatal("-_score should take the fast path")
+	}
+	for _, size := range []int{1, 3, 5, 10, 12} {
+		matches := make([]*search.DocumentMatch, len(scores))
+		want := make([]*search.DocumentMatch, len(scores))
+		for i, s := range scores {
+			matches[i] = &search.DocumentMatch{Number: uint64(i), Score: s}
+			want[i] = &search.DocumentMatch{Number: uint64(i), Score: s, HitNumber: i + 1}
+		}
+		sort.SliceStable(want, func(i, j int) bool { return order.Compare(want[i], want[j]) < 0 })
+
+		dmi, err := NewTopNCollector(size, 0, order).
+			Collect(context.Background(), make(search.Aggregations), &stubSearcher{matches: matches})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range size {
+			got, err := dmi.Next()
+			if err != nil || got == nil {
+				t.Fatalf("size %d hit %d: %v, %v", size, i, got, err)
+			}
+			if got.Number != want[i].Number {
+				t.Fatalf("size %d hit %d: doc %d, want %d", size, i, got.Number, want[i].Number)
+			}
+		}
+	}
+}
+
+// skipSearcher is a stubSearcher that also implements search.ScoreSkipper.
+type skipSearcher struct {
+	stubSearcher
+	built int
+}
+
+func (s *skipSearcher) NextAbove(ctx *search.Context, floor float64,
+	skipped func(float64, int) bool) (*search.DocumentMatch, error) {
+	for s.index < len(s.matches) {
+		m := s.matches[s.index]
+		if numeric.Float64ToInt64(m.Score) > numeric.Float64ToInt64(floor) {
+			s.built++
+			return s.Next(ctx)
+		}
+		s.index++
+		if !skipped(m.Score, 1) {
+			return nil, nil
+		}
+	}
+	return nil, nil
+}
+
+func collectAll(ctx context.Context, t *testing.T, searcher search.Collectible, size int) ([]uint64, *search.Bucket) {
+	t.Helper()
+	aggs := make(search.Aggregations)
+	aggs.Add("count", aggregations.CountMatches())
+	aggs.Add("max_score", aggregations.Max(search.DocumentScore()))
+	aggs.Add("duration", aggregations.Duration())
+	dmi, err := NewTopNCollector(size, 0, search.SortOrder{search.SortBy(search.DocumentScore()).Desc()}).
+		Collect(ctx, aggs, searcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docs []uint64
+	for {
+		m, err := dmi.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m == nil {
+			return docs, dmi.Aggregations()
+		}
+		docs = append(docs, m.Number)
+	}
+}
+
+func TestTopNScoreSkipperMatchesPlainSearcher(t *testing.T) {
+	scores := []float64{3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3, 2, 3, 8, 4, 6, 2, 6, 4, 3, 3}
+	matches := make([]*search.DocumentMatch, len(scores))
+	for i, s := range scores {
+		matches[i] = &search.DocumentMatch{Number: uint64(i), Score: s}
+	}
+	for _, size := range []int{0, 1, 3, 10, 30} {
+		wantDocs, wantAggs := collectAll(context.Background(), t, &stubSearcher{matches: matches}, size)
+		skipper := &skipSearcher{stubSearcher: stubSearcher{matches: matches}}
+		gotDocs, gotAggs := collectAll(context.Background(), t, skipper, size)
+		if !reflect.DeepEqual(gotDocs, wantDocs) {
+			t.Fatalf("size %d: docs %v, want %v", size, gotDocs, wantDocs)
+		}
+		if gotAggs.Count() != wantAggs.Count() || gotAggs.Metric("max_score") != wantAggs.Metric("max_score") {
+			t.Fatalf("size %d: count %d max %v, want %d %v", size, gotAggs.Count(), gotAggs.Metric("max_score"),
+				wantAggs.Count(), wantAggs.Metric("max_score"))
+		}
+		if size > 0 && size < len(scores) && skipper.built >= len(scores)-size {
+			t.Fatalf("size %d: built %d matches, the skip path was not used", size, skipper.built)
+		}
+	}
+}
+
+// hitCountAgg reads every DocumentMatch, so it is not score-only.
+type hitCountAgg struct{ n *int }
+
+func (a hitCountAgg) Fields() []string              { return nil }
+func (a hitCountAgg) Calculator() search.Calculator { return a }
+func (a hitCountAgg) Consume(*search.DocumentMatch) { *a.n++ }
+func (a hitCountAgg) Finish()                       {}
+func (a hitCountAgg) Merge(search.Calculator)       {}
+
+func TestTopNScoreSkipperNotUsedForDocumentAggregations(t *testing.T) {
+	matches := makeMatches(50, 1)
+	skipper := &skipSearcher{stubSearcher: stubSearcher{matches: matches}}
+	var seen int
+	aggs := make(search.Aggregations)
+	aggs.Add("count", aggregations.CountMatches())
+	aggs.Add("hits", hitCountAgg{n: &seen})
+	if _, err := NewTopNCollector(5, 0, search.SortOrder{search.SortBy(search.DocumentScore()).Desc()}).
+		Collect(context.Background(), aggs, skipper); err != nil {
+		t.Fatal(err)
+	}
+	if skipper.built != 0 || seen != len(matches) {
+		t.Fatalf("built %d via skip path, aggregation saw %d of %d hits", skipper.built, seen, len(matches))
+	}
+}
+
+func TestTopNScoreSkipperHonorsCancel(t *testing.T) {
+	matches := makeMatches(5*CheckDoneEvery, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	skipper := &skipSearcher{stubSearcher: stubSearcher{matches: matches}}
+	// cancel once the results are full so only the skip loop can notice
+	cancelAfter := &cancelAfterSearcher{skipSearcher: skipper, cancel: cancel, after: 11}
+	_, err := NewTopNCollector(10, 0, search.SortOrder{search.SortBy(search.DocumentScore()).Desc()}).
+		Collect(ctx, make(search.Aggregations), cancelAfter)
+	if err != context.Canceled {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if skipper.index == len(matches) {
+		t.Fatalf("skip loop kept going after cancel")
+	}
+}
+
+type cancelAfterSearcher struct {
+	*skipSearcher
+	cancel func()
+	after  int
+}
+
+func (c *cancelAfterSearcher) Next(ctx *search.Context) (*search.DocumentMatch, error) {
+	if c.index+1 >= c.after {
+		c.cancel()
+	}
+	return c.skipSearcher.Next(ctx)
 }

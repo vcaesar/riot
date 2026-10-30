@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/RoaringBitmap/roaring/v2"
 	segment "github.com/vcaesar/bluge_segment_api"
 )
 
@@ -36,6 +37,9 @@ type postingsIterator struct {
 	currPosting        segment.Posting
 	currID             uint64
 	recycle            bool
+	// batched is set once NextBatch has moved the iterators, standing in
+	// for currPosting when Advance checks for a backwards seek
+	batched bool
 }
 
 func (i *postingsIterator) Size() int {
@@ -81,7 +85,7 @@ func (i *postingsIterator) Next() (segment.Posting, error) {
 func (i *postingsIterator) Advance(number uint64) (segment.Posting, error) {
 	// FIXME do something better
 	// for now, if we need to seek backwards, then restart from the beginning
-	if i.currPosting != nil && i.currID >= number {
+	if (i.currPosting != nil || i.batched) && i.currID >= number {
 		i2, err := i.snapshot.PostingsIterator(i.term, i.field,
 			i.includeFreq, i.includeNorm, i.includeTermVectors)
 		if err != nil {
@@ -117,6 +121,113 @@ func (i *postingsIterator) Advance(number uint64) (segment.Posting, error) {
 	i.currID = rvNumber
 	i.currPosting = next
 	return next, nil
+}
+
+// postingsBatcher is implemented by segment postings iterators that can
+// read many postings per call (ice.PostingsIterator).
+type postingsBatcher interface {
+	NextBatch(docs []uint64, freqs []int, norms []float64) (int, error)
+}
+
+// NextBatch reads up to len(docs) postings, numbered across the snapshot,
+// into docs, freqs and norms; 0 means the end. Locations are not read.
+func (i *postingsIterator) NextBatch(docs []uint64, freqs []int, norms []float64) (int, error) {
+	for i.segmentOffset < len(i.iterators) {
+		it := i.iterators[i.segmentOffset]
+		n := 0
+		if b, ok := it.(postingsBatcher); ok {
+			var err error
+			if n, err = b.NextBatch(docs, freqs, norms); err != nil {
+				return 0, err
+			}
+		} else {
+			for n < len(docs) {
+				p, err := it.Next()
+				if err != nil {
+					return 0, err
+				}
+				if p == nil {
+					break
+				}
+				docs[n], freqs[n], norms[n] = p.Number(), p.Frequency(), p.Norm()
+				n++
+			}
+		}
+		if n > 0 {
+			off := i.snapshot.offsets[i.segmentOffset]
+			for k := range n {
+				docs[k] += off
+			}
+			i.currID, i.batched = docs[n-1], true
+			return n, nil
+		}
+		i.segmentOffset++
+	}
+	return 0, nil
+}
+
+// blockSkipper is implemented by segment postings iterators that can skip
+// postings blocks by their freq/norm bounds (ice.PostingsIterator).
+type blockSkipper interface {
+	SkipBlocks(competitive func(maxFreq int, minNorm float64) bool) (uint64, error)
+}
+
+// SkipBlocks skips the postings blocks of the current segment, from the
+// next posting on, whose bounds competitive rejects, and returns how many
+// postings it skipped.
+func (i *postingsIterator) SkipBlocks(competitive func(maxFreq int, minNorm float64) bool) (uint64, error) {
+	if i.segmentOffset >= len(i.iterators) {
+		return 0, nil
+	}
+	if b, ok := i.iterators[i.segmentOffset].(blockSkipper); ok {
+		return b.SkipBlocks(competitive)
+	}
+	return 0, nil
+}
+
+// blockBounder is implemented by segment postings iterators that expose
+// the freq/norm bounds of the block holding a document (ice.PostingsIterator).
+type blockBounder interface {
+	BlockBound(docNum uint64) (maxFreq int, minNorm float64, end uint64, ok bool)
+}
+
+// BlockBound returns the largest freq and smallest norm of the postings
+// block holding the snapshot document number, and the first number past
+// that block (clipped to its segment). ok is false when no bound is known.
+func (i *postingsIterator) BlockBound(number uint64) (maxFreq int, minNorm float64, end uint64, ok bool) {
+	segIndex, local := i.snapshot.segmentIndexAndLocalDocNumFromGlobal(number)
+	if segIndex < 0 || segIndex >= len(i.iterators) {
+		return 0, 0, 0, false
+	}
+	b, isBounder := i.iterators[segIndex].(blockBounder)
+	if !isBounder {
+		return 0, 0, 0, false
+	}
+	maxFreq, minNorm, end, ok = b.BlockBound(local)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	off := i.snapshot.offsets[segIndex]
+	end += off
+	if segIndex+1 < len(i.snapshot.offsets) {
+		end = min(end, i.snapshot.offsets[segIndex+1])
+	}
+	return maxFreq, minNorm, end, true
+}
+
+// SegmentBitmap returns the actual postings bitmap of the segment holding
+// the snapshot document number, in segment-local numbers, and that
+// segment's first snapshot number; nil when it has none.
+func (i *postingsIterator) SegmentBitmap(number uint64) (bm *roaring.Bitmap, base uint64) {
+	segIndex, _ := i.snapshot.segmentIndexAndLocalDocNumFromGlobal(number)
+	if segIndex < 0 || segIndex >= len(i.iterators) {
+		return nil, 0
+	}
+	o, ok := i.iterators[segIndex].(segment.OptimizablePostingsIterator)
+	if !ok {
+		return nil, 0
+	}
+	return o.ActualBitmap(), i.snapshot.offsets[segIndex]
 }
 
 func (i *postingsIterator) Count() uint64 {

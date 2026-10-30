@@ -65,15 +65,19 @@ func (r *Reader) Search(ctx context.Context, req SearchRequest) (search.Document
 		return nil, err
 	}
 
-	memNeeded := memNeededForSearch(searcher, collector)
-	if r.config.SearchStartFunc != nil {
-		err = r.config.SearchStartFunc(memNeeded)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if r.config.SearchEndFunc != nil {
-		defer r.config.SearchEndFunc(memNeeded)
+	// sizing walks every searcher, so only do it for the hooks that read it
+	if r.config.SearchStartFunc != nil || r.config.SearchEndFunc != nil {
+		memNeeded := memNeededForSearch(searcher, collector)
+		if r.config.SearchStartFunc != nil {
+			err = r.config.SearchStartFunc(memNeeded)
+		}
+		if err != nil {
+			_ = searcher.Close()
+			return nil, err
+		}
+		if r.config.SearchEndFunc != nil {
+			defer r.config.SearchEndFunc(memNeeded)
+		}
 	}
 
 	var dmItr search.DocumentMatchIterator
