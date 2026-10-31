@@ -371,6 +371,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 [`examples/ann_disk`](../examples/ann_disk) indexiert Vektoren auf der Festplatte und durchsucht sie nach dem erneuten Öffnen: `go run ./examples/ann_disk`.
 
+## Benchmarks
+
+### Riot vs. Bluge (die Engine, von der es geforkt wurde)
+
+Ein einziges Go-Programm, gebaut gegen `blugelabs/bluge v0.2.2` (neuester Tag) und `vcaesar/riot v1.61.2`, nur der Importpfad unterscheidet sich: 200.000 Dokumente auf der Festplatte (12 zufällige Wörter, ein Keyword und eine Zahl), jede Abfrage 50-mal ausgeführt (Top 10 mit Trefferzahl), Median aus drei abwechselnden Durchläufen (Apple M1, Load Average 2,5 bis 3,3).
+
+| Workload | Treffer | Bluge v0.2.2 | Riot v1.61.2 | Riot vs. Bluge |
+| --- | --- | --- | --- | --- |
+| 200.000 Dokumente indizieren und schließen | | 4.83 s | 2.78 s | 1.7× schneller |
+| Indexgröße auf der Festplatte | | 57.3 MB | 36.4 MB | 36 % kleiner |
+| Term | 67,086 | 9.03 ms | 0.31 ms | 29× schneller |
+| Match, 2 Wörter | 112,469 | 19.9 ms | 5.65 ms | 3.5× schneller |
+| Match phrase | 2,435 | 12.8 ms | 6.94 ms | 1.8× schneller |
+| Bool `must` rag, chunk + `must_not` edge | 14,975 | 7.70 ms | 3.41 ms | 2.3× schneller |
+| Bool `must` rag, chunk | 21,207 | 6.20 ms | 4.18 ms | 1.5× schneller |
+| Bool `should` rag, chunk, `min_should` 2 | 21,207 | 8.79 ms | 4.19 ms | 2.1× schneller |
+| Bool `should` rag, chunk, edge, `min_should` 3 | 6,232 | 10.2 ms | 2.75 ms | 3.7× schneller |
+| Bool `should` rag, chunk (beliebig) | 112,377 | 19.7 ms | 5.87 ms | 3.4× schneller |
+| Prefix `se*` (konstanter Score in riot) | 112,414 | 18.7 ms | 0.18 ms | 104× schneller |
+| Fuzzy `clustr` | 67,002 | 10.0 ms | 2.66 ms | 3.8× schneller |
+| Numerischer Bereich | 19,648 | 4.17 ms | 2.46 ms | 1.7× schneller |
+| Match, sortiert nach einem numerischen Feld | 66,690 | 123 ms | 27.4 ms | 4.5× schneller |
+
+Jeder riot-Durchlauf war schneller als jeder Bluge-Durchlauf, bei gleichen Trefferzahlen. Die Scores unterscheiden sich, weil riot die BM25-idf von Bluge auf die von Lucene korrigiert hat: `log(1 + (N − n + 0.5)/(n + 0.5))`. Bluge hat keine Vektorsuche. Dies sind Messwerte von einer einzelnen Maschine mit Zufallsdaten, kein formaler Benchmark.
+
 <!-- ## Repobeats
 
 ![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->

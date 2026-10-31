@@ -371,6 +371,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 [`examples/ann_disk`](../examples/ann_disk) indexe des vecteurs sur disque et les interroge après réouverture : `go run ./examples/ann_disk`.
 
+## Benchmarks
+
+### Riot vs Bluge (le moteur dont il est issu)
+
+Un même programme Go compilé avec `blugelabs/bluge v0.2.2` (dernier tag) et `vcaesar/riot v1.61.2`, seul le chemin d'import changeant : 200 000 documents sur disque (12 mots aléatoires, un mot-clé et un nombre), chaque requête exécutée 50 fois (top 10 avec nombre de résultats), médiane de trois exécutions alternées (Apple M1, charge moyenne de 2,5 à 3,3).
+
+| Charge | Résultats | Bluge v0.2.2 | Riot v1.61.2 | Riot vs Bluge |
+| --- | --- | --- | --- | --- |
+| Indexer 200 000 documents et fermer | | 4.83 s | 2.78 s | 1.7× plus rapide |
+| Taille de l'index sur disque | | 57.3 MB | 36.4 MB | 36 % plus petit |
+| Term | 67,086 | 9.03 ms | 0.31 ms | 29× plus rapide |
+| Match, 2 mots | 112,469 | 19.9 ms | 5.65 ms | 3.5× plus rapide |
+| Match phrase | 2,435 | 12.8 ms | 6.94 ms | 1.8× plus rapide |
+| Bool `must` rag, chunk + `must_not` edge | 14,975 | 7.70 ms | 3.41 ms | 2.3× plus rapide |
+| Bool `must` rag, chunk | 21,207 | 6.20 ms | 4.18 ms | 1.5× plus rapide |
+| Bool `should` rag, chunk, `min_should` 2 | 21,207 | 8.79 ms | 4.19 ms | 2.1× plus rapide |
+| Bool `should` rag, chunk, edge, `min_should` 3 | 6,232 | 10.2 ms | 2.75 ms | 3.7× plus rapide |
+| Bool `should` rag, chunk (au moins un) | 112,377 | 19.7 ms | 5.87 ms | 3.4× plus rapide |
+| Prefix `se*` (score constant dans riot) | 112,414 | 18.7 ms | 0.18 ms | 104× plus rapide |
+| Fuzzy `clustr` | 67,002 | 10.0 ms | 2.66 ms | 3.8× plus rapide |
+| Plage numérique | 19,648 | 4.17 ms | 2.46 ms | 1.7× plus rapide |
+| Match, trié par un champ numérique | 66,690 | 123 ms | 27.4 ms | 4.5× plus rapide |
+
+Chaque exécution de riot a battu chaque exécution de Bluge, avec les mêmes nombres de résultats. Les scores diffèrent car riot a corrigé l'idf BM25 de Bluge pour reprendre celui de Lucene, `log(1 + (N − n + 0.5)/(n + 0.5))`. Bluge n'a pas de recherche vectorielle. Ce sont des chiffres mesurés sur une seule machine avec des données aléatoires, pas un benchmark formel.
+
 <!-- ## Repobeats
 
 ![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
