@@ -285,7 +285,7 @@ func (q *BooleanQuery) Searcher(i search.Reader, options search.SearcherOptions)
 		var err error
 		mustSearcher, err = searcher.NewMatchAllSearcher(i, 1, similarity.ConstantScorer(1), options)
 		if err != nil {
-			return nil, err
+			return nil, closeSearchers(err, mustNotSearcher)
 		}
 	}
 
@@ -445,12 +445,15 @@ func (q *DateRangeQuery) Searcher(i search.Reader, options search.SearcherOption
 		field = options.DefaultSearchField
 	}
 
-	if q.scorer == nil {
-		q.scorer = similarity.ConstantScorer(1)
+	// a local default keeps Searcher free of writes to q, so one query can
+	// be searched concurrently and later SetBoost calls take effect
+	scorer := q.scorer
+	if scorer == nil {
+		scorer = similarity.ConstantScorer(q.boost.Value())
 	}
 
 	return searcher.NewNumericRangeSearcher(i, minValue, maxValue, q.inclusiveStart, q.inclusiveEnd, field,
-		q.boost.Value(), q.scorer, similarity.NewCompositeSumScorer(), options)
+		q.boost.Value(), scorer, similarity.NewCompositeSumScorer(), options)
 }
 
 func (q *DateRangeQuery) parseEndpoints() (minValue, maxValue float64, err error) {
@@ -629,8 +632,9 @@ func (q *GeoBoundingBoxQuery) Searcher(i search.Reader, options search.SearcherO
 		field = options.DefaultSearchField
 	}
 
-	if q.scorer == nil {
-		q.scorer = similarity.ConstantScorer(1)
+	scorer := q.scorer
+	if scorer == nil {
+		scorer = similarity.ConstantScorer(q.boost.Value())
 	}
 
 	if q.bottomRight[0] < q.topLeft[0] {
@@ -638,14 +642,14 @@ func (q *GeoBoundingBoxQuery) Searcher(i search.Reader, options search.SearcherO
 
 		leftSearcher, err := searcher.NewGeoBoundingBoxSearcher(i,
 			minLon, q.bottomRight[1], q.bottomRight[0], q.topLeft[1],
-			field, q.boost.Value(), q.scorer, similarity.NewCompositeSumScorer(),
+			field, q.boost.Value(), scorer, similarity.NewCompositeSumScorer(),
 			options, true, geoPrecisionStep)
 		if err != nil {
 			return nil, err
 		}
 		rightSearcher, err := searcher.NewGeoBoundingBoxSearcher(i,
 			q.topLeft[0], q.bottomRight[1], maxLon, q.topLeft[1],
-			field, q.boost.Value(), q.scorer, similarity.NewCompositeSumScorer(),
+			field, q.boost.Value(), scorer, similarity.NewCompositeSumScorer(),
 			options, true, geoPrecisionStep)
 		if err != nil {
 			_ = leftSearcher.Close()
@@ -657,7 +661,7 @@ func (q *GeoBoundingBoxQuery) Searcher(i search.Reader, options search.SearcherO
 	}
 
 	return searcher.NewGeoBoundingBoxSearcher(i, q.topLeft[0], q.bottomRight[1], q.bottomRight[0], q.topLeft[1],
-		field, q.boost.Value(), q.scorer, similarity.NewCompositeSumScorer(),
+		field, q.boost.Value(), scorer, similarity.NewCompositeSumScorer(),
 		options, true, geoPrecisionStep)
 }
 
@@ -1081,18 +1085,18 @@ func (q *MatchQuery) Searcher(i search.Reader, options search.SearcherOptions) (
 			}
 		}
 
+		// the boost is already on every term; boosting the boolean too would
+		// apply it twice and keep it off BooleanQuery's unwrapped fast path
 		switch q.operator {
 		case MatchQueryOperatorOr:
 			booleanQuery := NewBooleanQuery()
 			booleanQuery.AddShould(tqs...)
 			booleanQuery.SetMinShould(1)
-			booleanQuery.SetBoost(q.boost.Value())
 			return booleanQuery.Searcher(i, options)
 
 		case MatchQueryOperatorAnd:
 			booleanQuery := NewBooleanQuery()
 			booleanQuery.AddMust(tqs...)
-			booleanQuery.SetBoost(q.boost.Value())
 			return booleanQuery.Searcher(i, options)
 
 		default:
@@ -1247,11 +1251,12 @@ func (q *NumericRangeQuery) Searcher(i search.Reader, options search.SearcherOpt
 	if q.field == "" {
 		field = options.DefaultSearchField
 	}
-	if q.scorer == nil {
-		q.scorer = similarity.ConstantScorer(q.boost.Value())
+	scorer := q.scorer
+	if scorer == nil {
+		scorer = similarity.ConstantScorer(q.boost.Value())
 	}
 	return searcher.NewNumericRangeSearcher(i, q.min, q.max, q.inclusiveMin, q.inclusiveMax, field,
-		q.boost.Value(), q.scorer, similarity.NewCompositeSumScorer(), options)
+		q.boost.Value(), scorer, similarity.NewCompositeSumScorer(), options)
 }
 
 func (q *NumericRangeQuery) Validate() error {

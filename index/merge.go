@@ -30,6 +30,7 @@ func (s *Writer) mergerLoop(merges chan *segmentMerge, persisterNotifier watcher
 	defer s.asyncTasks.Done()
 
 	var lastEpochMergePlanned uint64
+	var errStreak int
 
 	// tell the persister we're waiting for anything after the initialEpoch
 	ew, err := persisterNotifier.NotifyUsAfter(0, s.closeCh)
@@ -66,8 +67,11 @@ OUTER:
 					s.fireAsyncError(fmt.Errorf("merging err: %v", err))
 					_ = ourSnapshot.Close()
 					atomic.AddUint64(&s.stats.TotFileMergeLoopErr, 1)
+					errStreak++
+					s.errorBackoff(errStreak)
 					continue OUTER
 				}
+				errStreak = 0
 				lastEpochMergePlanned = ourSnapshot.epoch
 
 				atomic.StoreUint64(&s.stats.LastMergedEpoch, ourSnapshot.epoch)

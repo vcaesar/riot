@@ -700,11 +700,13 @@ func (dvr *documentValueReader) VisitDocumentNumbers(number uint64,
 	}
 
 	if dvr.currSegmentIndex != segmentIndex {
-		dvr.currSegmentIndex = segmentIndex
-		sdvr, err := dvr.i.segment[dvr.currSegmentIndex].segment.DocumentValueReader(dvr.fields)
+		// switch segments only on success, else the next call in this
+		// segment would reuse the previous segment's reader
+		sdvr, err := dvr.i.segment[segmentIndex].segment.DocumentValueReader(dvr.fields)
 		if err != nil {
 			return err
 		}
+		dvr.currSegmentIndex = segmentIndex
 		dvr.sdvr = sdvr
 	}
 

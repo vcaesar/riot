@@ -81,13 +81,6 @@ func OpenWriter(config Config) (*Writer, error) {
 		closeCh:        make(chan struct{}),
 	}
 
-	// start the requested number of analysis workers
-	for i := 0; i < config.NumAnalysisWorkers; i++ {
-		config.GoFunc(func() {
-			analysisWorker(config.AnalysisChan, rv.closeCh)
-		})
-	}
-
 	var err error
 	rv.segPlugin, err = loadSegmentPlugin(config.supportedSegmentPlugins, config.SegmentType, config.SegmentVersion)
 	if err != nil {
@@ -152,6 +145,14 @@ func OpenWriter(config Config) (*Writer, error) {
 	}
 	rv.warmPersistedGraphs()
 
+	// start the analysis workers only once open can no longer fail, so a
+	// failed open leaks none of them
+	for i := 0; i < config.NumAnalysisWorkers; i++ {
+		config.GoFunc(func() {
+			analysisWorker(config.AnalysisChan, rv.closeCh)
+		})
+	}
+
 	rv.introductions = make(chan *segmentIntroduction)
 	persistsCh := make(chan *persistIntroduction)
 	mergesCh := make(chan *segmentMerge)
@@ -215,6 +216,10 @@ func (s *Writer) loadSnapshots() (lastPersistedEpoch, nextSnapshotEpoch uint64,
 		atomic.StoreUint64(&s.stats.TotFileSegmentsAtRoot, uint64(len(indexSnapshot.segment)))
 		s.replaceRoot(indexSnapshot, nil, nil)
 	}
+	if snapshotsFound {
+		// the newest snapshot may have failed to load; never reuse its epoch
+		nextSnapshotEpoch = max(nextSnapshotEpoch, snapshotEpochs[0]+1)
+	}
 	if snapshotsFound && !snapshotLoaded {
 		// handle this case better, there was at least one snapshot on disk
 		// but we failed to successfully load anything
@@ -263,6 +268,17 @@ func (s *Writer) close() (err error) {
 	s.asyncTasks.Wait()
 	s.graphPersists.Wait()
 
+	s.rootLock.Lock()
+	persisted, callbacks := s.rootPersisted, s.persistedCallbacks
+	s.rootPersisted, s.persistedCallbacks = nil, nil
+	s.rootLock.Unlock()
+	// the persister stopped before reaching these: release their waiters
+	for _, ch := range persisted {
+		ch <- segment.ErrClosed
+		close(ch)
+	}
+	callAll(callbacks, segment.ErrClosed)
+
 	s.replaceRoot(nil, nil, nil)
 
 	err = s.directory.Unlock()
@@ -292,13 +308,17 @@ func (s *Writer) Batch(batch *Batch) (err error) {
 	for lo := 0; lo < numUpdates; lo += chunk {
 		docs := batch.documents[lo:min(lo+chunk, numUpdates)]
 		allDocsAnalyzed.Add(1)
-		s.config.AnalysisChan <- func() {
+		select {
+		case <-s.closeCh:
+			return segment.ErrClosed
+		case s.config.AnalysisChan <- func() {
 			for _, doc := range docs {
 				if doc != nil {
 					doc.Analyze()
 				}
 			}
 			allDocsAnalyzed.Done()
+		}:
 		}
 	}
 
@@ -362,6 +382,9 @@ func (s *Writer) prepareSegment(newSegment *segmentWrapper, idTerms []segment.Te
 
 	// optimistically prepare obsoletes outside of rootLock
 	root := s.currentSnapshot()
+	if root == nil {
+		return segment.ErrClosed
+	}
 	defer func() { _ = root.Close() }()
 
 	for _, seg := range root.segment {
@@ -374,7 +397,11 @@ func (s *Writer) prepareSegment(newSegment *segmentWrapper, idTerms []segment.Te
 
 	introStartTime := time.Now()
 
-	s.introductions <- introduction
+	select {
+	case <-s.closeCh:
+		return segment.ErrClosed
+	case s.introductions <- introduction:
+	}
 
 	// block until this segment is applied
 	err := <-introduction.applied

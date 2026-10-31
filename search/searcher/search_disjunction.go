@@ -56,8 +56,15 @@ func newDisjunctionSearcher(indexReader search.Reader,
 		optionsDisjunctionOptimizable(options) {
 		rv, err := optimizeCompositeSearcher("disjunction:unadorned",
 			indexReader, qsearchers, options)
-		if err != nil || rv != nil {
-			return rv, err
+		if err != nil {
+			return nil, err
+		}
+		if rv != nil {
+			if minMatches > 0 {
+				// BooleanSearcher reads Min to decide if shoulds are required
+				return &minTermSearcher{TermSearcher: rv.(*TermSearcher), min: minMatches}, nil
+			}
+			return rv, nil
 		}
 	}
 
@@ -70,6 +77,17 @@ func newDisjunctionSearcher(indexReader search.Reader,
 }
 
 const optionScoringNone = "none"
+
+// minTermSearcher is a merged disjunction that keeps the clause minimum,
+// which a plain TermSearcher reports as 0.
+type minTermSearcher struct {
+	*TermSearcher
+	min int
+}
+
+func (s *minTermSearcher) Min() int {
+	return s.min
+}
 
 func optimizeCompositeSearcher(optimizationKind string,
 	indexReader search.Reader, qsearchers []search.Searcher,
