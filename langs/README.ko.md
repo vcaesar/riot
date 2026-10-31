@@ -370,6 +370,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 [`examples/ann_disk`](../examples/ann_disk)는 디스크에 벡터를 인덱싱하고 다시 연 뒤 검색합니다: `go run ./examples/ann_disk`.
 
+## 벤치마크
+
+### Riot vs Bluge (포크 원본 엔진)
+
+하나의 Go 프로그램을 `blugelabs/bluge v0.2.2`(최신 태그)와 `vcaesar/riot v1.61.2`로 각각 빌드하고 import 경로만 바꿨습니다. 디스크에 저장된 문서 200,000개(무작위 단어 12개, 키워드 1개, 숫자 1개), 쿼리마다 50회 실행(상위 10개와 히트 수), 번갈아 실행한 3회의 중앙값(Apple M1, 부하 평균 2.5~3.3)입니다.
+
+| 워크로드 | 히트 수 | Bluge v0.2.2 | Riot v1.61.2 | Riot vs Bluge |
+| --- | --- | --- | --- | --- |
+| 문서 200,000개 색인 후 닫기 | | 4.83 s | 2.78 s | 1.7배 빠름 |
+| 디스크상 인덱스 크기 | | 57.3 MB | 36.4 MB | 36% 작음 |
+| Term | 67,086 | 9.03 ms | 0.31 ms | 29배 빠름 |
+| Match, 2단어 | 112,469 | 19.9 ms | 5.65 ms | 3.5배 빠름 |
+| Match phrase | 2,435 | 12.8 ms | 6.94 ms | 1.8배 빠름 |
+| Bool `must` rag, chunk + `must_not` edge | 14,975 | 7.70 ms | 3.41 ms | 2.3배 빠름 |
+| Bool `must` rag, chunk | 21,207 | 6.20 ms | 4.18 ms | 1.5배 빠름 |
+| Bool `should` rag, chunk, `min_should` 2 | 21,207 | 8.79 ms | 4.19 ms | 2.1배 빠름 |
+| Bool `should` rag, chunk, edge, `min_should` 3 | 6,232 | 10.2 ms | 2.75 ms | 3.7배 빠름 |
+| Bool `should` rag, chunk (하나 이상) | 112,377 | 19.7 ms | 5.87 ms | 3.4배 빠름 |
+| Prefix `se*` (riot에서는 상수 점수) | 112,414 | 18.7 ms | 0.18 ms | 104배 빠름 |
+| Fuzzy `clustr` | 67,002 | 10.0 ms | 2.66 ms | 3.8배 빠름 |
+| 숫자 범위 | 19,648 | 4.17 ms | 2.46 ms | 1.7배 빠름 |
+| Match, 숫자 필드로 정렬 | 66,690 | 123 ms | 27.4 ms | 4.5배 빠름 |
+
+모든 riot 실행이 모든 Bluge 실행보다 빨랐고 히트 수는 동일했습니다. 점수가 다른 이유는 riot이 Bluge의 BM25 idf를 Lucene의 `log(1 + (N − n + 0.5)/(n + 0.5))`로 수정했기 때문입니다. Bluge에는 벡터 검색이 없습니다. 무작위 데이터로 한 대의 머신에서 측정한 수치이며 공식 벤치마크가 아닙니다.
+
 <!-- ## Repobeats
 
 ![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->

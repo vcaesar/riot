@@ -371,6 +371,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 [`examples/ann_disk`](examples/ann_disk) indexes vectors on disk and searches them after reopening: `go run ./examples/ann_disk`.
 
+## Benchmarks
+
+### Riot vs Bluge (the engine it forked)
+
+One Go program built against `blugelabs/bluge v0.2.2` (latest tag) and `vcaesar/riot v1.61.2`, only the import path differing: 200,000 on-disk documents (12 random words, a keyword and a number), each query run 50 times (top 10 with hit counts), median of three alternating runs (Apple M1, load average 2.5 to 3.3).
+
+| Workload | Hits | Bluge v0.2.2 | Riot v1.61.2 | Riot vs Bluge |
+| --- | --- | --- | --- | --- |
+| Index 200,000 docs and close | | 4.83 s | 2.78 s | 1.7× faster |
+| Index size on disk | | 57.3 MB | 36.4 MB | 36% smaller |
+| Term | 67,086 | 9.03 ms | 0.31 ms | 29× faster |
+| Match, 2 words | 112,469 | 19.9 ms | 5.65 ms | 3.5× faster |
+| Match phrase | 2,435 | 12.8 ms | 6.94 ms | 1.8× faster |
+| Bool `must` rag, chunk + `must_not` edge | 14,975 | 7.70 ms | 3.41 ms | 2.3× faster |
+| Bool `must` rag, chunk | 21,207 | 6.20 ms | 4.18 ms | 1.5× faster |
+| Bool `should` rag, chunk, `min_should` 2 | 21,207 | 8.79 ms | 4.19 ms | 2.1× faster |
+| Bool `should` rag, chunk, edge, `min_should` 3 | 6,232 | 10.2 ms | 2.75 ms | 3.7× faster |
+| Bool `should` rag, chunk (any) | 112,377 | 19.7 ms | 5.87 ms | 3.4× faster |
+| Prefix `se*` (constant score in riot) | 112,414 | 18.7 ms | 0.18 ms | 104× faster |
+| Fuzzy `clustr` | 67,002 | 10.0 ms | 2.66 ms | 3.8× faster |
+| Numeric range | 19,648 | 4.17 ms | 2.46 ms | 1.7× faster |
+| Match, sorted by a numeric field | 66,690 | 123 ms | 27.4 ms | 4.5× faster |
+
+Every riot run beat every Bluge run, with the same hit counts. Scores differ because riot fixed Bluge's BM25 idf to Lucene's `log(1 + (N − n + 0.5)/(n + 0.5))`. Bluge has no vector search. These are single-machine numbers on random data, not a formal benchmark.
+
 <!-- ## Repobeats
 
 ![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->

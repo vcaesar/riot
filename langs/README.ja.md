@@ -369,6 +369,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 [`examples/ann_disk`](../examples/ann_disk) はディスク上でベクトルをインデックスし、再オープン後に検索します：`go run ./examples/ann_disk`。
 
+## ベンチマーク
+
+### Riot と Bluge（フォーク元のエンジン）の比較
+
+同一の Go プログラムを `blugelabs/bluge v0.2.2`（最新タグ）と `vcaesar/riot v1.61.2` でビルドし、インポートパスのみを変えて計測しました：ディスク上の 200,000 件のドキュメント（ランダムな 12 語、キーワード 1 つ、数値 1 つ）、各クエリを 50 回実行（上位 10 件とヒット数）、交互に行った 3 回の実行の中央値（Apple M1、ロードアベレージ 2.5〜3.3）。
+
+| ワークロード | ヒット数 | Bluge v0.2.2 | Riot v1.61.2 | Riot と Bluge の比較 |
+| --- | --- | --- | --- | --- |
+| 200,000 件をインデックスしてクローズ | | 4.83 s | 2.78 s | 1.7 倍高速 |
+| ディスク上のインデックスサイズ | | 57.3 MB | 36.4 MB | 36% 小さい |
+| Term | 67,086 | 9.03 ms | 0.31 ms | 29 倍高速 |
+| Match、2 語 | 112,469 | 19.9 ms | 5.65 ms | 3.5 倍高速 |
+| Match phrase | 2,435 | 12.8 ms | 6.94 ms | 1.8 倍高速 |
+| Bool `must` rag, chunk + `must_not` edge | 14,975 | 7.70 ms | 3.41 ms | 2.3 倍高速 |
+| Bool `must` rag, chunk | 21,207 | 6.20 ms | 4.18 ms | 1.5 倍高速 |
+| Bool `should` rag, chunk, `min_should` 2 | 21,207 | 8.79 ms | 4.19 ms | 2.1 倍高速 |
+| Bool `should` rag, chunk, edge, `min_should` 3 | 6,232 | 10.2 ms | 2.75 ms | 3.7 倍高速 |
+| Bool `should` rag, chunk （いずれか） | 112,377 | 19.7 ms | 5.87 ms | 3.4 倍高速 |
+| Prefix `se*`（riot では定数スコア） | 112,414 | 18.7 ms | 0.18 ms | 104 倍高速 |
+| Fuzzy `clustr` | 67,002 | 10.0 ms | 2.66 ms | 3.8 倍高速 |
+| 数値範囲 | 19,648 | 4.17 ms | 2.46 ms | 1.7 倍高速 |
+| Match、数値フィールドでソート | 66,690 | 123 ms | 27.4 ms | 4.5 倍高速 |
+
+riot のすべての実行が Bluge のすべての実行を上回り、ヒット数も同一でした。スコアが異なるのは、riot が Bluge の BM25 idf を Lucene の `log(1 + (N − n + 0.5)/(n + 0.5))` に修正したためです。Bluge にはベクトル検索がありません。これはランダムデータによる単一マシンでの数値であり、正式なベンチマークではありません。
+
 <!-- ## Repobeats
 
 ![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->

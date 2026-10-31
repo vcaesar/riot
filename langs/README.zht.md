@@ -369,6 +369,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 [`examples/ann_disk`](../examples/ann_disk) 在磁碟上索引向量，並在重新開啟後搜尋：`go run ./examples/ann_disk`。
 
+## 基準測試
+
+### Riot 與 Bluge（其分叉來源）對比
+
+同一個 Go 程式分別基於 `blugelabs/bluge v0.2.2`（最新標籤）和 `vcaesar/riot v1.61.2` 建置，僅匯入路徑不同：200,000 篇磁碟文件（每篇 12 個隨機詞、一個關鍵字和一個數字），每個查詢執行 50 次（取前 10 筆並統計命中數），取三輪交替執行的中位數（Apple M1，負載平均 2.5 至 3.3）。
+
+| 工作負載 | 命中數 | Bluge v0.2.2 | Riot v1.61.2 | Riot 對比 Bluge |
+| --- | --- | --- | --- | --- |
+| 索引 200,000 篇文件並關閉 | | 4.83 s | 2.78 s | 快 1.7 倍 |
+| 磁碟索引大小 | | 57.3 MB | 36.4 MB | 小 36% |
+| Term | 67,086 | 9.03 ms | 0.31 ms | 快 29 倍 |
+| Match，2 個詞 | 112,469 | 19.9 ms | 5.65 ms | 快 3.5 倍 |
+| Match phrase | 2,435 | 12.8 ms | 6.94 ms | 快 1.8 倍 |
+| Bool `must` rag, chunk + `must_not` edge | 14,975 | 7.70 ms | 3.41 ms | 快 2.3 倍 |
+| Bool `must` rag, chunk | 21,207 | 6.20 ms | 4.18 ms | 快 1.5 倍 |
+| Bool `should` rag, chunk, `min_should` 2 | 21,207 | 8.79 ms | 4.19 ms | 快 2.1 倍 |
+| Bool `should` rag, chunk, edge, `min_should` 3 | 6,232 | 10.2 ms | 2.75 ms | 快 3.7 倍 |
+| Bool `should` rag, chunk （任一） | 112,377 | 19.7 ms | 5.87 ms | 快 3.4 倍 |
+| Prefix `se*`（riot 中為常數評分） | 112,414 | 18.7 ms | 0.18 ms | 快 104 倍 |
+| Fuzzy `clustr` | 67,002 | 10.0 ms | 2.66 ms | 快 3.8 倍 |
+| 數值範圍 | 19,648 | 4.17 ms | 2.46 ms | 快 1.7 倍 |
+| Match，依數值欄位排序 | 66,690 | 123 ms | 27.4 ms | 快 4.5 倍 |
+
+每一輪 riot 執行都快於每一輪 Bluge 執行，且命中數相同。評分不同是因為 riot 將 Bluge 的 BM25 idf 修正為 Lucene 的 `log(1 + (N − n + 0.5)/(n + 0.5))`。Bluge 不支援向量搜尋。以上為隨機資料上的單機結果，並非正式基準測試。
+
 <!-- ## Repobeats
 
 ![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
