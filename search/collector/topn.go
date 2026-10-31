@@ -254,6 +254,7 @@ func (hc *TopNCollector) collectSingle(ctx *search.Context, d *search.DocumentMa
 		// but we want to allow for exact match, so we pretend
 		hc.searchAfter.HitNumber = d.HitNumber
 		if hc.sort.Compare(d, hc.searchAfter) <= 0 {
+			ctx.DocumentMatchPool.Put(d)
 			return nil
 		}
 	}

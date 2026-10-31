@@ -107,6 +107,9 @@ func ComputeGeoRange(term uint64, shift uint,
 	var geoDetailLevel = ((geo.GeoBits << 1) - geoMaxShift) / 2
 
 	isIndexed, closeF, err := buildIsIndexedFunc(indexReader, field)
+	if err != nil {
+		return nil, nil, err
+	}
 	if closeF != nil {
 		defer func() {
 			cerr := closeF()

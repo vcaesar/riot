@@ -52,9 +52,11 @@ func (t TermLocations) MergeOverlapping() {
 			lastTl = tl
 		} else if lastTl != nil && tl != nil {
 			if lastTl.Overlaps(tl) {
-				// ok merge this with previous
-				lastTl.End = tl.End
+				// ok merge this with previous, never shrinking it
+				lastTl.End = max(lastTl.End, tl.End)
 				t[i] = nil
+			} else {
+				lastTl = tl
 			}
 		}
 	}

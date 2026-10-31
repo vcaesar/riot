@@ -33,6 +33,9 @@ func (s *Writer) persisterLoop(merges chan *segmentMerge, persists chan *persist
 	var ew *epochWatcher
 
 	var unpersistedCallbacks []func(error)
+	var errStreak int
+	// callbacks of failed persists that were never retried
+	defer func() { callAll(unpersistedCallbacks, segment.ErrClosed) }()
 
 	// tell the introducer we're waiting for changes after the initial epoch
 	introducerEpochWatcher, err := introducerNotifier.NotifyUsAfter(0, s.closeCh)
@@ -104,9 +107,12 @@ OUTER:
 					s.fireAsyncError(fmt.Errorf("got err persisting snapshot: %v", err))
 					_ = ourSnapshot.Close()
 					atomic.AddUint64(&s.stats.TotPersistLoopErr, 1)
+					errStreak++
+					s.errorBackoff(errStreak)
 					continue OUTER
 				}
 
+				errStreak = 0
 				if unpersistedCallbacks != nil {
 					// in the event of this being a retry attempt for persisting a snapshot
 					// that had earlier failed, prepend the persistedCallbacks associated
@@ -145,7 +151,7 @@ OUTER:
 
 			err = s.deletionPolicy.Cleanup(s.directory) // might as well cleanup while waiting
 			if err != nil {
-				s.config.AsyncError(err)
+				s.fireAsyncError(err)
 			}
 			if err = s.removeOrphanGraphs(); err != nil {
 				s.fireAsyncError(err)
@@ -155,6 +161,28 @@ OUTER:
 		atomic.AddUint64(&s.stats.TotPersistLoopEnd, 1)
 	}
 }
+
+// errorBackoff waits before retrying after the streak-th failure in a row,
+// so a persistent error (e.g. a full disk) does not spin the loop. It
+// returns early on close; the caller's loop then sees closeCh.
+func (s *Writer) errorBackoff(streak int) {
+	wait := min(errorBackoffFloor<<min(streak-1, 10), errorBackoffCeiling)
+	select {
+	case <-s.closeCh:
+	case <-time.After(wait):
+	}
+}
+
+func callAll(callbacks []func(error), err error) {
+	for _, cb := range callbacks {
+		cb(err)
+	}
+}
+
+const (
+	errorBackoffFloor   = 10 * time.Millisecond
+	errorBackoffCeiling = 5 * time.Second
+)
 
 func (s *Writer) pausePersisterForMergerCatchUp(persisterNotifier watcherChan,
 	lastPersistedEpoch, lastMergedEpoch uint64, persistWatchers epochWatchers) (uint64, epochWatchers) {
@@ -191,7 +219,7 @@ func (s *Writer) pausePersisterForMergerCatchUp(persisterNotifier watcherChan,
 	if s.config.PersisterNapUnderNumFiles >= 0 && numFilesOnDisk > uint64(s.config.PersisterNapUnderNumFiles) {
 		err := s.deletionPolicy.Cleanup(s.directory)
 		if err != nil {
-			s.config.AsyncError(err)
+			s.fireAsyncError(err)
 		}
 		numFilesOnDisk, _ = s.directory.Stats()
 	}
@@ -384,11 +412,10 @@ func (s *Writer) prepareIntroducePersist(persists chan *persistIntroduction, new
 	case persists <- persist:
 	}
 
-	select {
-	case <-s.closeCh:
-		return segment.ErrClosed
-	case <-persist.applied:
-	}
+	// once sent, the introducer owns persist.persisted and always closes
+	// applied; returning early on close would race the deferred cleanup
+	// with its map writes and close segments it is moving into the root
+	<-persist.applied
 
 	return nil
 }

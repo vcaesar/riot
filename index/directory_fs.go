@@ -16,6 +16,7 @@
 package index
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -128,6 +129,13 @@ func (d *FileSystemDirectory) Persist(kind string, id uint64, w WriterTo, closeC
 		_ = os.Remove(path)
 	}
 
+	// truncate only once locked: a leftover file of the same id (from an
+	// unreadable snapshot) must not keep a stale tail
+	if err = f.File().Truncate(0); err != nil {
+		cleanup()
+		return err
+	}
+
 	_, err = w.WriteTo(f.File(), closeCh)
 	if err != nil {
 		cleanup()
@@ -174,7 +182,7 @@ func LoadMMapAlways(f lock.LockedFile) (*segment.Data, io.Closer, error) {
 func LoadMMapNever(f lock.LockedFile) (*segment.Data, io.Closer, error) {
 	data, err := segment.NewDataFile(f.File())
 	if err != nil {
-		return nil, nil, fmt.Errorf("error creating data from file: %w", err)
+		return nil, nil, errors.Join(fmt.Errorf("error creating data from file: %w", err), f.Close())
 	}
 	return data, closerFunc(f.Close), nil
 }

@@ -155,6 +155,9 @@ func optimizeMultiTermSearcher(indexReader search.Reader, terms []string, termBo
 		}
 		batch, err := makeBatchSearchers(indexReader, batchTerms, batchBoosts, field, boost, scorer, options)
 		if err != nil {
+			if finalSearcher != nil {
+				_ = finalSearcher.Close()
+			}
 			return nil, err
 		}
 		if finalSearcher != nil {
@@ -193,16 +196,18 @@ func makeBatchSearchers(indexReader search.Reader, terms []string, termBoosts []
 		}
 	}
 	for i, term := range terms {
-		var err error
+		termBoost := boost
 		if termBoosts != nil {
-			qsearchers[i], err = NewTermSearcher(indexReader, term, field, boost*termBoosts[i], scorer, options)
-		} else {
-			qsearchers[i], err = NewTermSearcher(indexReader, term, field, boost, scorer, options)
+			termBoost *= termBoosts[i]
 		}
+		// assign only on success: a nil *TermSearcher in the interface
+		// would pass the nil check in qsearchersClose and panic in Close
+		ts, err := NewTermSearcher(indexReader, term, field, termBoost, scorer, options)
 		if err != nil {
 			qsearchersClose()
 			return nil, err
 		}
+		qsearchers[i] = ts
 	}
 	return qsearchers, nil
 }
@@ -222,6 +227,9 @@ func optimizeMultiTermSearcherBytes(indexReader search.Reader, terms [][]byte,
 		}
 		batch, err := makeBatchSearchersBytes(indexReader, batchTerms, field, boost, scorer, options)
 		if err != nil {
+			if finalSearcher != nil {
+				_ = finalSearcher.Close()
+			}
 			return nil, err
 		}
 		if finalSearcher != nil {
@@ -358,12 +366,12 @@ func makeBatchSearchersBytes(indexReader search.Reader, terms [][]byte, field st
 		}
 	}
 	for i, term := range terms {
-		var err error
-		qsearchers[i], err = NewTermSearcherBytes(indexReader, term, field, boost, scorer, options)
+		ts, err := NewTermSearcherBytes(indexReader, term, field, boost, scorer, options)
 		if err != nil {
 			qsearchersClose()
 			return nil, err
 		}
+		qsearchers[i] = ts
 	}
 	return qsearchers, nil
 }

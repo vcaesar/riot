@@ -16,6 +16,7 @@
 package index
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -175,6 +176,10 @@ func (s *WriterOffline) Close() error {
 	if err != nil {
 		return fmt.Errorf("error while merging: %w", err)
 	}
+	if len(s.segIDs) == 0 {
+		// nothing was written
+		return nil
+	}
 
 	// open the merged segment
 	data, closer, err := s.directory.Load(ItemKindSegment, s.segIDs[0])
@@ -209,7 +214,11 @@ func (s *WriterOffline) Close() error {
 	// persist the snapshot
 	err = s.directory.Persist(ItemKindSnapshot, s.segIDs[0], snapshot, nil)
 	if err != nil {
-		return fmt.Errorf("error recording snapshot: %w", err)
+		err = fmt.Errorf("error recording snapshot: %w", err)
+		if closer != nil {
+			err = errors.Join(err, closer.Close())
+		}
+		return err
 	}
 
 	if closer != nil {

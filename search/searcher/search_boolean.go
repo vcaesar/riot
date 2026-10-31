@@ -320,7 +320,9 @@ func (s *BooleanSearcher) advanceIfTrailing(ctx *search.Context, number uint64) 
 		}
 	}
 
-	if s.shouldSearcher != nil {
+	// a should cursor already at or past number holds a match the
+	// disjunction has moved beyond; advancing again would skip it
+	if s.shouldSearcher != nil && (s.currShould == nil || s.currShould.Number < number) {
 		if s.currShould != nil {
 			ctx.DocumentMatchPool.Put(s.currShould)
 		}

@@ -17,6 +17,7 @@ package index
 
 import (
 	"fmt"
+	"maps"
 	"sync/atomic"
 
 	segment "github.com/vcaesar/bluge_segment_api"
@@ -130,10 +131,14 @@ func (s *Writer) introduceSegment(next *segmentIntroduction, introduceSnapshotEp
 			creator: root.segment[i].creator,
 		}
 
-		// apply new obsoletions
-		if root.segment[i].deleted == nil {
+		// apply new obsoletions; bitmaps are shared read-only between
+		// snapshots, so an empty delta keeps the old one without a copy
+		switch {
+		case root.segment[i].deleted == nil:
 			newss.deleted = delta
-		} else {
+		case delta == nil || delta.IsEmpty():
+			newss.deleted = root.segment[i].deleted
+		default:
 			newss.deleted = roaring.Or(root.segment[i].deleted, delta)
 		}
 		if newss.deleted.IsEmpty() {
@@ -263,6 +268,9 @@ func (s *Writer) introduceMerge(nextMerge *segmentMerge, introduceSnapshotEpoch 
 	root := s.currentSnapshot()
 	defer func() { _ = root.Close() }()
 
+	// ProcessSegmentNow empties nextMerge.old; keep every source for graphs
+	sources := maps.Clone(nextMerge.old)
+
 	newSnapshot := &Snapshot{
 		parent:  s,
 		epoch:   introduceSnapshotEpoch,
@@ -318,6 +326,11 @@ func (s *Writer) introduceMerge(nextMerge *segmentMerge, introduceSnapshotEpoch 
 	// deleted by the time we reach here, can skip the introduction.
 	if nextMerge.new != nil &&
 		nextMerge.new.Count() > newSegmentDeleted.GetCardinality() {
+		liveCount := nextMerge.new.Count() - newSegmentDeleted.GetCardinality()
+		if newSegmentDeleted.IsEmpty() {
+			// segments treat any non-nil bitmap as deletions to apply
+			newSegmentDeleted = nil
+		}
 		// put new segment at end
 		newSnapshot.segment = append(newSnapshot.segment, &segmentSnapshot{
 			id:      nextMerge.id,
@@ -331,7 +344,7 @@ func (s *Writer) introduceMerge(nextMerge *segmentMerge, introduceSnapshotEpoch 
 		if nextMerge.new.Persisted() {
 			fileSegments++
 		} else {
-			docsToPersistCount += nextMerge.new.Count() - newSegmentDeleted.GetCardinality()
+			docsToPersistCount += liveCount
 			memSegments++
 		}
 	} else {
@@ -348,7 +361,7 @@ func (s *Writer) introduceMerge(nextMerge *segmentMerge, introduceSnapshotEpoch 
 	newSnapshot.updateSize()
 
 	if !skipped {
-		nextMerge.new.setMergeSources(nextMerge.old, nextMerge.oldNewDocNums)
+		nextMerge.new.setMergeSources(sources, nextMerge.oldNewDocNums)
 	}
 	s.replaceRoot(newSnapshot, nil, nil)
 	if !skipped {

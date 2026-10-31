@@ -16,6 +16,8 @@
 package searcher
 
 import (
+	"errors"
+
 	segment "github.com/vcaesar/bluge_segment_api"
 	"github.com/vcaesar/riot/numeric"
 	"github.com/vcaesar/riot/search"
@@ -43,7 +45,11 @@ func NewTermSearcherBytes(indexReader search.Reader, term []byte, field string, 
 	if err != nil {
 		return nil, err
 	}
-	return newTermSearcherFromReader(indexReader, reader, term, field, boost, scorer, options)
+	rv, err := newTermSearcherFromReader(indexReader, reader, term, field, boost, scorer, options)
+	if err != nil {
+		return nil, errors.Join(err, reader.Close())
+	}
+	return rv, nil
 }
 
 type termStatsWrapper struct {
