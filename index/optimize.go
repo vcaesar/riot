@@ -343,8 +343,6 @@ type optimizeConjunctionUnadorned struct {
 
 var optimizeConjunctionUnadornedTerm = []byte("<conjunction:unadorned>")
 
-const optimizeConjunctionUnadornedField = "*"
-
 // Finish of an unadorned conjunction optimization will compute a
 // termFieldReader with an "actual" bitmap that represents the
 // constituent bitmaps AND'ed together.  This termFieldReader cannot
@@ -356,8 +354,7 @@ func (o *optimizeConjunctionUnadorned) Finish() (rv segment.PostingsIterator, er
 
 	// We use an artificial term and field because the optimized
 	// termFieldReader can represent multiple terms and fields.
-	oTFR := o.snapshot.unadornedPostingsIterator(
-		optimizeConjunctionUnadornedTerm, optimizeConjunctionUnadornedField)
+	oTFR := o.snapshot.unadornedPostingsIterator(optimizeConjunctionUnadornedTerm)
 
 	var actualBMs []*roaring.Bitmap // Collected from regular posting lists.
 
@@ -490,8 +487,6 @@ type optimizeDisjunctionUnadorned struct {
 
 var optimizeDisjunctionUnadornedTerm = []byte("<disjunction:unadorned>")
 
-const optimizeDisjunctionUnadornedField = "*"
-
 const preferHeapOr = 2
 
 // Finish of an unadorned disjunction optimization will compute a
@@ -505,8 +500,7 @@ func (o *optimizeDisjunctionUnadorned) Finish() (rv segment.PostingsIterator, er
 
 	// We use an artificial term and field because the optimized
 	// termFieldReader can represent multiple terms and fields.
-	oTFR := o.snapshot.unadornedPostingsIterator(
-		optimizeDisjunctionUnadornedTerm, optimizeDisjunctionUnadornedField)
+	oTFR := o.snapshot.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm)
 
 	var docNums []uint32            // Collected docNum's from 1-hit posting lists.
 	var actualBMs []*roaring.Bitmap // Collected from regular posting lists.
@@ -568,7 +562,7 @@ func (i *Snapshot) DocsMatchingTerms(field string, terms [][]byte) (segment.Post
 	if !i.parent.config.OptimizeDisjunctionUnadorned {
 		return nil, nil
 	}
-	rv := i.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm, optimizeDisjunctionUnadornedField)
+	rv := i.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm)
 	var docNums []uint32
 	var bms []*roaring.Bitmap
 	for j, seg := range i.segment {
@@ -687,7 +681,7 @@ func (i *Snapshot) DocsMatchingRange(field string, automaton segment.Automaton, 
 	if !i.parent.config.OptimizeDisjunctionUnadorned {
 		return nil, nil
 	}
-	rv := i.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm, optimizeDisjunctionUnadornedField)
+	rv := i.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm)
 	for j, seg := range i.segment {
 		dict, err := seg.segment.Dictionary(field)
 		if err != nil {
