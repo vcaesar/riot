@@ -27,6 +27,11 @@ type rangeBitmapReader interface {
 	DocsMatchingRange(field string, automaton segment.Automaton, start, end []byte) (segment.PostingsIterator, error)
 }
 
+// minRangeTerms is the fewest terms worth a range pass: it allocates a
+// segment-sized bitset per segment, while DocsMatchingTerms clones or ORs
+// one or two postings bitmaps directly.
+const minRangeTerms = 3
+
 // termsIteratorReader is implemented by readers that can list terms
 // without reading their postings (index.Snapshot).
 type termsIteratorReader interface {
@@ -76,7 +81,7 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 	// a prefix scores every match the same, as in Lucene and tantivy,
 	// whatever the number of terms it expands to
 	if score, ok := constantScoreEligible(boost, scorer, compScorer, options); ok && len(terms) > 0 {
-		if rr, ok := indexReader.(rangeBitmapReader); ok {
+		if rr, ok := indexReader.(rangeBitmapReader); ok && len(terms) >= minRangeTerms {
 			it, err := rr.DocsMatchingRange(field, nil, kBeg, kEnd)
 			if err != nil {
 				return nil, err
