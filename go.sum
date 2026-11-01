@@ -21,8 +21,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dgryski/go-metro v0.0.0-20261008173524-5059e0b1da03 h1:/DH8T7hZyRwnHeRN0SbmDAX/3yoyRMMbThY/udAG5FQ=
 github.com/dgryski/go-metro v0.0.0-20261008173524-5059e0b1da03/go.mod h1:j+MopvvtIWPZFgEQY11qG5kPi55yP2suJFyqonAE3IU=
-github.com/go-ego/gse v1.3.0 h1:UEW+kpLLKFuT4IOFXkMPXFOqXPau1tmqtDeV/2BOc+M=
-github.com/go-ego/gse v1.3.0/go.mod h1:eYyKCwRmYa7FhzR5Nq7DrieO5deH4Ej4KDCXS7ahlbU=
+github.com/go-ego/gse v1.3.1 h1:/UkeL8Gu48SNvBDDhHKdFYjWqxaf6FlqXR+wYQ6SWbU=
+github.com/go-ego/gse v1.3.1/go.mod h1:K3EACmEtMgNNog8Rp7uY5FaY++yjFcWDWQUnDT3zk4w=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/kamstrup/intmap v0.5.2 h1:qnwBm1mh4XAnW9W9Ue9tZtTff8pS6+s6iKF6JRIV2Dk=
@@ -45,8 +45,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/vcaesar/bluge_segment_api v1.2.2 h1:8nCzQvlyUQLqerP6zRiB4YUc2NYrdRX+9unlBNFMaRs=
 github.com/vcaesar/bluge_segment_api v1.2.2/go.mod h1:KO7cpxXvohHHktHmWOaJcsYwt/I9a8fuhTUrVGUPPYk=
-github.com/vcaesar/cedar v0.50.0 h1:eNTViTwbdqa5hC6XrV6rpCILf7Yzyi/Z6dk9f6BiXiA=
-github.com/vcaesar/cedar v0.50.0/go.mod h1:eHvpmJXJmOowP8mW/Xqjra+HmKovJNcRxRPtezHjh7I=
+github.com/vcaesar/cedar v0.50.1 h1:JhchIiYZyvjT7EhjMR3oN7JH7QNgeqLrw/zaPBrTWRQ=
+github.com/vcaesar/cedar v0.50.1/go.mod h1:eHvpmJXJmOowP8mW/Xqjra+HmKovJNcRxRPtezHjh7I=
 github.com/vcaesar/ice v1.4.1 h1:8qWHPrXLy9s1Xtb8ORvypOBGmsByv5kAzWGkrRPLzP8=
 github.com/vcaesar/ice v1.4.1/go.mod h1:ADjW4NfWHUnw+zLPJ1yPU9rNlSZP7Qm91Ijikof9PSo=
 github.com/vcaesar/tt v0.40.0 h1:vWUNRJn13ozP3xXlAXV5q9WivaDSHRS2jQ2J2ayCvQs=
