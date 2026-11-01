@@ -673,32 +673,41 @@ func (i *Snapshot) TermsIterator(field string, automaton segment.Automaton, star
 	}, false)
 }
 
+// densePostingsOr is implemented by segment dictionaries that can OR the
+// postings of a term range into a bitset in one pass (ice.Dictionary).
+type densePostingsOr interface {
+	OrPostingsDense(a segment.Automaton, start, end []byte, dense []uint64) (bool, error)
+}
+
 // DocsMatchingRange is DocsMatchingTerms for every term in [start, end)
-// that automaton accepts. It returns nil when a segment cannot, so the
-// caller must fall back. (ice's OrPostingsDense is not used: its
-// WriteDenseTo overwrites earlier terms' bits for dense postings.)
+// that automaton accepts, ORed in one dictionary pass per segment. It
+// returns nil when a segment cannot, so the caller must fall back.
 func (i *Snapshot) DocsMatchingRange(field string, automaton segment.Automaton, start, end []byte) (
-	rv segment.PostingsIterator, err error) {
+	segment.PostingsIterator, error) {
 	if !i.parent.config.OptimizeDisjunctionUnadorned {
 		return nil, nil
 	}
-	itr, err := i.TermsIterator(field, automaton, start, end)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if cerr := itr.Close(); cerr != nil && err == nil {
-			rv, err = nil, cerr
+	rv := i.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm, optimizeDisjunctionUnadornedField)
+	for j, seg := range i.segment {
+		dict, err := seg.segment.Dictionary(field)
+		if err != nil {
+			return nil, err
 		}
-	}()
-	var terms [][]byte
-	entry, err := itr.Next()
-	for err == nil && entry != nil {
-		terms = append(terms, []byte(entry.Term()))
-		entry, err = itr.Next()
+		or, ok := dict.(densePostingsOr)
+		if !ok {
+			return nil, nil
+		}
+		dense := make([]uint64, (seg.segment.Count()+63)/64)
+		ok, err = or.OrPostingsDense(automaton, start, end, dense)
+		if err != nil || !ok {
+			return nil, err
+		}
+		bm := roaring.FromDense(dense, false)
+		if seg.deleted != nil {
+			bm.AndNot(seg.deleted)
+		}
+		rv.iterators[j] = newUnadornedPostingsIteratorFromBitmap(bm)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return i.DocsMatchingTerms(field, terms)
+	atomic.AddUint64(&i.parent.stats.TotTermSearchersStarted, 1)
+	return rv, nil
 }

@@ -12,10 +12,10 @@ require (
 	github.com/blevesearch/snowballstem v0.9.0
 	github.com/blevesearch/vellum v1.2.0
 	github.com/caio/go-tdigest/v5 v5.0.0
-	github.com/go-ego/gse v1.1.0
+	github.com/go-ego/gse v1.2.0
 	github.com/spf13/cobra v1.10.2
 	github.com/vcaesar/bluge_segment_api v1.2.2
-	github.com/vcaesar/ice v1.4.0
+	github.com/vcaesar/ice v1.4.1
 	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.43.0
 )
