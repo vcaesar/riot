@@ -343,8 +343,6 @@ type optimizeConjunctionUnadorned struct {
 
 var optimizeConjunctionUnadornedTerm = []byte("<conjunction:unadorned>")
 
-const optimizeConjunctionUnadornedField = "*"
-
 // Finish of an unadorned conjunction optimization will compute a
 // termFieldReader with an "actual" bitmap that represents the
 // constituent bitmaps AND'ed together.  This termFieldReader cannot
@@ -356,8 +354,7 @@ func (o *optimizeConjunctionUnadorned) Finish() (rv segment.PostingsIterator, er
 
 	// We use an artificial term and field because the optimized
 	// termFieldReader can represent multiple terms and fields.
-	oTFR := o.snapshot.unadornedPostingsIterator(
-		optimizeConjunctionUnadornedTerm, optimizeConjunctionUnadornedField)
+	oTFR := o.snapshot.unadornedPostingsIterator(optimizeConjunctionUnadornedTerm)
 
 	var actualBMs []*roaring.Bitmap // Collected from regular posting lists.
 
@@ -490,8 +487,6 @@ type optimizeDisjunctionUnadorned struct {
 
 var optimizeDisjunctionUnadornedTerm = []byte("<disjunction:unadorned>")
 
-const optimizeDisjunctionUnadornedField = "*"
-
 const preferHeapOr = 2
 
 // Finish of an unadorned disjunction optimization will compute a
@@ -505,8 +500,7 @@ func (o *optimizeDisjunctionUnadorned) Finish() (rv segment.PostingsIterator, er
 
 	// We use an artificial term and field because the optimized
 	// termFieldReader can represent multiple terms and fields.
-	oTFR := o.snapshot.unadornedPostingsIterator(
-		optimizeDisjunctionUnadornedTerm, optimizeDisjunctionUnadornedField)
+	oTFR := o.snapshot.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm)
 
 	var docNums []uint32            // Collected docNum's from 1-hit posting lists.
 	var actualBMs []*roaring.Bitmap // Collected from regular posting lists.
@@ -568,7 +562,7 @@ func (i *Snapshot) DocsMatchingTerms(field string, terms [][]byte) (segment.Post
 	if !i.parent.config.OptimizeDisjunctionUnadorned {
 		return nil, nil
 	}
-	rv := i.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm, optimizeDisjunctionUnadornedField)
+	rv := i.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm)
 	var docNums []uint32
 	var bms []*roaring.Bitmap
 	for j, seg := range i.segment {
@@ -673,32 +667,41 @@ func (i *Snapshot) TermsIterator(field string, automaton segment.Automaton, star
 	}, false)
 }
 
+// densePostingsOr is implemented by segment dictionaries that can OR the
+// postings of a term range into a bitset in one pass (ice.Dictionary).
+type densePostingsOr interface {
+	OrPostingsDense(a segment.Automaton, start, end []byte, dense []uint64) (bool, error)
+}
+
 // DocsMatchingRange is DocsMatchingTerms for every term in [start, end)
-// that automaton accepts. It returns nil when a segment cannot, so the
-// caller must fall back. (ice's OrPostingsDense is not used: its
-// WriteDenseTo overwrites earlier terms' bits for dense postings.)
+// that automaton accepts, ORed in one dictionary pass per segment. It
+// returns nil when a segment cannot, so the caller must fall back.
 func (i *Snapshot) DocsMatchingRange(field string, automaton segment.Automaton, start, end []byte) (
-	rv segment.PostingsIterator, err error) {
+	segment.PostingsIterator, error) {
 	if !i.parent.config.OptimizeDisjunctionUnadorned {
 		return nil, nil
 	}
-	itr, err := i.TermsIterator(field, automaton, start, end)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if cerr := itr.Close(); cerr != nil && err == nil {
-			rv, err = nil, cerr
+	rv := i.unadornedPostingsIterator(optimizeDisjunctionUnadornedTerm)
+	for j, seg := range i.segment {
+		dict, err := seg.segment.Dictionary(field)
+		if err != nil {
+			return nil, err
 		}
-	}()
-	var terms [][]byte
-	entry, err := itr.Next()
-	for err == nil && entry != nil {
-		terms = append(terms, []byte(entry.Term()))
-		entry, err = itr.Next()
+		or, ok := dict.(densePostingsOr)
+		if !ok {
+			return nil, nil
+		}
+		dense := make([]uint64, (seg.segment.Count()+63)/64)
+		ok, err = or.OrPostingsDense(automaton, start, end, dense)
+		if err != nil || !ok {
+			return nil, err
+		}
+		bm := roaring.FromDense(dense, false)
+		if seg.deleted != nil {
+			bm.AndNot(seg.deleted)
+		}
+		rv.iterators[j] = newUnadornedPostingsIteratorFromBitmap(bm)
 	}
-	if err != nil {
-		return nil, err
-	}
-	return i.DocsMatchingTerms(field, terms)
+	atomic.AddUint64(&i.parent.stats.TotTermSearchersStarted, 1)
+	return rv, nil
 }

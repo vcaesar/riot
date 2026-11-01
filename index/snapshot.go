@@ -395,13 +395,16 @@ func (i *Snapshot) recyclePostingsIterator(tfr *postingsIterator) {
 	i.m2.Unlock()
 }
 
-func (i *Snapshot) unadornedPostingsIterator(
-	term []byte, field string) *postingsIterator {
+// unadornedField is the artificial field of unadorned postings iterators,
+// which can represent multiple terms and fields.
+const unadornedField = "*"
+
+func (i *Snapshot) unadornedPostingsIterator(term []byte) *postingsIterator {
 	// This IndexSnapshotTermFieldReader will not be recycled, more
 	// conversation here: https://github.com/blevesearch/bleve/pull/1438
 	return &postingsIterator{
 		term:               term,
-		field:              field,
+		field:              unadornedField,
 		snapshot:           i,
 		iterators:          make([]segment.PostingsIterator, len(i.segment)),
 		segmentOffset:      0,

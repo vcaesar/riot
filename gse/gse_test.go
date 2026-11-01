@@ -65,7 +65,7 @@ func TestNewAnalyzerDicts(t *testing.T) {
 			name:  "embedded jp",
 			opt:   Option{Dicts: "embed, jp", Opt: "hmm"},
 			input: "運命の犠牲者",
-			want:  []string{"運命", "の", "犠", "牲", "者"},
+			want:  []string{"運命", "の", "犠牲", "者"},
 		},
 		{
 			name:  "file zh",

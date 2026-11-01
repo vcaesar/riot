@@ -72,6 +72,70 @@ func TestMultiTermDenseTermKeepsSparseDocs(t *testing.T) {
 	}
 }
 
+// Prefix ORs a term range in one dictionary pass; two terms that are both
+// dense (bitmap containers) in one chunk must union, not overwrite, across
+// segments and with deletions.
+func TestPrefixDenseTermsUnion(t *testing.T) {
+	for name, config := range map[string]Config{
+		"mem":  InMemoryOnlyConfig(),
+		"disk": DefaultConfig(t.TempDir()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, err := OpenWriter(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := w.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			batch := NewBatch()
+			for i := range 10000 {
+				body := "pa"
+				if i%2 == 1 {
+					body = "pb"
+				}
+				doc := NewDocument(strconv.Itoa(i)).AddField(NewTextField("body", body))
+				batch.Update(doc.ID(), doc)
+			}
+			if err := w.Batch(batch); err != nil {
+				t.Fatal(err)
+			}
+			batch = NewBatch()
+			for i := 10000; i < 11000; i++ {
+				doc := NewDocument(strconv.Itoa(i)).AddField(NewTextField("body", "pc"))
+				batch.Update(doc.ID(), doc)
+			}
+			for i := range 100 {
+				batch.Delete(Identifier(strconv.Itoa(i)))
+			}
+			if err := w.Batch(batch); err != nil {
+				t.Fatal(err)
+			}
+			r, err := w.Reader()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := r.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			for prefix, want := range map[string]uint64{"p": 10900, "pb": 4950, "pc": 1000, "q": 0} {
+				q := NewPrefixQuery(prefix).SetField("body")
+				dmi, err := r.Search(context.Background(), NewTopNSearch(10, q).WithStandardAggregations())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := dmi.Aggregations().Count(); got != want {
+					t.Errorf("prefix %q: %d hits, want %d", prefix, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestEmptyMultiPhraseQueryNoPanic(t *testing.T) {
 	w, err := OpenWriter(InMemoryOnlyConfig())
 	if err != nil {
