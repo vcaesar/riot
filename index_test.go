@@ -37,7 +37,7 @@ import (
 )
 
 type Fatalfable interface {
-	Fatalf(format string, args ...interface{})
+	Fatalf(format string, args ...any)
 }
 
 func createTmpIndexPath(f Fatalfable) string {
@@ -151,7 +151,7 @@ func TestCrud(t *testing.T) {
 	var foundName []byte
 	err = indexReader.VisitStoredFields(docANumber, func(field string, value []byte) bool {
 		if field == "name" {
-			copy(foundName, value)
+			foundName = append([]byte(nil), value...)
 			return false
 		}
 		return true
@@ -160,7 +160,7 @@ func TestCrud(t *testing.T) {
 		t.Fatalf("error visiting stored fields: %v", err)
 	}
 
-	if bytes.Equal(foundName, []byte("marty")) {
+	if !bytes.Equal(foundName, []byte("marty")) {
 		t.Errorf("expected to find field named 'name' with value 'marty'")
 	}
 
@@ -490,7 +490,7 @@ func TestIndexMetadataRaceBug198(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		batch := index.NewBatch()
 		doc := NewDocument("a")
 		batch.Update(doc.ID(), doc)
@@ -521,7 +521,7 @@ func TestSortMatchSearch(t *testing.T) {
 	days := []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
 	numbers := []string{"One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"}
 	b := index.NewBatch()
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		doc := NewDocument(fmt.Sprintf("%d", i)).
 			AddField(NewKeywordField("Name", names[i%len(names)]).StoreValue()).
 			AddField(NewKeywordField("day", days[i%len(days)]).StoreValue()).
@@ -539,7 +539,7 @@ func TestSortMatchSearch(t *testing.T) {
 	}
 
 	req := NewTopNSearch(10, NewMatchQuery("One"))
-	req.SortBy([]string{"Day", "Name"})
+	req.SortBy([]string{"day", "Name"})
 	dmi, err := indexReader.Search(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -549,7 +549,7 @@ func TestSortMatchSearch(t *testing.T) {
 	next, err := dmi.Next()
 	for err == nil && next != nil {
 		err = next.VisitStoredFields(func(field string, value []byte) bool {
-			if field == "Day" {
+			if field == "day" {
 				if prev > string(value) {
 					t.Errorf("Hits must be sorted by 'Day'. Found '%s' before '%s'", prev, string(value))
 				}
@@ -560,6 +560,7 @@ func TestSortMatchSearch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error accessing stored fields: %v", err)
 		}
+		next, err = dmi.Next()
 	}
 	if err != nil {
 		t.Fatalf("error iterating results: %v", err)
@@ -587,11 +588,11 @@ func TestIndexCountMatchSearch(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(i int) {
 			b := NewBatch()
-			for j := 0; j < 200; j++ {
+			for j := range 200 {
 				id := fmt.Sprintf("%d", (i*200)+j)
 				doc := NewDocument(id).
 					AddField(NewTextField("Body", "match")).
@@ -599,7 +600,7 @@ func TestIndexCountMatchSearch(t *testing.T) {
 				b.Update(doc.ID(), doc)
 			}
 			err2 := indexWriter.Batch(b)
-			if err != nil {
+			if err2 != nil {
 				panic(err2)
 			}
 			wg.Done()
@@ -745,10 +746,10 @@ func BenchmarkBatchOverhead(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	for n := 0; n < b.N; n++ {
+	for b.Loop() {
 		// put 1000 items in a batch
 		batch := NewBatch()
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			doc := NewDocument(fmt.Sprintf("%d", i)).
 				AddField(NewKeywordField("name", "bluge"))
 			batch.Update(doc.ID(), doc)
@@ -758,6 +759,9 @@ func BenchmarkBatchOverhead(b *testing.B) {
 			b.Fatal(err)
 		}
 		batch.Reset()
+	}
+	if err = indexWriter.Close(); err != nil {
+		b.Fatal(err)
 	}
 }
 
@@ -824,7 +828,7 @@ func TestBug408(t *testing.T) {
 	noMatchUserID := "no_match"
 	matchingDocIDs := make(map[string]struct{})
 
-	for i := 0; i < numToTest; i++ {
+	for i := range numToTest {
 		id := strconv.Itoa(i)
 		doc := NewDocument(id)
 		if i%2 == 0 {
@@ -905,11 +909,11 @@ func TestIndexAdvancedCountMatchSearch(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(i int) {
 			b := NewBatch()
-			for j := 0; j < 200; j++ {
+			for j := range 200 {
 				id := fmt.Sprintf("%d", (i*200)+j)
 				doc := NewDocument(id).
 					AddField(NewKeywordField("body", "match")).
@@ -989,6 +993,7 @@ func BenchmarkScorchSearchOverhead(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
+			batch.Reset()
 		}
 	}
 
@@ -1002,9 +1007,7 @@ func BenchmarkScorchSearchOverhead(b *testing.B) {
 		b.Fatalf("error getting indead reader: %v", err)
 	}
 
-	b.ResetTimer()
-
-	for n := 0; n < b.N; n++ {
+	for b.Loop() {
 		_, err = indexReader.Search(context.Background(), req)
 		if err != nil {
 			b.Fatal(err)
@@ -1078,9 +1081,9 @@ func TestBug1096(t *testing.T) {
 	batch := NewBatch()
 
 	// number of batches to execute
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		// number of documents to put into the batch
-		for j := 0; j < 91; j++ {
+		for j := range 91 {
 			// create a doc id 0-90 (important so that we get id's 9 and 90)
 			// this could duplicate something already in the index
 			//   this too should be OK and update the item in the index
@@ -1159,7 +1162,7 @@ func TestDataRaceBug1092(t *testing.T) {
 	}
 
 	batch := NewBatch()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		err = indexWriter.Batch(batch)
 		if err != nil {
 			t.Error(err)
@@ -1367,12 +1370,15 @@ func TestInMemoryWriterDataRace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to open in memory writer: %+v", err)
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		b := batchAddDocs(2)
 		err = w.Batch(b)
 		if err != nil {
 			t.Fatalf("failed to add random docs: %+v", err)
 		}
+	}
+	if err = w.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1446,7 +1452,7 @@ func TestInMemoryUsage(t *testing.T) {
 func batchAddDocs(docCount int) *index.Batch {
 	batch := NewBatch()
 
-	for i := 0; i < docCount; i++ {
+	for range docCount {
 		doc := randomDoc()
 		batch.Update(doc.ID(), doc)
 	}
@@ -1469,7 +1475,7 @@ const maxRandStrLen = 30
 
 func randStrn(n int) string {
 	var b strings.Builder
-	for i := 0; i < n; i++ {
+	for range n {
 		b.WriteByte(charset[rand.Intn(len(charset))])
 	}
 
@@ -1704,7 +1710,7 @@ func TestCrudWithNoMMap(t *testing.T) {
 	var foundName []byte
 	err = indexReader.VisitStoredFields(docANumber, func(field string, value []byte) bool {
 		if field == "name" {
-			copy(foundName, value)
+			foundName = append([]byte(nil), value...)
 			return false
 		}
 		return true
@@ -1713,7 +1719,7 @@ func TestCrudWithNoMMap(t *testing.T) {
 		t.Fatalf("error visiting stored fields: %v", err)
 	}
 
-	if bytes.Equal(foundName, []byte("marty")) {
+	if !bytes.Equal(foundName, []byte("marty")) {
 		t.Errorf("expected to find field named 'name' with value 'marty'")
 	}
 
@@ -1766,7 +1772,7 @@ func TestBug87(t *testing.T) {
 	// create 1025 documents in a batch
 	// this should require more than one chunk in doc values
 	batch := NewBatch()
-	for i := 0; i < 1025; i++ {
+	for i := range 1025 {
 		doc := NewDocument(fmt.Sprintf("%d", i)).
 			AddField(NewTextField("name", "marty").Sortable())
 		batch.Update(doc.ID(), doc)
