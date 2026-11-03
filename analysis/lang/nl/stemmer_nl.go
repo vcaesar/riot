@@ -16,9 +16,9 @@
 package nl
 
 import (
-	"github.com/blevesearch/snowballstem"
-	"github.com/blevesearch/snowballstem/dutch"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/zedsearch/snowballstem"
+	"github.com/zedsearch/snowballstem/dutch"
 )
 
 type DutchStemmerFilter struct {

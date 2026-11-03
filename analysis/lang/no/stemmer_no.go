@@ -16,9 +16,9 @@
 package no
 
 import (
-	"github.com/blevesearch/snowballstem"
-	"github.com/blevesearch/snowballstem/norwegian"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/zedsearch/snowballstem"
+	"github.com/zedsearch/snowballstem/norwegian"
 )
 
 type NorwegianStemmerFilter struct {

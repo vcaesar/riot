@@ -5,17 +5,17 @@ go 1.26.0
 require (
 	github.com/RoaringBitmap/roaring/v2 v2.30.0
 	github.com/axiomhq/hyperloglog v0.3.0
-	github.com/bits-and-blooms/bitset v1.28.0
-	github.com/blevesearch/go-porterstemmer v1.0.3
-	github.com/blevesearch/mmap-go v1.2.0
-	github.com/blevesearch/segment v0.9.1
-	github.com/blevesearch/snowballstem v0.9.0
-	github.com/blevesearch/vellum v1.2.0
+	github.com/bits-and-blooms/bitset v1.29.0
+	github.com/blevesearch/vellum v1.2.1
 	github.com/caio/go-tdigest/v5 v5.0.0
 	github.com/go-ego/gse v1.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/vcaesar/bluge_segment_api v1.2.2
 	github.com/vcaesar/ice v1.4.1
+	github.com/zedsearch/go-porterstemmer v1.0.4
+	github.com/zedsearch/mmap-go v1.3.0
+	github.com/zedsearch/segment v0.9.2
+	github.com/zedsearch/snowballstem v0.9.1
 	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.43.0
 )
@@ -30,3 +30,5 @@ require (
 	github.com/vcaesar/cedar v0.50.1 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
 )
+
+replace github.com/blevesearch/vellum => github.com/zedsearch/vellum v0.0.0-20261103000700-007f9e51fd72

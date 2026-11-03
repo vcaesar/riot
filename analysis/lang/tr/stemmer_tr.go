@@ -16,9 +16,9 @@
 package tr
 
 import (
-	"github.com/blevesearch/snowballstem"
-	"github.com/blevesearch/snowballstem/turkish"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/zedsearch/snowballstem"
+	"github.com/zedsearch/snowballstem/turkish"
 )
 
 type TurkishStemmerFilter struct {

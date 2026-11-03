@@ -16,7 +16,7 @@
 package tokenizer
 
 import (
-	"github.com/blevesearch/segment"
+	"github.com/zedsearch/segment"
 
 	"github.com/vcaesar/riot/analysis"
 )
@@ -32,9 +32,12 @@ func NewUnicodeTokenizer() *UnicodeTokenizer {
 
 func (rt *UnicodeTokenizer) Tokenize(input []byte) analysis.TokenStream {
 	rvx := make([]analysis.TokenStream, 0, 10) // When rv gets full, append to rvx.
-	rv := make(analysis.TokenStream, 0, 1)
+	// size the first stream and token block for words of about 5 bytes
+	// plus a separator, so short inputs of such text never regrow them
+	est := len(input)/6 + 1
+	rv := make(analysis.TokenStream, 0, min(est, maxRvCapacity))
 
-	ta := []analysis.Token(nil)
+	ta := make([]analysis.Token, min(est, maxEstimatedRemainingSegments))
 	taNext := 0
 
 	segmenter := segment.NewWordSegmenterDirect(input)

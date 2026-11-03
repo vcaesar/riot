@@ -24,9 +24,9 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/blevesearch/mmap-go"
 	segment "github.com/vcaesar/bluge_segment_api"
 	"github.com/vcaesar/riot/index/lock"
+	"github.com/zedsearch/mmap-go"
 )
 
 const pidFilename = "riot.pid"

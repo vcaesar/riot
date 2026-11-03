@@ -18,8 +18,8 @@ package token
 import (
 	"bytes"
 
-	"github.com/blevesearch/go-porterstemmer"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/zedsearch/go-porterstemmer"
 )
 
 type PorterStemmer struct{}
