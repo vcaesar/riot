@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/RoaringBitmap/roaring/v2 v2.30.0
 	github.com/axiomhq/hyperloglog v0.3.0
-	github.com/bits-and-blooms/bitset v1.28.0
+	github.com/bits-and-blooms/bitset v1.29.0
 	github.com/blevesearch/vellum v1.2.1
 	github.com/caio/go-tdigest/v5 v5.0.0
 	github.com/go-ego/gse v1.3.1
@@ -21,7 +21,6 @@ require (
 )
 
 require (
-	github.com/blevesearch/mmap-go v1.2.0 // indirect
 	github.com/dgryski/go-metro v0.0.0-20261008173524-5059e0b1da03 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kamstrup/intmap v0.5.2 // indirect
@@ -31,3 +30,5 @@ require (
 	github.com/vcaesar/cedar v0.50.1 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
 )
+
+replace github.com/blevesearch/vellum => github.com/zedsearch/vellum v0.0.0-20261103000700-007f9e51fd72
