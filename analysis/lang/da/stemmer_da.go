@@ -16,9 +16,9 @@
 package da
 
 import (
-	"github.com/blevesearch/snowballstem"
-	"github.com/blevesearch/snowballstem/danish"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/zedsearch/snowballstem"
+	"github.com/zedsearch/snowballstem/danish"
 )
 
 type DanishStemmerFilter struct {

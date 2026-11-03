@@ -16,9 +16,9 @@
 package en
 
 import (
-	"github.com/blevesearch/snowballstem"
-	"github.com/blevesearch/snowballstem/english"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/zedsearch/snowballstem"
+	"github.com/zedsearch/snowballstem/english"
 )
 
 type EnglishStemmerFilter struct {

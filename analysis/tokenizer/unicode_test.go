@@ -19,8 +19,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/blevesearch/segment"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/zedsearch/segment"
 )
 
 func TestUnicode(t *testing.T) {
@@ -196,5 +196,17 @@ func TestConvertType(t *testing.T) {
 		if actual != test.out {
 			t.Errorf("expected %d, got %d for %d", test.out, actual, test.in)
 		}
+	}
+}
+
+// Short inputs of ordinary words fit the first stream and token block.
+func TestUnicodeShortInputAllocations(t *testing.T) {
+	input := []byte("common search engine zig document term12 term345 term6 category7 rank42")
+	tok := NewUnicodeTokenizer()
+	if got := len(tok.Tokenize(input)); got != 10 {
+		t.Fatalf("%d tokens, want 10", got)
+	}
+	if allocs := testing.AllocsPerRun(100, func() { tok.Tokenize(input) }); allocs > 3 {
+		t.Fatalf("tokenizing took %v allocations, want at most 3", allocs)
 	}
 }

@@ -16,9 +16,9 @@
 package hu
 
 import (
-	"github.com/blevesearch/snowballstem"
-	"github.com/blevesearch/snowballstem/hungarian"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/zedsearch/snowballstem"
+	"github.com/zedsearch/snowballstem/hungarian"
 )
 
 type HungarianStemmerFilter struct {

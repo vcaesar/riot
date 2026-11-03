@@ -16,9 +16,9 @@
 package fr
 
 import (
-	"github.com/blevesearch/snowballstem"
-	"github.com/blevesearch/snowballstem/french"
 	"github.com/vcaesar/riot/analysis"
+	"github.com/zedsearch/snowballstem"
+	"github.com/zedsearch/snowballstem/french"
 )
 
 type FrenchStemmerFilter struct {
