@@ -139,3 +139,10 @@ func TestWeb(t *testing.T) {
 		}
 	}
 }
+
+func TestWebTokenizerSharesRegexp(t *testing.T) {
+	a, b := NewWebTokenizer(), NewWebTokenizer()
+	if a.exception == nil || a.exception != b.exception {
+		t.Fatalf("web tokenizers should share one compiled regexp: %p %p", a.exception, b.exception)
+	}
+}

@@ -82,3 +82,47 @@ func TestDefaultConfigWithIndexConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultConfigWithIndexConfigMode(t *testing.T) {
+	for _, mode := range []IndexMode{IndexModeBatch, IndexModeStream} {
+		indexConfig := index.InMemoryOnlyConfig()
+		indexConfig.IndexMode = mode
+		config := DefaultConfigWithIndexConfig(indexConfig)
+		got := config.indexConfig.IndexMode
+		if got != mode {
+			t.Fatalf("index mode = %v, want %v", got, mode)
+		}
+	}
+}
+
+// func TestConfigWithLang(t *testing.T) {
+// 	config := InMemoryOnlyConfig().WithLang("en")
+// 	if config.langErr != nil {
+// 		t.Fatal(config.langErr)
+// 	}
+// 	tokens := config.DefaultSearchAnalyzer.Analyze([]byte("The Running foxes"))
+// 	if len(tokens) != 2 || string(tokens[0].Term) != "run" || string(tokens[1].Term) != "fox" {
+// 		t.Fatalf("en analyzer not selected: %v", tokens)
+// 	}
+
+// 	// "de" is not active: this package does not import analysis/lang/de
+// 	bad := InMemoryOnlyConfig().WithLang("de")
+// 	if _, err := OpenWriter(bad); err == nil || !strings.Contains(err.Error(), `"de"`) {
+// 		t.Fatalf("OpenWriter error = %v", err)
+// 	}
+// 	if _, err := OpenReader(bad); err == nil {
+// 		t.Fatal("OpenReader: expected inactive language error")
+// 	}
+// 	if _, err := OpenOfflineWriter(bad, 1, 1); err == nil {
+// 		t.Fatal("OpenOfflineWriter: expected inactive language error")
+// 	}
+
+// 	// a later valid WithLang clears the error
+// 	writer, err := OpenWriter(bad.WithLang("simple"))
+// 	if err != nil {
+// 		t.Fatal(err)
+// 	}
+// 	if err := writer.Close(); err != nil {
+// 		t.Fatal(err)
+// 	}
+// }

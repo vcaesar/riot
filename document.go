@@ -122,6 +122,17 @@ func (d Document) Analyze() {
 	}
 }
 
+// ReleaseAnalysis drops the fields' analysis once it has been indexed, so
+// a document still referenced by a Batch does not keep it alive. Analyze
+// rebuilds it.
+func (d Document) ReleaseAnalysis() {
+	for _, field := range d {
+		if r, ok := field.(interface{ ReleaseAnalysis() }); ok {
+			r.ReleaseAnalysis()
+		}
+	}
+}
+
 func (d Document) EachField(vf segment.VisitField) {
 	for _, field := range d {
 		vf(field)

@@ -16,6 +16,7 @@
 package searcher
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/vcaesar/riot/search/similarity"
@@ -146,5 +147,75 @@ func TestFuzzySearchLimitErrors(t *testing.T) {
 		1.0, nil, similarity.NewCompositeSumScorer(), testSearchOptions)
 	if err == nil {
 		t.Fatal("`invalid fuzziness, negative` error expected")
+	}
+}
+
+// A fuzzy query expanding to a single term is served by that term's
+// searcher, with the same hits and scores as the plain term query.
+func TestFuzzySingleExpansionIsTermSearcher(t *testing.T) {
+	opts := testSearchOptions
+	opts.Explain = false
+	fs, err := NewFuzzySearcher(baseTestIndexReader, "aplee", 0, 2, "desc",
+		1.0, nil, similarity.NewCompositeSumScorer(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	if _, ok := fs.(*TermSearcher); !ok {
+		t.Fatalf("got %T, want *TermSearcher", fs)
+	}
+	boosted, err := NewFuzzySearcher(baseTestIndexReader, "aplee", 0, 2, "desc",
+		1.0, nil, similarity.NewCompositeSumScorerWithBoost(2), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer boosted.Close()
+	if _, ok := boosted.(*TermSearcher); ok {
+		t.Fatal("boosted composite must keep the disjunction")
+	}
+}
+
+// Fuzziness 0 is the exact term (and used to index an empty automaton list).
+func TestFuzzyZeroIsExactTerm(t *testing.T) {
+	opts := testSearchOptions
+	opts.Explain = false
+	for _, tc := range []struct {
+		term string
+		want int
+	}{{"beer", 4}, {"beet", 0}} {
+		fs, err := NewFuzzySearcher(baseTestIndexReader, tc.term, 2, 0, "desc",
+			1.0, nil, similarity.NewCompositeSumScorer(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ts, err := NewTermSearcher(baseTestIndexReader, tc.term, "desc", 1.0, nil, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, want := drainMatches(t, fs), drainMatches(t, ts)
+		if len(got) != tc.want || !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s~0: got %v, term searcher %v, want %d hits", tc.term, got, want, tc.want)
+		}
+	}
+}
+
+func drainMatches(t *testing.T, s search.Searcher) (rv []search.DocumentMatch) {
+	t.Helper()
+	defer func() {
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	ctx := &search.Context{DocumentMatchPool: search.NewDocumentMatchPool(s.DocumentMatchPoolSize(), 0)}
+	for {
+		m, err := s.Next(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m == nil {
+			return rv
+		}
+		rv = append(rv, search.DocumentMatch{Number: m.Number, Score: m.Score})
+		ctx.DocumentMatchPool.Put(m)
 	}
 }

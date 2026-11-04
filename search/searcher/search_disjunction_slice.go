@@ -19,10 +19,12 @@ import (
 	"math"
 	"sort"
 
+	"github.com/RoaringBitmap/roaring/v2"
 	segment "github.com/vcaesar/bluge_segment_api"
 
 	"github.com/vcaesar/riot/numeric"
 	"github.com/vcaesar/riot/search"
+	"github.com/vcaesar/riot/search/similarity"
 )
 
 type DisjunctionSliceSearcher struct {
@@ -144,6 +146,11 @@ func (s *DisjunctionSliceSearcher) updateMatches() error {
 
 func (s *DisjunctionSliceSearcher) Next(ctx *search.Context) (
 	*search.DocumentMatch, error) {
+	if s.raw == nil && !s.initialized && s.rawEligible() {
+		if err := s.startRaw(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if s.raw != nil {
 		return s.raw.next(ctx, 0, math.Inf(-1), nil)
 	}
@@ -187,6 +194,11 @@ func (s *DisjunctionSliceSearcher) Next(ctx *search.Context) (
 
 func (s *DisjunctionSliceSearcher) Advance(ctx *search.Context,
 	number uint64) (*search.DocumentMatch, error) {
+	if s.raw == nil && !s.initialized && s.rawEligible() {
+		if err := s.startRaw(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if s.raw != nil {
 		return s.raw.next(ctx, number, math.Inf(-1), nil)
 	}
@@ -295,122 +307,219 @@ func (s *DisjunctionSliceSearcher) buildDocumentMatch(constituents []*search.Doc
 func (s *DisjunctionSliceSearcher) NextAbove(ctx *search.Context, floor float64,
 	skipped func(score float64, n int) bool) (*search.DocumentMatch, error) {
 	if s.raw == nil {
-		if s.min > 1 || !rawTermChildren(s.options, s.scorer, s.searchers) {
+		if !s.rawEligible() {
 			return s.Next(ctx)
 		}
-		if !s.initialized {
-			if err := s.initSearchers(ctx); err != nil {
-				return nil, err
-			}
+		if err := s.startRaw(ctx); err != nil {
+			return nil, err
 		}
-		s.raw = newRawDisjunction(s, ctx)
 	}
 	return s.raw.next(ctx, 0, floor, skipped)
 }
 
-// rawDisjunction is a disjunction of term postings positioned on
-// (number, freq, norm) per child; children are scored in searcher order,
-// as updateMatches orders them, so composite sums are bit identical.
-type rawDisjunction struct {
-	indexReader search.Reader
-	scorer      search.CompositeScorer
-	terms       []*TermSearcher
-	live        []bool
-	nums        []uint64
-	freqs       []int // < 0: score carried over from a DocumentMatch
-	norms       []float64
-	scores      []search.DocumentMatch
-	matching    []*search.DocumentMatch
-	matchIdx    []int
+func (s *DisjunctionSliceSearcher) rawEligible() bool {
+	return s.min <= 1 && rawTermChildren(s.options, s.scorer, s.searchers)
 }
 
-func newRawDisjunction(s *DisjunctionSliceSearcher, ctx *search.Context) *rawDisjunction {
+func (s *DisjunctionSliceSearcher) startRaw(ctx *search.Context) error {
+	raw, err := newRawDisjunction(s, ctx)
+	if err != nil {
+		return err
+	}
+	s.raw = raw
+	return nil
+}
+
+// rawDisjunction is a disjunction of term postings positioned on
+// (number, freq, norm) per child; children are summed in searcher order,
+// as updateMatches orders them, so sums are bit identical to
+// CompositeSumScorer.ScoreComposite.
+type rawDisjunction struct {
+	indexReader search.Reader
+	boost       float64
+	terms       []*TermSearcher
+	heads       []rawHead
+	// blocks is set when every child can report block bounds and scores
+	// monotonically, so windows whose bound loses can be counted from the
+	// postings bitmaps and skipped whole; boundEnd is the end of the last
+	// window found competitive against floor boundFloor, which the floor
+	// may rise above before boundEnd
+	blocks     []blockBoundReader
+	boundEnd   uint64
+	boundFloor int64
+	// bms are the live children's segment bitmaps of the last window,
+	// disjoint whether no two of them share a document, which bounds every
+	// hit by a single child, and union their union once a window needed it
+	bms      []*roaring.Bitmap
+	disjoint bool
+	union    *roaring.Bitmap
+}
+
+// rawHead is a child's current posting.
+type rawHead struct {
+	num   uint64
+	freq  int // < 0: score carried over from a DocumentMatch
+	norm  float64
+	score float64
+	live  bool
+}
+
+// newRawDisjunction takes over s's children: positioned ones seed the raw
+// state from their current DocumentMatch, otherwise each reads its first
+// posting.
+func newRawDisjunction(s *DisjunctionSliceSearcher, ctx *search.Context) (*rawDisjunction, error) {
 	n := len(s.searchers)
 	r := &rawDisjunction{
-		scorer:   s.scorer,
-		terms:    make([]*TermSearcher, n),
-		live:     make([]bool, n),
-		nums:     make([]uint64, n),
-		freqs:    make([]int, n),
-		norms:    make([]float64, n),
-		scores:   make([]search.DocumentMatch, n),
-		matching: make([]*search.DocumentMatch, 0, n),
-		matchIdx: make([]int, 0, n),
+		boost:  s.scorer.(*similarity.CompositeSumScorer).Boost(),
+		terms:  make([]*TermSearcher, n),
+		heads:  make([]rawHead, n),
+		blocks: make([]blockBoundReader, 0, n),
 	}
 	for i, child := range s.searchers {
 		ts := child.(*TermSearcher)
 		r.indexReader = ts.indexReader
 		r.terms[i] = ts
 		ts.cursor.startBatch(ts.reader, false)
+		if br, ok := ts.reader.(blockBoundReader); ok && monotoneScorer(ts.scorer) {
+			r.blocks = append(r.blocks, br)
+		}
+		if !s.initialized {
+			if err := r.stepNext(i); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if s.currs[i] == nil {
 			continue
 		}
-		r.live[i] = true
-		r.nums[i] = s.currs[i].Number
-		r.freqs[i] = -1
-		r.scores[i].Score = s.currs[i].Score
+		r.heads[i] = rawHead{num: s.currs[i].Number, freq: -1, score: s.currs[i].Score, live: true}
 		ctx.DocumentMatchPool.Put(s.currs[i])
 		s.currs[i] = nil
 	}
-	return r
+	if len(r.blocks) != n || r.boost < 0 {
+		r.blocks = nil // a negative boost would invert the bound
+	}
+	return r, nil
+}
+
+// skipWindow checks the block window starting at number, where every live
+// child is positioned at or after number: when no hit in it can beat floor
+// it returns the window end and how many hits it holds. ok is false when
+// the window may hold a competitive hit or cannot be counted.
+func (r *rawDisjunction) skipWindow(number uint64, floorBits int64) (end, hits uint64, ok bool) {
+	end = math.MaxUint64
+	var sum, top float64
+	var base uint64
+	bms, same := r.bms[:0], true
+	for i := range r.heads {
+		if !r.heads[i].live {
+			continue
+		}
+		br := r.blocks[i]
+		maxFreq, minNorm, blockEnd, found := br.BlockBound(number)
+		if !found {
+			return 0, 0, false
+		}
+		bm, segBase := br.SegmentBitmap(number)
+		if bm == nil {
+			return 0, 0, false
+		}
+		end, base = min(end, blockEnd), segBase
+		// summed in searcher order, as next sums the hit scores; a hit may
+		// lack this child, which then adds 0, so a negative bound counts as 0
+		b := max(r.terms[i].scorer.Score(maxFreq, minNorm), 0)
+		sum, top = sum+b, max(top, b)
+		// bms reuses r.bms: compare each slot before overwriting it
+		same = same && len(bms) < len(r.bms) && r.bms[len(bms)] == bm
+		bms = append(bms, bm)
+	}
+	if !same || len(bms) != len(r.bms) {
+		r.disjoint, r.union = disjointBitmaps(bms), nil
+	}
+	r.bms = bms
+	bound := sum
+	if r.disjoint {
+		bound = top
+	}
+	if numeric.Float64ToInt64(bound*r.boost) > floorBits {
+		r.boundEnd, r.boundFloor = end, floorBits
+		return 0, 0, false
+	}
+	lo, hi := number-base, end-base
+	if r.disjoint {
+		for _, bm := range bms {
+			hits += bm.CardinalityInRange(lo, hi)
+		}
+	} else {
+		if r.union == nil {
+			r.union = roaring.FastOr(bms...)
+		}
+		hits = r.union.CardinalityInRange(lo, hi)
+	}
+	return end, hits, true
+}
+
+func disjointBitmaps(bms []*roaring.Bitmap) bool {
+	for i, a := range bms {
+		for _, b := range bms[i+1:] {
+			if a.Intersects(b) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (r *rawDisjunction) step(i int, p segment.Posting, err error) error {
 	if err != nil {
 		return err
 	}
+	h := &r.heads[i]
 	if p == nil {
-		r.live[i] = false
+		h.live = false
 		return nil
 	}
-	r.nums[i], r.freqs[i], r.norms[i] = p.Number(), p.Frequency(), p.Norm()
+	h.num, h.freq, h.norm, h.live = p.Number(), p.Frequency(), p.Norm(), true
 	return nil
+}
+
+// stepNext moves child i to its next posting, straight from its batch
+// when one is buffered.
+func (r *rawDisjunction) stepNext(i int) error {
+	c := &r.terms[i].cursor
+	if b := c.batch; b != nil && !c.done && b.pos < b.n {
+		r.heads[i] = rawHead{num: b.docs[b.pos], freq: b.freqs[b.pos], norm: b.norms[b.pos], live: true}
+		b.pos++
+		c.seen++
+		return nil
+	}
+	p, err := c.next(r.terms[i].reader)
+	return r.step(i, p, err)
 }
 
 func (r *rawDisjunction) next(ctx *search.Context, target uint64, floor float64,
 	skipped func(float64, int) bool) (*search.DocumentMatch, error) {
 	floorBits := numeric.Float64ToInt64(floor)
 	for {
-		minNum, found := uint64(0), false
-		for i, ts := range r.terms {
-			if !r.live[i] {
+		minNum, found, err := r.first(target)
+		if err != nil || !found {
+			return nil, err
+		}
+		if r.blocks != nil && skipped != nil && ctx.SkipBlocks &&
+			(minNum >= r.boundEnd || floorBits > r.boundFloor) {
+			if end, hits, ok := r.skipWindow(minNum, floorBits); ok {
+				// #nosec G115 -- hits counts postings of one uint32-numbered segment.
+				if hits > 0 && !skipped(floor, int(hits)) {
+					return nil, nil
+				}
+				target = end
 				continue
 			}
-			if r.nums[i] < target {
-				p, err := ts.cursor.advance(ts.reader, target)
-				if err := r.step(i, p, err); err != nil {
-					return nil, err
-				}
-				if !r.live[i] {
-					continue
-				}
-			}
-			if !found || r.nums[i] < minNum {
-				minNum, found = r.nums[i], true
-			}
-		}
-		if !found {
-			return nil, nil
 		}
 		target = 0
-		r.matching, r.matchIdx = r.matching[:0], r.matchIdx[:0]
-		for i, ts := range r.terms {
-			if !r.live[i] || r.nums[i] != minNum {
-				continue
-			}
-			if r.freqs[i] >= 0 {
-				r.scores[i].Score = ts.scorer.Score(r.freqs[i], r.norms[i])
-			}
-			r.matching = append(r.matching, &r.scores[i])
-			r.matchIdx = append(r.matchIdx, i)
-		}
-		score := r.scorer.ScoreComposite(r.matching)
-		for _, i := range r.matchIdx {
-			ts := r.terms[i]
-			p, err := ts.cursor.next(ts.reader)
-			if err := r.step(i, p, err); err != nil {
-				return nil, err
-			}
+		score, err := r.scoreAt(minNum)
+		if err != nil {
+			return nil, err
 		}
 		if skipped == nil || numeric.Float64ToInt64(score) > floorBits {
 			rv := ctx.DocumentMatchPool.Get()
@@ -423,4 +532,50 @@ func (r *rawDisjunction) next(ctx *search.Context, target uint64, floor float64,
 			return nil, nil
 		}
 	}
+}
+
+// first advances the children behind target to it and returns the
+// smallest document number they are on; found is false once all are done.
+func (r *rawDisjunction) first(target uint64) (minNum uint64, found bool, err error) {
+	for i := range r.heads {
+		h := &r.heads[i]
+		if !h.live {
+			continue
+		}
+		if h.num < target {
+			ts := r.terms[i]
+			p, err := ts.cursor.advance(ts.reader, target)
+			if err := r.step(i, p, err); err != nil {
+				return 0, false, err
+			}
+			if !h.live {
+				continue
+			}
+		}
+		if !found || h.num < minNum {
+			minNum, found = h.num, true
+		}
+	}
+	return minNum, found, nil
+}
+
+// scoreAt sums, in searcher order, the scores of the children on number
+// and moves them to their next postings.
+func (r *rawDisjunction) scoreAt(number uint64) (float64, error) {
+	var score float64
+	for i := range r.heads {
+		h := &r.heads[i]
+		if !h.live || h.num != number {
+			continue
+		}
+		if h.freq >= 0 {
+			score += r.terms[i].scorer.Score(h.freq, h.norm)
+		} else {
+			score += h.score
+		}
+		if err := r.stepNext(i); err != nil {
+			return 0, err
+		}
+	}
+	return score * r.boost, nil
 }

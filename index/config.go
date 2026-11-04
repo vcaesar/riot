@@ -88,7 +88,50 @@ type Config struct {
 
 	ValidateSnapshotCRC bool
 
+	// IndexMode selects how Writer.Batch builds segments, see Mode.
+	IndexMode Mode
+	// BatchSegmentDocs caps the documents per segment in IndexModeBatch;
+	// zero or less builds one segment per batch.
+	BatchSegmentDocs int
+	// StreamMemoryBudget is the packed bytes per segment in IndexModeStream
+	// and of Writer.NewStream(0); zero or less uses
+	// DefaultStreamMemoryBudget.
+	StreamMemoryBudget int
+
 	virtualFields map[string][]segment.Field
+}
+
+// Mode selects how Writer.Batch turns documents into segments. Either
+// way a batch is published atomically.
+type Mode uint8
+
+const (
+	// IndexModeBatch analyzes the documents and builds them
+	// into segments of up to BatchSegmentDocs documents. A Batch already
+	// holds every document, so this is its cheapest mode; for bounded
+	// memory, add documents through Writer.NewStream instead.
+	IndexModeBatch Mode = iota
+	// IndexModeStream, the default of DefaultConfig and its variants,
+	// analyzes documents a block at a time and packs them into a compact
+	// buffer, built into a segment every StreamMemoryBudget bytes, as
+	// Stream does.
+	IndexModeStream
+)
+
+// WithBatchIndexing selects IndexModeBatch with up to segmentDocs documents
+// per segment; zero or less builds one segment per batch. With a cap, each
+// document's analysis is released once its segment is built.
+func (config Config) WithBatchIndexing(segmentDocs int) Config {
+	config.IndexMode, config.BatchSegmentDocs = IndexModeBatch, segmentDocs
+	return config
+}
+
+// WithStreamIndexing selects IndexModeStream with a segment every
+// memoryBudget packed bytes; zero or less uses DefaultStreamMemoryBudget.
+// Each document's analysis is released once it is packed.
+func (config Config) WithStreamIndexing(memoryBudget int) Config {
+	config.IndexMode, config.StreamMemoryBudget = IndexModeStream, memoryBudget
+	return config
 }
 
 // WithTimeRange prunes segments outside the inclusive range, not individual documents.
@@ -145,6 +188,9 @@ func (config Config) withIcePlugins(opts iceV1.Options) Config {
 			New:     opts.New,
 			Load:    opts.Load,
 			Merge:   iceV1.Merge,
+			NewBuilder: func(normCalc func(string, int) float32) SegmentBuilder {
+				return opts.NewBuilder(normCalc)
+			},
 		})
 	}
 	return config
@@ -160,6 +206,9 @@ func (config Config) WithVirtualField(field segment.Field) Config {
 	return config
 }
 
+// WithNormCalc sets the field length norm; segments of large batches are
+// built by several goroutines at once, so calc must be safe to call
+// concurrently.
 func (config Config) WithNormCalc(calc func(field string, numTerms int) float32) Config {
 	config.NormCalc = calc
 	return config
@@ -223,6 +272,8 @@ func defaultConfig() Config {
 		DeletionPolicyFunc: func() DeletionPolicy {
 			return NewKeepNLatestDeletionPolicy(1)
 		},
+
+		IndexMode: IndexModeStream,
 
 		MergeBufferSize:      1024 * 1024,
 		StoredChunkCacheSize: iceV1.StoredChunkCacheSize,

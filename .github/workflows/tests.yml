@@ -24,6 +24,7 @@ jobs:
       - name: Test
         run: |
           go version
+          go test -run '^TestTextFieldReleaseAllocations$' .
           go test -race ./...
       - name: Build 32-bit
         if: matrix.platform == 'ubuntu-latest'

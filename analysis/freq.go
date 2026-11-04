@@ -17,7 +17,9 @@ package analysis
 
 import (
 	"bytes"
+	"math"
 	"reflect"
+	"slices"
 	"sync"
 	"unsafe"
 
@@ -37,12 +39,22 @@ func init() {
 // TokenLocation represents one occurrence of a term at a particular location in
 // a field. Start, End and Position have the same meaning as in analysis.Token.
 // Field and ArrayPositions identify the field value in the source document.
-// See document.Field for details.
+// See document.Field for details. Values beyond int32 are stored as -1,
+// which segments reject as a negative location.
 type TokenLocation struct {
 	FieldVal    string
-	StartVal    int
-	EndVal      int
-	PositionVal int
+	StartVal    int32
+	EndVal      int32
+	PositionVal int32
+}
+
+// Loc32 converts a location value for TokenLocation: -1 when it does not
+// fit an int32.
+func Loc32(v int) int32 {
+	if v > math.MaxInt32 || v < math.MinInt32 {
+		return -1
+	}
+	return int32(v)
 }
 
 func (tl *TokenLocation) Field() string {
@@ -50,15 +62,15 @@ func (tl *TokenLocation) Field() string {
 }
 
 func (tl *TokenLocation) Pos() int {
-	return tl.PositionVal
+	return int(tl.PositionVal)
 }
 
 func (tl *TokenLocation) Start() int {
-	return tl.StartVal
+	return int(tl.StartVal)
 }
 
 func (tl *TokenLocation) End() int {
-	return tl.EndVal
+	return int(tl.EndVal)
 }
 
 func (tl *TokenLocation) Size() int {
@@ -66,20 +78,17 @@ func (tl *TokenLocation) Size() int {
 }
 
 // TokenFreq represents all the occurrences of a term in all fields of a
-// document.
+// document. Locations holds the values, not pointers, so a term's
+// locations are one allocation (or a window of one shared by the field).
 type TokenFreq struct {
 	TermVal   []byte
-	Locations []*TokenLocation
+	Locations []TokenLocation
 	frequency int
 }
 
 func (tf *TokenFreq) Size() int {
-	rv := reflectStaticSizeTokenFreq
-	rv += len(tf.TermVal)
-	for _, loc := range tf.Locations {
-		rv += loc.Size()
-	}
-	return rv
+	return reflectStaticSizeTokenFreq + len(tf.TermVal) +
+		len(tf.Locations)*reflectStaticSizeTokenLocation
 }
 
 func (tf *TokenFreq) Term() []byte {
@@ -91,8 +100,8 @@ func (tf *TokenFreq) Frequency() int {
 }
 
 func (tf *TokenFreq) EachLocation(location segment.VisitLocation) {
-	for _, tl := range tf.Locations {
-		location(tl)
+	for i := range tf.Locations {
+		location(&tf.Locations[i])
 	}
 }
 
@@ -122,8 +131,8 @@ func (tfs TokenFrequencies) MergeAll(remoteField string, other TokenFrequencies)
 
 func (tfs TokenFrequencies) mergeOne(remoteField, tfk string, tf *TokenFreq, block []TokenFreq, blockCap int) []TokenFreq {
 	// set the remoteField value in incoming token freqs
-	for _, l := range tf.Locations {
-		l.FieldVal = remoteField
+	for i := range tf.Locations {
+		tf.Locations[i].FieldVal = remoteField
 	}
 	existingTf, exists := tfs[tfk]
 	if exists {
@@ -147,8 +156,8 @@ func (tfs TokenFrequencies) mergeOne(remoteField, tfk string, tf *TokenFreq, blo
 
 func (tfs TokenFrequencies) MergeOneBytes(remoteField string, tfk []byte, tf *TokenFreq) {
 	// set the remoteField value in incoming token freqs
-	for _, l := range tf.Locations {
-		l.FieldVal = remoteField
+	for i := range tf.Locations {
+		tf.Locations[i].FieldVal = remoteField
 	}
 	existingTf, exists := tfs[string(tfk)]
 	if exists {
@@ -158,9 +167,8 @@ func (tfs TokenFrequencies) MergeOneBytes(remoteField string, tfk []byte, tf *To
 		tfs[string(tfk)] = &TokenFreq{
 			TermVal:   tf.TermVal,
 			frequency: tf.frequency,
-			Locations: make([]*TokenLocation, len(tf.Locations)),
+			Locations: slices.Clone(tf.Locations),
 		}
-		copy(tfs[string(tfk)].Locations, tf.Locations)
 	}
 }
 
@@ -190,19 +198,111 @@ const maxPooledDedup = 1 << 14
 // Keys alias token bytes and are cleared before the map is put back.
 var dedupMaps = sync.Pool{New: func() any { return make(map[string]int32) }}
 
+// maxPooledTermOf bounds the per-token term index scratch kept for reuse.
+const maxPooledTermOf = 1 << 16
+
+// termOfs recycles TokenFrequencySlice's token -> term index scratch.
+var termOfs = sync.Pool{New: func() any { return new([]int32) }}
+
+// AppendTerm adds one occurrence of term, without a location, to tfs: as
+// TokenFrequencySlice does for a short stream without term vectors.
+func AppendTerm(tfs []TokenFreq, term []byte) []TokenFreq {
+	for i := range tfs {
+		if bytes.Equal(tfs[i].TermVal, term) {
+			tfs[i].frequency++
+			return tfs
+		}
+	}
+	return append(tfs, TokenFreq{TermVal: term, frequency: 1})
+}
+
+// SingleTokenFrequency is TokenFrequencySlice for a stream of one token
+// spanning all of term (position increment 1), without building the stream.
+func SingleTokenFrequency(term []byte, includeTermVectors bool, startOffset int) (
+	tfs []TokenFreq, position int) {
+	if !includeTermVectors {
+		return []TokenFreq{{TermVal: term, frequency: 1}}, 0
+	}
+	// the term and its location in one allocation
+	one := &struct {
+		tf  [1]TokenFreq
+		loc [1]TokenLocation
+	}{}
+	position = startOffset + 1
+	one.loc[0] = TokenLocation{EndVal: Loc32(len(term)), PositionVal: Loc32(position)}
+	one.tf[0] = TokenFreq{TermVal: term, frequency: 1, Locations: one.loc[:]}
+	return one.tf[:], position
+}
+
 // TokenFrequencySlice is TokenFrequency without the map: the distinct terms
 // in first occurrence order. As with TokenFrequency, position is only
 // tracked (from startOffset) when includeTermVectors is set.
 func TokenFrequencySlice(tokens TokenStream, includeTermVectors bool, startOffset int) (
 	tfs []TokenFreq, position int) {
-	// bounded by len(tokens) so it is never grown and pointers into it stay valid
-	tfs = make([]TokenFreq, 0, len(tokens))
 	var tls []TokenLocation
-	var tlPtrs []*TokenLocation
 	if includeTermVectors {
 		tls = make([]TokenLocation, len(tokens))
-		tlPtrs = make([]*TokenLocation, len(tokens))
-		position = startOffset
+	}
+	return tokenFrequency(tokens, includeTermVectors, startOffset, make([]TokenFreq, 0, len(tokens)), tls)
+}
+
+// FreqBlock is the storage behind a TokenFrequencyPooled result.
+type FreqBlock struct {
+	tfs []TokenFreq
+	tls []TokenLocation
+}
+
+// maxPooledFreqBlock bounds the terms of a block kept for reuse.
+const maxPooledFreqBlock = 1 << 12
+
+var freqBlocks = sync.Pool{New: func() any { return new(FreqBlock) }}
+
+// TokenFrequencyPooled is TokenFrequencySlice into recycled storage. The
+// result is valid until blk is passed to ReleaseFreqBlock.
+func TokenFrequencyPooled(tokens TokenStream, includeTermVectors bool, startOffset int) (
+	tfs []TokenFreq, position int, blk *FreqBlock) {
+	blk = freqBlocks.Get().(*FreqBlock)
+	if cap(blk.tfs) < len(tokens) {
+		blk.tfs = make([]TokenFreq, 0, len(tokens))
+	}
+	var tls []TokenLocation
+	if includeTermVectors {
+		if cap(blk.tls) < len(tokens) {
+			blk.tls = make([]TokenLocation, len(tokens))
+		}
+		tls = blk.tls[:len(tokens)]
+	}
+	tfs, position = tokenFrequency(tokens, includeTermVectors, startOffset, blk.tfs[:0], tls)
+	return tfs, position, blk
+}
+
+// ReleaseFreqBlock recycles blk; nothing may use its results afterwards.
+func ReleaseFreqBlock(blk *FreqBlock) {
+	if cap(blk.tfs) > maxPooledFreqBlock || cap(blk.tls) > maxPooledFreqBlock {
+		return
+	}
+	// drop the term and value references so they can be collected
+	clear(blk.tfs[:cap(blk.tfs)])
+	clear(blk.tls[:cap(blk.tls)])
+	freqBlocks.Put(blk)
+}
+
+// tokenFrequency fills tfs (capacity >= len(tokens), so it is never grown
+// and pointers into it stay valid) and, with term vectors, tls (length
+// len(tokens)).
+func tokenFrequency(tokens TokenStream, includeTermVectors bool, startOffset int,
+	tfs []TokenFreq, tls []TokenLocation) (_ []TokenFreq, position int) {
+	// termOf[i] is the term of token i, for laying out locations by term
+	var termOf []int32
+	if includeTermVectors {
+		sp := termOfs.Get().(*[]int32)
+		termOf = slices.Grow((*sp)[:0], len(tokens))[:len(tokens)]
+		defer func() {
+			if cap(termOf) <= maxPooledTermOf {
+				*sp = termOf[:0]
+				termOfs.Put(sp)
+			}
+		}()
 	}
 	var seen map[string]int32
 	if len(tokens) > linearDedupMax {
@@ -237,25 +337,33 @@ func TokenFrequencySlice(tokens TokenStream, includeTermVectors bool, startOffse
 				seen[unsafe.String(unsafe.SliceData(token.Term), len(token.Term))] = int32(idx)
 			}
 		}
-		tf := &tfs[idx]
-		tf.frequency++
-		if !includeTermVectors {
-			continue
+		tfs[idx].frequency++
+		if termOf != nil {
+			termOf[i] = int32(idx)
 		}
+	}
+	if !includeTermVectors {
+		return tfs, 0
+	}
+
+	// one block for the field, a window per term capped at its frequency,
+	// so appending to a term's locations later reallocates instead of
+	// writing into the next term's window
+	off := 0
+	for j := range tfs {
+		n := tfs[j].frequency
+		tfs[j].Locations = tls[off : off : off+n]
+		off += n
+	}
+	position = startOffset
+	for i, token := range tokens {
 		position += token.PositionIncr
-		tls[i] = TokenLocation{
-			StartVal:    token.Start,
-			EndVal:      token.End,
-			PositionVal: position,
-		}
-		tlPtrs[i] = &tls[i]
-		if tf.Locations == nil {
-			// cap 1 so a second location reallocates rather than
-			// overwriting the next term's pointer in tlPtrs
-			tf.Locations = tlPtrs[i : i+1 : i+1]
-		} else {
-			tf.Locations = append(tf.Locations, tlPtrs[i])
-		}
+		tf := &tfs[termOf[i]]
+		tf.Locations = append(tf.Locations, TokenLocation{
+			StartVal:    Loc32(token.Start),
+			EndVal:      Loc32(token.End),
+			PositionVal: Loc32(position),
+		})
 	}
 	return tfs, position
 }

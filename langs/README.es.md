@@ -401,6 +401,8 @@ Los tres motores ejecutan la misma carga: 100 000 documentos sintéticos (texto 
 
 Las puntuaciones difieren de las de Bluge porque riot corrigió el idf de BM25 de Bluge al de Lucene: `log(1 + (N − n + 0.5)/(n + 0.5))`. Bluge no tiene búsqueda vectorial; la de Bleve requiere la etiqueta de compilación `vectors` y FAISS mediante cgo. Son cifras de una sola máquina con datos sintéticos, no un benchmark formal.
 
+Riot (Go) ya está a la par de Tantivy: es más rápido en 7 de las 10 cargas de consultas en la misma ejecución. También hay en desarrollo una versión de riot en Zig aún más rápida. Todavía está en beta y aún no se ha publicado. En la misma ejecución del benchmark fue unas 2 a 5× más rápida que riot (Go) en la mayoría de las consultas, 2.9× más rápida al indexar y al menos 1.5× más rápida que Tantivy en todas las cargas de consultas (de 2 a 8× en la mayoría).
+
 ## Licencia
 
 Apache License Version 2.0

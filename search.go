@@ -184,12 +184,14 @@ func (s *TopNSearch) Collector() search.Collector {
 }
 
 func searchOptionsFromConfig(config Config, options SearchOptions) search.SearcherOptions {
+	// capture only what the lookup reads, not a copy of all of config
+	perField, defaultSimilarity := config.PerFieldSimilarity, config.DefaultSimilarity
 	return search.SearcherOptions{
 		SimilarityForField: func(field string) search.Similarity {
-			if pfs, ok := config.PerFieldSimilarity[field]; ok {
+			if pfs, ok := perField[field]; ok {
 				return pfs
 			}
-			return config.DefaultSimilarity
+			return defaultSimilarity
 		},
 		DefaultSearchField: config.DefaultSearchField,
 		DefaultAnalyzer:    config.DefaultSearchAnalyzer,

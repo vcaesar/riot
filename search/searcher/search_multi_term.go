@@ -120,6 +120,13 @@ func newMultiTermSearcherInternal(indexReader search.Reader,
 	searchers []search.Searcher, compScorer search.CompositeScorer,
 	options search.SearcherOptions, limit bool) (
 	search.Searcher, error) {
+	// a one-term expansion (e.g. fuzzy "serch" -> "search") scores the same
+	// as its term searcher, which keeps the term fast paths
+	if len(searchers) == 1 && !options.Explain {
+		if cs, ok := compScorer.(*similarity.CompositeSumScorer); ok && cs.Boost() == 1 {
+			return searchers[0], nil
+		}
+	}
 	// build disjunction searcher of these ranges
 	searcher, err := newDisjunctionSearcher(indexReader, searchers, 0, compScorer, options,
 		limit)

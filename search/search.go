@@ -94,18 +94,10 @@ type DocumentMatch struct {
 	Locations   FieldTermLocationMap
 	SortValue   [][]byte
 
-	docValues map[string][][]byte
-	// docNumbers holds typed values of numeric column fields; docValues
-	// has no entry for those fields
-	docNumbers []docNumber
-	// Append-only scratch buffers keep FieldSource results valid until Reset,
-	// including across nested aggregation calls.
-	numScratch  []float64
-	termScratch [][]byte
-	termBytes   []byte
-	// visitors bound once per match so LoadDocumentValues does not allocate
-	termVisitor segment.DocumentValueVisitor
-	numVisitor  segment.NumericValueVisitor
+	// values holds the loaded document values, allocated on first use:
+	// most matches never load any, and keeping them out of line halves the
+	// DocumentMatch every search allocates per pooled candidate
+	values *matchValues
 
 	// used to maintain natural index order
 	HitNumber int
@@ -117,6 +109,23 @@ type DocumentMatch struct {
 	FieldTermLocations []FieldTermLocation
 }
 
+// matchValues is a DocumentMatch's loaded document values; it survives
+// Reset, so a pooled match reuses its buffers.
+type matchValues struct {
+	docValues map[string][][]byte
+	// docNumbers holds typed values of numeric column fields; docValues
+	// has no entry for those fields
+	docNumbers []docNumber
+	// Append-only scratch buffers keep FieldSource results valid until Reset,
+	// including across nested aggregation calls.
+	numScratch  []float64
+	termScratch [][]byte
+	termBytes   []byte
+	// visitors bound once so LoadDocumentValues does not allocate
+	termVisitor segment.DocumentValueVisitor
+	numVisitor  segment.NumericValueVisitor
+}
+
 type docNumber struct {
 	field string
 	value int64
@@ -126,15 +135,25 @@ func (dm *DocumentMatch) SetReader(r MatchReader) {
 	dm.reader = r
 }
 
-func (dm *DocumentMatch) addDocValue(name string, value []byte) {
-	if dm.docValues == nil {
-		dm.docValues = make(map[string][][]byte)
+// vals returns dm.values, allocating it on first use.
+func (dm *DocumentMatch) vals() *matchValues {
+	if dm.values == nil {
+		v := &matchValues{}
+		v.termVisitor, v.numVisitor = v.addDocValue, v.addDocNumber
+		dm.values = v
 	}
-	dm.docValues[name] = append(dm.docValues[name], value)
+	return dm.values
 }
 
-func (dm *DocumentMatch) addDocNumber(name string, value int64) {
-	dm.docNumbers = append(dm.docNumbers, docNumber{field: name, value: value})
+func (v *matchValues) addDocValue(name string, value []byte) {
+	if v.docValues == nil {
+		v.docValues = make(map[string][][]byte)
+	}
+	v.docValues[name] = append(v.docValues[name], value)
+}
+
+func (v *matchValues) addDocNumber(name string, value int64) {
+	v.docNumbers = append(v.docNumbers, docNumber{field: name, value: value})
 }
 
 func (dm *DocumentMatch) LoadDocumentValues(ctx *Context, fields []string) error {
@@ -142,40 +161,45 @@ func (dm *DocumentMatch) LoadDocumentValues(ctx *Context, fields []string) error
 	if err != nil {
 		return err
 	}
-	if dm.termVisitor == nil {
-		dm.termVisitor, dm.numVisitor = dm.addDocValue, dm.addDocNumber
-	}
+	v := dm.vals()
 	if nr, ok := dvReader.(segment.NumericDocumentValueReader); ok {
-		return nr.VisitDocumentNumbers(dm.Number, dm.termVisitor, dm.numVisitor)
+		return nr.VisitDocumentNumbers(dm.Number, v.termVisitor, v.numVisitor)
 	}
-	return dvReader.VisitDocumentValues(dm.Number, dm.termVisitor)
+	return dvReader.VisitDocumentValues(dm.Number, v.termVisitor)
 }
 
 func (dm *DocumentMatch) DocValues(field string) [][]byte {
-	if dm.docValues != nil {
-		if v := dm.docValues[field]; len(v) > 0 {
-			return v
+	v := dm.values
+	if v == nil {
+		return nil
+	}
+	if v.docValues != nil {
+		if vals := v.docValues[field]; len(vals) > 0 {
+			return vals
 		}
 	}
 	if !dm.hasDocNumbers(field) {
 		return nil
 	}
 	// Numeric column field: append without overwriting earlier accessor results.
-	first := len(dm.termScratch)
-	for _, n := range dm.docNumbers {
+	first := len(v.termScratch)
+	for _, n := range v.docNumbers {
 		if n.field != field {
 			continue
 		}
-		start := len(dm.termBytes)
-		dm.termBytes = numeric.AppendPrefixCodedInt64(dm.termBytes, n.value)
-		dm.termScratch = append(dm.termScratch, dm.termBytes[start:len(dm.termBytes):len(dm.termBytes)])
+		start := len(v.termBytes)
+		v.termBytes = numeric.AppendPrefixCodedInt64(v.termBytes, n.value)
+		v.termScratch = append(v.termScratch, v.termBytes[start:len(v.termBytes):len(v.termBytes)])
 	}
-	return dm.termScratch[first:len(dm.termScratch):len(dm.termScratch)]
+	return v.termScratch[first:len(v.termScratch):len(v.termScratch)]
 }
 
 func (dm *DocumentMatch) hasDocNumbers(field string) bool {
-	for i := range dm.docNumbers {
-		if dm.docNumbers[i].field == field {
+	if dm.values == nil {
+		return false
+	}
+	for i := range dm.values.docNumbers {
+		if dm.values.docNumbers[i].field == field {
 			return true
 		}
 	}
@@ -185,9 +209,12 @@ func (dm *DocumentMatch) hasDocNumbers(field string) bool {
 // DocNumbers appends the typed int64 doc values of field to buf; ok is
 // false when the field is not stored as a numeric column for this match.
 func (dm *DocumentMatch) DocNumbers(field string, buf []int64) (rv []int64, ok bool) {
-	for i := range dm.docNumbers {
-		if dm.docNumbers[i].field == field {
-			buf = append(buf, dm.docNumbers[i].value)
+	if dm.values == nil {
+		return buf, false
+	}
+	for _, n := range dm.values.docNumbers {
+		if n.field == field {
+			buf = append(buf, n.value)
 			ok = true
 		}
 	}
@@ -207,19 +234,25 @@ func (dm *DocumentMatch) Reset() *DocumentMatch {
 	dm.SortValue = dm.SortValue[:0]
 	clear(dm.FieldTermLocations)
 	dm.FieldTermLocations = dm.FieldTermLocations[:0]
-	if len(dm.docValues) > 0 { // ranging a nil map still pays for mapiterinit
-		for k, v := range dm.docValues {
-			clear(v)
-			dm.docValues[k] = v[:0]
+	if v := dm.values; v != nil {
+		v.reset()
+	}
+	return dm
+}
+
+func (v *matchValues) reset() {
+	if len(v.docValues) > 0 { // ranging a nil map still pays for mapiterinit
+		for k, vals := range v.docValues {
+			clear(vals)
+			v.docValues[k] = vals[:0]
 		}
 	}
-	clear(dm.docNumbers)
-	dm.docNumbers = dm.docNumbers[:0]
-	dm.numScratch = dm.numScratch[:0]
-	clear(dm.termScratch)
-	dm.termScratch = dm.termScratch[:0]
-	dm.termBytes = dm.termBytes[:0]
-	return dm
+	clear(v.docNumbers)
+	v.docNumbers = v.docNumbers[:0]
+	v.numScratch = v.numScratch[:0]
+	clear(v.termScratch)
+	v.termScratch = v.termScratch[:0]
+	v.termBytes = v.termBytes[:0]
 }
 
 func (dm *DocumentMatch) Size() int {
@@ -347,6 +380,10 @@ type SearcherOptions struct {
 type Context struct {
 	DocumentMatchPool *DocumentMatchPool
 	dvReaders         map[DocumentValueReadable]segment.DocumentValueReader
+	// lastDVR/lastDV cache the most recent dvReaders hit; hits arrive
+	// segment by segment, so this skips a map lookup per document
+	lastDVR DocumentValueReadable
+	lastDV  segment.DocumentValueReader
 	// Ctx is the caller's cancellation context; collectors set it from Collect.
 	Ctx context.Context
 	// SkipBlocks lets a ScoreSkipper pass over postings blocks whose score
@@ -359,12 +396,14 @@ type Context struct {
 func NewSearchContext(size, sortSize int) *Context {
 	return &Context{
 		DocumentMatchPool: NewDocumentMatchPool(size, sortSize),
-		dvReaders:         make(map[DocumentValueReadable]segment.DocumentValueReader),
 		Ctx:               context.Background(),
 	}
 }
 
 func (sc *Context) DocValueReaderForReader(r DocumentValueReadable, fields []string) (segment.DocumentValueReader, error) {
+	if sc.lastDV != nil && sc.lastDVR == r {
+		return sc.lastDV, nil
+	}
 	dvReader := sc.dvReaders[r]
 	if dvReader == nil {
 		var err error
@@ -372,8 +411,12 @@ func (sc *Context) DocValueReaderForReader(r DocumentValueReadable, fields []str
 		if err != nil {
 			return nil, err
 		}
+		if sc.dvReaders == nil {
+			sc.dvReaders = make(map[DocumentValueReadable]segment.DocumentValueReader)
+		}
 		sc.dvReaders[r] = dvReader
 	}
+	sc.lastDVR, sc.lastDV = r, dvReader
 	return dvReader, nil
 }
 

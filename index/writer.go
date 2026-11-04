@@ -268,6 +268,15 @@ func (s *Writer) close() (err error) {
 	s.asyncTasks.Wait()
 	s.graphPersists.Wait()
 
+	// the persister cleans up only while waiting for the next epoch, so
+	// files of snapshots it superseded just before close are still there;
+	// the background tasks have stopped, so the policy is ours alone now
+	if s.deletionPolicy != nil {
+		if err = s.deletionPolicy.Cleanup(s.directory); err != nil {
+			s.fireAsyncError(err)
+		}
+	}
+
 	s.rootLock.Lock()
 	persisted, callbacks := s.rootPersisted, s.persistedCallbacks
 	s.rootPersisted, s.persistedCallbacks = nil, nil
@@ -289,8 +298,24 @@ func (s *Writer) close() (err error) {
 	return nil
 }
 
-// Batch applies a batch of changes to the index atomically
+// analysisReleaser is implemented by documents that can drop their
+// analysis once it has been built into a segment or packed.
+type analysisReleaser interface{ ReleaseAnalysis() }
+
+func releaseAnalysis(docs []segment.Document) {
+	for _, doc := range docs {
+		if r, ok := doc.(analysisReleaser); ok {
+			r.ReleaseAnalysis()
+		}
+	}
+}
+
+// Batch applies a batch of changes to the index atomically, building the
+// documents into segments as Config.IndexMode selects.
 func (s *Writer) Batch(batch *Batch) (err error) {
+	if s.config.IndexMode == IndexModeStream {
+		return s.batchStream(batch)
+	}
 	start := time.Now()
 
 	defer func() {
@@ -300,16 +325,159 @@ func (s *Writer) Batch(batch *Batch) (err error) {
 	var numUpdates = len(batch.documents)
 	var numDeletes = len(batch.ids)
 
+	// one segment per chunk; with a cap, or the plugin's builder, the
+	// analysis is released once built
+	chunk := numUpdates
+	if c := s.config.BatchSegmentDocs; c > 0 && c < numUpdates {
+		chunk = c
+	}
+	var newSegments []*segmentWrapper
+	closeSegments := func() {
+		for _, seg := range newSegments {
+			_ = seg.Close()
+		}
+	}
+	var bufBytes uint64
+	var indexTime time.Duration
+	for lo := 0; lo < numUpdates; lo += chunk {
+		docs := batch.documents[lo:min(lo+chunk, numUpdates)]
+		seg, n, segTime, err := s.buildSegment(docs, lo == 0, chunk < numUpdates)
+		if err != nil {
+			closeSegments()
+			return err
+		}
+		indexTime += segTime
+		atomic.AddUint64(&s.stats.newSegBufBytesAdded, n)
+		bufBytes += n
+		newSegments = append(newSegments, seg)
+	}
+	if numUpdates == 0 {
+		s.fireEvent(EventKindBatchIntroductionStart, 0)
+		atomic.AddUint64(&s.stats.TotBatchesEmpty, 1)
+	}
+
+	indexStart := time.Now()
+	applied, err := s.prepareSegment(newSegments, batch.ids, nil, batch.PersistedCallback())
+	indexTime += time.Since(indexStart)
+	if err != nil {
+		if !applied {
+			closeSegments()
+		}
+		atomic.AddUint64(&s.stats.TotOnErrors, 1)
+	} else {
+		atomic.AddUint64(&s.stats.TotUpdates, uint64(numUpdates))
+		atomic.AddUint64(&s.stats.TotDeletes, uint64(numDeletes))
+		atomic.AddUint64(&s.stats.TotBatches, 1)
+	}
+
+	atomic.AddUint64(&s.stats.newSegBufBytesRemoved, bufBytes)
+	//nolint:gosec // G115: elapsed time uses the monotonic clock from time.Now and is nonnegative.
+	atomic.AddUint64(&s.stats.TotIndexTime, uint64(indexTime))
+
+	return err
+}
+
+// buildSegment analyzes docs and builds them into a segment, firing
+// EventKindBatchIntroductionStart first when first is set, and returns the
+// time spent building. With the plugin's builder, docs are analyzed
+// streamAnalyzeDocs at a time, each part while the one before is added,
+// as a Stream does, and their analysis released once added, so the
+// batch's analysis is never all held at once; else they are analyzed
+// together for New, and released afterwards when release is set.
+func (s *Writer) buildSegment(docs []segment.Document, first, release bool) (
+	seg *segmentWrapper, n uint64, buildTime time.Duration, err error) {
+	newBuilder := s.segPlugin.NewBuilder
+	if newBuilder == nil {
+		if err := s.analyze(docs); err != nil {
+			return nil, 0, 0, err
+		}
+		if first {
+			// notify handlers that we're about to introduce a segment
+			s.fireEvent(EventKindBatchIntroductionStart, 0)
+		}
+		start := time.Now()
+		if seg, n, err = s.newSegment(docs); err != nil {
+			return nil, 0, 0, err
+		}
+		if release {
+			releaseAnalysis(docs)
+		}
+		return seg, n, time.Since(start), nil
+	}
+	b := newBuilder(s.config.NormCalc)
+	part := func(lo int) []segment.Document { return docs[lo:min(lo+streamAnalyzeDocs, len(docs))] }
+	done := s.analyzeAsync(part(0))
+	defer func() {
+		// the caller owns docs again on return
+		if done != nil {
+			err = errors.Join(err, <-done)
+		}
+	}()
+	for lo := 0; lo < len(docs); lo += streamAnalyzeDocs {
+		err = <-done
+		done = nil
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		if next := lo + streamAnalyzeDocs; next < len(docs) {
+			done = s.analyzeAsync(part(next))
+		}
+		if first && lo == 0 {
+			s.fireEvent(EventKindBatchIntroductionStart, 0)
+		}
+		start := time.Now()
+		for _, doc := range part(lo) {
+			if err := b.Add(doc); err != nil {
+				return nil, 0, 0, err
+			}
+		}
+		buildTime += time.Since(start)
+		releaseAnalysis(part(lo))
+	}
+	start := time.Now()
+	built, n, err := b.Build()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	return &segmentWrapper{Segment: built, refCounter: noOpRefCounter{}}, n, buildTime + time.Since(start), nil
+}
+
+// batchStream is Batch in IndexModeStream.
+func (s *Writer) batchStream(batch *Batch) error {
+	st := s.NewStream(0)
+	st.ids = batch.ids
+	for _, doc := range batch.documents {
+		if err := st.Insert(doc); err != nil {
+			return err
+		}
+	}
+	return st.commit(batch.PersistedCallback(), true)
+}
+
+// analyzeAsync runs analyze on documents in the background; the returned
+// channel reports its result.
+func (s *Writer) analyzeAsync(documents []segment.Document) <-chan error {
+	done := make(chan error, 1)
+	go func() { done <- s.analyze(documents) }()
+	return done
+}
+
+// analyze runs Analyze on every non-nil document on the analysis workers.
+func (s *Writer) analyze(documents []segment.Document) error {
+	start := time.Now()
 	var allDocsAnalyzed sync.WaitGroup
 
 	// queue documents in chunks: a queue hand-off per document costs about
 	// as much as analyzing a short one
-	chunk := min(max(numUpdates/(8*max(s.config.NumAnalysisWorkers, 1)), 1), maxAnalysisChunk)
-	for lo := 0; lo < numUpdates; lo += chunk {
-		docs := batch.documents[lo:min(lo+chunk, numUpdates)]
+	n := len(documents)
+	chunk := min(max(n/(8*max(s.config.NumAnalysisWorkers, 1)), 1), maxAnalysisChunk)
+	for lo := 0; lo < n; lo += chunk {
+		docs := documents[lo:min(lo+chunk, n)]
 		allDocsAnalyzed.Add(1)
 		select {
 		case <-s.closeCh:
+			allDocsAnalyzed.Done()
+			allDocsAnalyzed.Wait()
 			return segment.ErrClosed
 		case s.config.AnalysisChan <- func() {
 			for _, doc := range docs {
@@ -326,49 +494,27 @@ func (s *Writer) Batch(batch *Batch) (err error) {
 
 	//nolint:gosec // G115: elapsed time uses the monotonic clock from time.Now and is nonnegative.
 	atomic.AddUint64(&s.stats.TotAnalysisTime, uint64(time.Since(start)))
-
-	indexStart := time.Now()
-
-	// notify handlers that we're about to introduce a segment
-	s.fireEvent(EventKindBatchIntroductionStart, 0)
-
-	var newSegment *segmentWrapper
-	var bufBytes uint64
-	if numUpdates > 0 {
-		newSegment, bufBytes, err = s.newSegment(batch.documents)
-		if err != nil {
-			return err
-		}
-		atomic.AddUint64(&s.stats.newSegBufBytesAdded, bufBytes)
-	} else {
-		atomic.AddUint64(&s.stats.TotBatchesEmpty, 1)
-	}
-
-	err = s.prepareSegment(newSegment, batch.ids, nil, batch.PersistedCallback())
-	if err != nil {
-		if newSegment != nil {
-			_ = newSegment.Close()
-		}
-		atomic.AddUint64(&s.stats.TotOnErrors, 1)
-	} else {
-		atomic.AddUint64(&s.stats.TotUpdates, uint64(numUpdates))
-		atomic.AddUint64(&s.stats.TotDeletes, uint64(numDeletes))
-		atomic.AddUint64(&s.stats.TotBatches, 1)
-	}
-
-	atomic.AddUint64(&s.stats.newSegBufBytesRemoved, bufBytes)
-	//nolint:gosec // G115: elapsed time uses the monotonic clock from time.Now and is nonnegative.
-	atomic.AddUint64(&s.stats.TotIndexTime, uint64(time.Since(indexStart)))
-
-	return err
+	return nil
 }
 
-func (s *Writer) prepareSegment(newSegment *segmentWrapper, idTerms []segment.Term,
-	internalOps map[string][]byte, persistedCallback func(error)) error {
+// prepareSegment introduces newSegments, in order, and the deletion of
+// idTerms from the current segments as one snapshot. Segments already
+// persisted keep the id of their file. Once applied, the root snapshot
+// owns newSegments, so the caller must not close them even on error.
+func (s *Writer) prepareSegment(newSegments []*segmentWrapper, idTerms []segment.Term,
+	internalOps map[string][]byte, persistedCallback func(error)) (applied bool, err error) {
+	ids := make([]uint64, len(newSegments))
+	for i := range ids {
+		if newSegments[i].persisted {
+			ids[i] = newSegments[i].id
+			continue
+		}
+		ids[i] = atomic.AddUint64(&s.nextSegmentID, 1)
+	}
 	// new introduction
 	introduction := &segmentIntroduction{
-		id:                atomic.AddUint64(&s.nextSegmentID, 1),
-		data:              newSegment,
+		ids:               ids,
+		data:              newSegments,
 		idTerms:           idTerms,
 		obsoletes:         make(map[uint64]*roaring.Bitmap),
 		internal:          internalOps,
@@ -376,21 +522,21 @@ func (s *Writer) prepareSegment(newSegment *segmentWrapper, idTerms []segment.Te
 		persistedCallback: persistedCallback,
 	}
 
-	if !s.config.UnsafeBatch {
+	if !s.config.UnsafeBatch && !isVolatile(s.directory) {
 		introduction.persisted = make(chan error, 1)
 	}
 
 	// optimistically prepare obsoletes outside of rootLock
 	root := s.currentSnapshot()
 	if root == nil {
-		return segment.ErrClosed
+		return false, segment.ErrClosed
 	}
 	defer func() { _ = root.Close() }()
 
 	for _, seg := range root.segment {
 		delta, err := seg.segment.DocsMatchingTerms(idTerms)
 		if err != nil {
-			return err
+			return false, err
 		}
 		introduction.obsoletes[seg.id] = delta
 	}
@@ -399,14 +545,13 @@ func (s *Writer) prepareSegment(newSegment *segmentWrapper, idTerms []segment.Te
 
 	select {
 	case <-s.closeCh:
-		return segment.ErrClosed
+		return false, segment.ErrClosed
 	case s.introductions <- introduction:
 	}
 
 	// block until this segment is applied
-	err := <-introduction.applied
-	if err != nil {
-		return err
+	if err := <-introduction.applied; err != nil {
+		return false, err
 	}
 
 	if introduction.persisted != nil {
@@ -420,7 +565,7 @@ func (s *Writer) prepareSegment(newSegment *segmentWrapper, idTerms []segment.Te
 		atomic.StoreUint64(&s.stats.MaxBatchIntroTime, introTime)
 	}
 
-	return err
+	return true, err
 }
 
 // Reader returns a low-level accessor on the index data. Close it to

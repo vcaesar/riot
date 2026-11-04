@@ -221,13 +221,13 @@ func TestNumericField(t *testing.T) {
 	nf := NewNumericField("age", 3.4)
 	_ = nf.Analyze(0)
 	numTokens := nf.AnalyzedLength()
-	// 16 prefix-coded tokens plus the original value "3.4"
-	if numTokens != 17 {
-		t.Errorf("expected 17 tokens, got %d ", numTokens)
+	// one exact prefix-coded token plus the original value "3.4"
+	if numTokens != 2 {
+		t.Errorf("expected 2 tokens, got %d ", numTokens)
 	}
 	tokenFreqs := nf.AnalyzedTokenFrequencies()
-	if len(tokenFreqs) != 17 {
-		t.Errorf("expected 17 token freqs, got %d", len(tokenFreqs))
+	if len(tokenFreqs) != 2 {
+		t.Errorf("expected 2 token freqs, got %d", len(tokenFreqs))
 	}
 	if _, ok := tokenFreqs["3.4"]; !ok {
 		t.Errorf("expected original value token \"3.4\" to be indexed")
@@ -251,8 +251,9 @@ func TestGeoPointField(t *testing.T) {
 func TestDateTimeAndGeoFieldsOmitOriginalValueToken(t *testing.T) {
 	df := NewDateTimeField("when", time.Unix(0, 1234567890))
 	_ = df.Analyze(0)
-	if got := df.AnalyzedLength(); got != 16 {
-		t.Errorf("expected 16 datetime tokens, got %d", got)
+	// one exact prefix-coded term; date ranges are served from the column
+	if got := df.AnalyzedLength(); got != 1 {
+		t.Errorf("expected 1 datetime token, got %d", got)
 	}
 
 	gf := NewGeoPointField("loc", 0.0015, 0.0015)
@@ -261,6 +262,29 @@ func TestDateTimeAndGeoFieldsOmitOriginalValueToken(t *testing.T) {
 		if _, err := strconv.ParseFloat(term, 64); err == nil {
 			t.Errorf("unexpected decimal token %q in geo field", term)
 		}
+	}
+}
+
+// The decimal text term is on by default; WithoutDecimalTerm drops only it.
+func TestNumericFieldWithoutDecimalTerm(t *testing.T) {
+	on := NewNumericField("n", 3.25)
+	off := NewNumericField("n", 3.25).WithoutDecimalTerm()
+	on.Analyze(0)
+	off.Analyze(0)
+	if _, ok := on.AnalyzedTokenFrequencies()["3.25"]; !ok {
+		t.Fatal("default numeric field lacks the decimal term")
+	}
+	if _, ok := off.AnalyzedTokenFrequencies()["3.25"]; ok {
+		t.Fatal("WithoutDecimalTerm still emits the decimal term")
+	}
+	if got, want := off.AnalyzedLength(), on.AnalyzedLength()-1; got != want {
+		t.Fatalf("tokens %d, want %d", got, want)
+	}
+	if v, ok := off.NumericValue(); !ok || v != numeric.Float64ToInt64(3.25) {
+		t.Fatalf("numeric value %d %v", v, ok)
+	}
+	if tf := NewTextField("t", "x"); tf.WithoutDecimalTerm().analyzer != tf.analyzer {
+		t.Fatal("text field analyzer changed")
 	}
 }
 
@@ -298,4 +322,128 @@ func mustPrefixCoded(p numeric.PrefixCoded, err error) numeric.PrefixCoded {
 		panic(err)
 	}
 	return p
+}
+
+// The numeric analyzer emits the exact value, the decimal original and any
+// shift tokens from one token block and one stream allocation.
+func TestNumericAnalyzerTokens(t *testing.T) {
+	input := []byte(mustPrefixCoded(numeric.NewPrefixCodedInt64(numeric.Float64ToInt64(3.25), 0)))
+	for _, shiftBy := range []uint{0, 16} {
+		a := &numericAnalyzer{tokenType: analysis.Numeric, shiftBy: shiftBy, emitOriginal: true}
+		tokens := a.Analyze(input)
+		want := 2
+		if shiftBy > 0 {
+			want += int(63 / shiftBy)
+		}
+		if len(tokens) != want {
+			t.Fatalf("shiftBy=%d: %d tokens, want %d", shiftBy, len(tokens), want)
+		}
+		if tok := tokens[0]; !bytes.Equal(tok.Term, input) || tok.End != len(input) ||
+			tok.PositionIncr != 1 || tok.Type != analysis.Numeric {
+			t.Fatalf("value token %+v", *tok)
+		}
+		if tok := tokens[1]; string(tok.Term) != "3.25" || tok.End != 4 ||
+			tok.PositionIncr != 0 || tok.Type != analysis.AlphaNumeric {
+			t.Fatalf("original token %+v", *tok)
+		}
+		if shiftBy > 0 && !bytes.Equal(tokens[2].Term,
+			mustPrefixCoded(numeric.NewPrefixCodedInt64(numeric.Float64ToInt64(3.25), shiftBy))) {
+			t.Fatalf("shift token %+v", *tokens[2])
+		}
+		if allocs := testing.AllocsPerRun(100, func() { a.Analyze(input) }); shiftBy == 0 && allocs > 3 {
+			t.Fatalf("numeric analysis took %v allocations, want at most 3", allocs)
+		}
+	}
+
+	kf := NewKeywordField("cat", "group7")
+	tokens := kf.baseAnalayze(analysis.AlphaNumeric)
+	if len(tokens) != 1 || string(tokens[0].Term) != "group7" || tokens[0].End != 6 || tokens[0].PositionIncr != 1 {
+		t.Fatalf("keyword tokens %+v", tokens)
+	}
+	if allocs := testing.AllocsPerRun(100, func() { kf.baseAnalayze(analysis.AlphaNumeric) }); allocs > 1 {
+		t.Fatalf("keyword analysis took %v allocations, want 1", allocs)
+	}
+}
+
+// Text fields analyzed with pooled token storage keep their own terms and
+// locations when later fields reuse that storage.
+func TestTextFieldPooledAnalysis(t *testing.T) {
+	a := NewTextField("a", "Alpha beta alpha").SearchTermPositions()
+	b := NewTextField("b", "gamma delta epsilon zeta eta theta").SearchTermPositions()
+	a.Analyze(0)
+	b.Analyze(0)
+	tfs := a.AnalyzedTokenFrequencies()
+	if len(tfs) != 2 || a.AnalyzedLength() != 3 {
+		t.Fatalf("terms %v length %d", tfs, a.AnalyzedLength())
+	}
+	alpha := tfs["alpha"]
+	if alpha == nil || alpha.Frequency() != 2 || len(alpha.Locations) != 2 {
+		t.Fatalf("alpha %+v", alpha)
+	}
+	if l := alpha.Locations[1]; l.Pos() != 3 || l.Start() != 11 || l.End() != 16 {
+		t.Fatalf("second alpha location %+v", l)
+	}
+	if beta := tfs["beta"]; beta == nil || beta.Locations[0].Start() != 6 {
+		t.Fatalf("beta %+v", beta)
+	}
+}
+
+// The numeric fast path gives the same terms, length and position as
+// running the analyzer and counting its token stream.
+func TestNumericAnalyzeFastPath(t *testing.T) {
+	fields := map[string]*TermField{
+		"default":        NewNumericField("n", 3.4),
+		"no decimal":     NewNumericField("n", -7).WithoutDecimalTerm(),
+		"positions":      NewNumericField("n", 12).SearchTermPositions(),
+		"integral value": NewNumericField("n", 1e6),
+	}
+	for name, f := range fields {
+		t.Run(name, func(t *testing.T) {
+			tokens := f.analyzer.Analyze(f.value)
+			want, wantPos := analysis.TokenFrequencySlice(tokens, f.IncludeLocations(), 0)
+			gotPos := f.Analyze(0)
+			if gotPos != wantPos || f.Length() != len(tokens) || len(f.analyzedTerms) != len(want) {
+				t.Fatalf("pos %d/%d length %d/%d terms %d/%d", gotPos, wantPos, f.Length(), len(tokens), len(f.analyzedTerms), len(want))
+			}
+			for i := range want {
+				g, w := &f.analyzedTerms[i], &want[i]
+				if !bytes.Equal(g.Term(), w.Term()) || g.Frequency() != w.Frequency() || len(g.Locations) != len(w.Locations) {
+					t.Fatalf("term %d: got %q x%d want %q x%d", i, g.Term(), g.Frequency(), w.Term(), w.Frequency())
+				}
+			}
+		})
+	}
+}
+
+// Re-analyzing or releasing a text field recycles its term storage, and the
+// recycled storage gives the same terms as fresh analysis.
+func TestTextFieldReleaseRecycles(t *testing.T) {
+	text := "the quick brown fox jumps over the lazy dog the end"
+	f := NewTextField("body", text).SearchTermPositions()
+	ref := NewTextField("body", text).SearchTermPositions()
+	ref.Analyze(0)
+	want := dumpTerms(ref)
+	for range 3 {
+		f.Analyze(0)
+		if got := dumpTerms(f); got != want {
+			t.Fatalf("got %s\nwant %s", got, want)
+		}
+		f.ReleaseAnalysis()
+		if f.analyzedTerms != nil || f.freqBlock != nil {
+			t.Fatal("release left analysis behind")
+		}
+	}
+}
+
+func dumpTerms(f *TermField) string {
+	var b bytes.Buffer
+	for i := range f.analyzedTerms {
+		tf := &f.analyzedTerms[i]
+		b.WriteString(string(tf.Term()) + ":" + strconv.Itoa(tf.Frequency()))
+		for _, l := range tf.Locations {
+			b.WriteString("," + strconv.Itoa(l.Pos()) + "/" + strconv.Itoa(l.Start()))
+		}
+		b.WriteString(" ")
+	}
+	return b.String()
 }

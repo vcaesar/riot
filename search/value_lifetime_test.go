@@ -35,9 +35,9 @@ func TestFieldSourceValueLifetime(t *testing.T) {
 					for _, value := range values {
 						n := numeric.Float64ToInt64(value + float64(hit))
 						if typed {
-							dm.addDocNumber(field, n)
+							dm.vals().addDocNumber(field, n)
 						} else {
-							dm.addDocValue(field, numeric.MustNewPrefixCodedInt64(n, 0))
+							dm.vals().addDocValue(field, numeric.MustNewPrefixCodedInt64(n, 0))
 						}
 					}
 				}
@@ -74,10 +74,10 @@ func BenchmarkFieldSourceNestedValues(b *testing.B) {
 	dm := &DocumentMatch{}
 	b.ReportAllocs()
 	for b.Loop() {
-		dm.addDocNumber("outer", numeric.Float64ToInt64(1))
-		dm.addDocNumber("outer", numeric.Float64ToInt64(2))
-		dm.addDocNumber("inner", numeric.Float64ToInt64(100))
-		dm.addDocNumber("inner", numeric.Float64ToInt64(200))
+		dm.vals().addDocNumber("outer", numeric.Float64ToInt64(1))
+		dm.vals().addDocNumber("outer", numeric.Float64ToInt64(2))
+		dm.vals().addDocNumber("inner", numeric.Float64ToInt64(100))
+		dm.vals().addDocNumber("inner", numeric.Float64ToInt64(200))
 		for range Field("outer").Values(dm) {
 			Field("inner").Values(dm)
 		}

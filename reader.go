@@ -18,8 +18,10 @@ package riot
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/vcaesar/riot/index"
+	"github.com/vcaesar/riot/numeric"
 
 	segment "github.com/vcaesar/bluge_segment_api"
 
@@ -102,4 +104,40 @@ func (r *Reader) Backup(path string, cancel chan struct{}) error {
 
 func (r *Reader) Close() error {
 	return r.reader.Close()
+}
+
+// VisitNumbers calls visitor with the doc number and value of every live
+// document holding the numeric field, scanning the typed numeric columns
+// without building per-hit matches. Values are float64 for numeric fields;
+// date fields pass UnixNano as float64 bits (use VisitInt64 for exact dates).
+func (r *Reader) VisitNumbers(field string, visitor func(docNum uint64, value float64) error) error {
+	return r.reader.VisitNumericColumn(field, func(doc uint64, v int64) error {
+		return visitor(doc, numeric.Int64ToFloat64(v))
+	})
+}
+
+// VisitInt64 is VisitNumbers with the raw column value, e.g. UnixNano for
+// date fields.
+func (r *Reader) VisitInt64(field string, visitor func(docNum uint64, value int64) error) error {
+	return r.reader.VisitNumericColumn(field, visitor)
+}
+
+// VisitNumberBlocks is VisitNumbers a block (up to 1024 values) at a time,
+// for column scans such as stats. docs holds the doc numbers of values, or
+// is nil when they are base, base+1, ...; both slices are reused between
+// calls, so the visitor must not retain them.
+func (r *Reader) VisitNumberBlocks(field string, visitor func(base uint64, docs []uint64, values []float64) error) error {
+	var floats []float64
+	return r.reader.VisitNumericBlocks(field, func(base uint64, docs []uint64, vals []int64) error {
+		floats = slices.Grow(floats[:0], len(vals))[:len(vals)]
+		for i, v := range vals {
+			floats[i] = numeric.Int64ToFloat64(v)
+		}
+		return visitor(base, docs, floats)
+	})
+}
+
+// VisitInt64Blocks is VisitNumberBlocks with the raw column values.
+func (r *Reader) VisitInt64Blocks(field string, visitor func(base uint64, docs []uint64, values []int64) error) error {
+	return r.reader.VisitNumericBlocks(field, visitor)
 }

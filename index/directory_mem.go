@@ -106,3 +106,14 @@ func (d *InMemoryDirectory) Lock() error {
 func (d *InMemoryDirectory) Unlock() error {
 	return nil
 }
+
+// Volatile reports that persisting to d keeps nothing past the process, so
+// a batch need not wait for it: its segments are already searchable.
+func (d *InMemoryDirectory) Volatile() bool { return true }
+
+// isVolatile reports whether d declares, via Volatile, that persisting to
+// it adds no durability.
+func isVolatile(d Directory) bool {
+	v, ok := d.(interface{ Volatile() bool })
+	return ok && v.Volatile()
+}
