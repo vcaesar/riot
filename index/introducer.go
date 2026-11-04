@@ -32,8 +32,8 @@ const (
 )
 
 type segmentIntroduction struct {
-	id        uint64
-	data      *segmentWrapper
+	ids       []uint64 // one per data segment
+	data      []*segmentWrapper
 	obsoletes map[uint64]*roaring.Bitmap
 	idTerms   []segment.Term
 	internal  map[string][]byte
@@ -102,8 +102,8 @@ func (s *Writer) introduceSegment(next *segmentIntroduction, introduceSnapshotEp
 	newSnapshot := &Snapshot{
 		parent:  s,
 		epoch:   introduceSnapshotEpoch,
-		segment: make([]*segmentSnapshot, 0, nsegs+1),
-		offsets: make([]uint64, 0, nsegs+1),
+		segment: make([]*segmentSnapshot, 0, nsegs+len(next.data)),
+		offsets: make([]uint64, 0, nsegs+len(next.data)),
 		refs:    1,
 		creator: creatorIntroduceSegment,
 	}
@@ -165,15 +165,16 @@ func (s *Writer) introduceSegment(next *segmentIntroduction, introduceSnapshotEp
 	atomic.StoreUint64(&s.stats.TotMemorySegmentsAtRoot, memSegments)
 	atomic.StoreUint64(&s.stats.TotFileSegmentsAtRoot, fileSegments)
 
-	// append new segment, if any, to end of the new index snapshot
-	if next.data != nil {
+	// append the new segments, if any, to end of the new index snapshot
+	for i, data := range next.data {
 		newSegmentSnapshot := &segmentSnapshot{
-			id:      next.id,
-			segment: next.data, // take ownership of next.data's ref-count
+			id:      next.ids[i],
+			segment: data, // take ownership of data's ref-count
 			creator: creatorIntroduceSegment,
 		}
 		newSnapshot.segment = append(newSnapshot.segment, newSegmentSnapshot)
 		newSnapshot.offsets = append(newSnapshot.offsets, running)
+		running += data.Count()
 
 		// increment numItemsIntroduced which tracks the number of items
 		// queued for persistence.
@@ -184,8 +185,8 @@ func (s *Writer) introduceSegment(next *segmentIntroduction, introduceSnapshotEp
 	newSnapshot.updateSize()
 
 	s.replaceRoot(newSnapshot, next.persisted, next.persistedCallback)
-	if next.data != nil {
-		s.warmGraphs(next.data, nil)
+	for _, data := range next.data {
+		s.warmGraphs(data, nil)
 	}
 
 	close(next.applied)

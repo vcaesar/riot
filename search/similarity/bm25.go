@@ -67,7 +67,10 @@ func (b *BM25Similarity) IdfExplainTerm(collectionStats segment.CollectionStats,
 	if collectionStats != nil {
 		docCount = collectionStats.DocumentCount()
 	}
-	idf := b.Idf(docFreq, docCount)
+	return idfExplanation(b.Idf(docFreq, docCount), docFreq, docCount)
+}
+
+func idfExplanation(idf float64, docFreq, docCount uint64) *search.Explanation {
 	return search.NewExplanation(idf, "idf, computed as log(1 + (N - n + 0.5) / (n + 0.5)) from:",
 		search.NewExplanation(float64(docFreq), "n, number of documents containing term"),
 		search.NewExplanation(float64(docCount), "N, total number of documents with field"))
@@ -80,9 +83,25 @@ func (b *BM25Similarity) AverageFieldLength(stats segment.CollectionStats) float
 	return 0
 }
 
+// Scorer builds the idf explanation only if Explain asks for it, as
+// searchers create a scorer per term and query.
 func (b *BM25Similarity) Scorer(boost float64, collectionStats segment.CollectionStats, termStats segment.TermStats) search.Scorer {
-	idf := b.IdfExplainTerm(collectionStats, termStats)
-	return NewBM25Scorer(boost, b.k1, b.b, b.AverageFieldLength(collectionStats), idf)
+	docFreq := termStats.DocumentFrequency()
+	var docCount uint64
+	if collectionStats != nil {
+		docCount = collectionStats.DocumentCount()
+	}
+	idf := b.Idf(docFreq, docCount)
+	return &BM25Scorer{
+		boost:     boost,
+		k1:        b.k1,
+		b:         b.b,
+		avgDocLen: b.AverageFieldLength(collectionStats),
+		weight:    boost * idf,
+		idfValue:  idf,
+		docFreq:   docFreq,
+		docCount:  docCount,
+	}
 }
 
 type BM25Scorer struct {
@@ -91,7 +110,11 @@ type BM25Scorer struct {
 	b         float64
 	avgDocLen float64
 	weight    float64
-	idf       *search.Explanation
+	// idf is nil when Explain is to build it from idfValue, docFreq and docCount
+	idf      *search.Explanation
+	idfValue float64
+	docFreq  uint64
+	docCount uint64
 }
 
 func NewBM25Scorer(boost, k1, b, avgDocLen float64, idf *search.Explanation) *BM25Scorer {
@@ -101,6 +124,7 @@ func NewBM25Scorer(boost, k1, b, avgDocLen float64, idf *search.Explanation) *BM
 		b:         b,
 		avgDocLen: avgDocLen,
 		idf:       idf,
+		idfValue:  idf.Value,
 		weight:    boost * idf.Value,
 	}
 }
@@ -108,7 +132,9 @@ func NewBM25Scorer(boost, k1, b, avgDocLen float64, idf *search.Explanation) *BM
 func (b *BM25Scorer) Score(freq int, norm float64) float64 {
 	docLen := math.Float32bits(float32(norm))
 	normInverse := 1 / (b.k1 * ((1 - b.b) + b.b*float64(docLen)/b.avgDocLen))
-	return b.weight - b.weight/(1+float64(freq)*normInverse)
+	// float64() rounds the product so arm64 does not fuse it into an FMA,
+	// keeping scores bit identical across architectures.
+	return b.weight - b.weight/(1+float64(float64(freq)*normInverse))
 }
 
 // Monotone reports whether Score never decreases with freq nor increases
@@ -127,7 +153,7 @@ func (b *BM25Scorer) explainTf(freq int, norm float64) *search.Explanation {
 		search.NewExplanation(b.b, "b, length normalization parameter"),
 		search.NewExplanation(float64(docLen), "dl, length of field"),
 		search.NewExplanation(b.avgDocLen, "avgdl, average length of field"))
-	score := 1.0 - 1.0/(1.0+float64(freq)*normInverse)
+	score := 1.0 - 1.0/(1.0+float64(float64(freq)*normInverse))
 	return search.NewExplanation(score,
 		"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:",
 		children...)
@@ -136,8 +162,12 @@ func (b *BM25Scorer) explainTf(freq int, norm float64) *search.Explanation {
 const noBoost = 1.0
 
 func (b *BM25Scorer) Explain(freq int, norm float64) *search.Explanation {
+	idf := b.idf
+	if idf == nil {
+		idf = idfExplanation(b.idfValue, b.docFreq, b.docCount)
+	}
 	var children = []*search.Explanation{
-		b.idf,
+		idf,
 	}
 	if b.boost != noBoost {
 		children = append(children, search.NewExplanation(b.boost, "boost"))
@@ -145,7 +175,7 @@ func (b *BM25Scorer) Explain(freq int, norm float64) *search.Explanation {
 	children = append(children, b.explainTf(freq, norm))
 	docLen := math.Float32bits(float32(norm))
 	normInverse := 1 / (b.k1 * ((1 - b.b) + b.b*float64(docLen)/b.avgDocLen))
-	score := b.weight - b.weight/(1.0+float64(freq)*normInverse)
+	score := b.weight - b.weight/(1.0+float64(float64(freq)*normInverse))
 	return search.NewExplanation(score,
 		fmt.Sprintf("score(freq=%d), computed as boost * idf * tf from:", freq),
 		children...)

@@ -16,7 +16,9 @@
 package tokenizer
 
 import (
+	"math/rand/v2"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/vcaesar/riot/analysis"
@@ -209,4 +211,102 @@ func TestUnicodeShortInputAllocations(t *testing.T) {
 	if allocs := testing.AllocsPerRun(100, func() { tok.Tokenize(input) }); allocs > 3 {
 		t.Fatalf("tokenizing took %v allocations, want at most 3", allocs)
 	}
+}
+
+// TokenizeInto gives the tokens of Tokenize, also when its scratch held a
+// longer input before, and allocates nothing once the scratch is warm.
+func TestUnicodeTokenizeInto(t *testing.T) {
+	tok := NewUnicodeTokenizer()
+	var s Scratch
+	long := []byte(strings.Repeat("alpha béta 42 ", 400))
+	for _, in := range [][]byte{long, []byte("common search engine"), []byte(""), long} {
+		want := tok.Tokenize(in)
+		got := tok.TokenizeInto(in, &s)
+		if len(got) != len(want) {
+			t.Fatalf("%d tokens, want %d", len(got), len(want))
+		}
+		for i := range want {
+			if !reflect.DeepEqual(*got[i], *want[i]) {
+				t.Fatalf("token %d: %v, want %v", i, got[i], want[i])
+			}
+		}
+	}
+	short := []byte("common search engine zig document term12 term345 term6 category7 rank42")
+	if allocs := testing.AllocsPerRun(100, func() { tok.TokenizeInto(short, &s) }); allocs > 1 {
+		t.Fatalf("TokenizeInto took %v allocations, want at most 1", allocs)
+	}
+}
+
+// segmenterTokens tokenizes input with the Unicode segmenter only.
+func segmenterTokens(input []byte) analysis.TokenStream {
+	t := tokens{input: input, ta: make([]analysis.Token, 4)}
+	t.addSegments(0, len(input))
+	return t.stream()
+}
+
+// The ASCII path, alone or between the spans left to the segmenter, finds
+// the words, offsets and types the Unicode segmenter finds.
+func TestPlainASCIIMatchesSegmenter(t *testing.T) {
+	var alphabet []string
+	for b := range byte(0x80) {
+		alphabet = append(alphabet, string(rune(b)))
+	}
+	// underscores, letters, marks, ideographs, kana, digits, spaces and
+	// punctuation beyond ASCII, and regional indicators
+	other := []string{"_", "é", "\u0301", "°", "中", "文", "カ", "ー", "١", "\u00a0", "\u2019", "\U0001F1FA", "\u200d", "ß"}
+	inputs := []string{
+		"", " ", "common search engine zig document term5 term100 category3 rank42",
+		"42", "4x2", "x42", "42x", "3-4", "a-b", "a/b", "a@b.", "#tag", "(x)", "a\tb\r\nc",
+		"\x00a\x7fb", "2026 11 03", "x 7 y8 9z", "can't", "e.g.", "3.14", "1,000", "a:b", "x;1", "1;2",
+		"\"q\"", "a.1", "1.a", "a1.b", "1a.2", "a..b", "a.", ".a", "1,", "U.S.A.", "it's.", "12:30", "x'y'z",
+		"a_b", "_", "naïve café", "x\u00a0y", "100 °C (212 °F)", "a \u0301b", "中文 text", "e\u0301.g",
+		// the double quote joins Hebrew letters (WB7b, WB7c), so it must reach the segmenter
+		"צה\"ל", "א\"ב", "x\"y", "ab\"cd", "ג'ירפה", "\"צה\"ל\"", "a\"א\"ב\"c",
+		string(sampleLargeInput),
+	}
+	rng := rand.New(rand.NewPCG(1, 2))
+	for range 30000 {
+		var in strings.Builder
+		for range rng.IntN(24) {
+			switch rng.IntN(8) {
+			case 0, 1:
+				in.WriteString(alphabet[rng.IntN(len(alphabet))])
+			case 2, 3:
+				in.WriteByte("ab Z09 "[rng.IntN(7)])
+			case 4:
+				in.WriteString(other[rng.IntN(len(other))])
+			default:
+				in.WriteByte("x1 -.',:;"[rng.IntN(9)])
+			}
+		}
+		inputs = append(inputs, in.String())
+	}
+	for _, s := range inputs {
+		in := []byte(s)
+		want := segmenterTokens(in)
+		got := NewUnicodeTokenizer().Tokenize(in)
+		if len(got) != len(want) {
+			t.Fatalf("%q: %d tokens, segmenter %d", s, len(got), len(want))
+		}
+		for i := range want {
+			if !reflect.DeepEqual(*got[i], *want[i]) {
+				t.Fatalf("%q token %d: %+v, segmenter %+v", s, i, *got[i], *want[i])
+			}
+		}
+	}
+}
+
+func BenchmarkUnicodeTokenizePlainASCII(b *testing.B) {
+	in := []byte("common search engine zig document term5 term100 term1999 category3 rank42")
+	b.Run("plain", func(b *testing.B) {
+		var s Scratch
+		for b.Loop() {
+			NewUnicodeTokenizer().TokenizeInto(in, &s)
+		}
+	})
+	b.Run("segmenter", func(b *testing.B) {
+		for b.Loop() {
+			segmenterTokens(in)
+		}
+	})
 }

@@ -63,6 +63,83 @@ func TestFileSystemPersistTruncates(t *testing.T) {
 	}
 }
 
+// TestCloseRemovesSupersededSnapshots checks that Close right after a Batch
+// leaves only the latest snapshot file: the persister may have superseded
+// one without reaching its cleanup step yet.
+func TestCloseRemovesSupersededSnapshots(t *testing.T) {
+	for i := range 20 {
+		cfg, cleanup := CreateConfig("TestCloseRemovesSupersededSnapshots")
+		t.Cleanup(func() {
+			if err := cleanup(); err != nil {
+				t.Log(err)
+			}
+		})
+		idx, err := OpenWriter(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{"1", "2"} {
+			b := NewBatch()
+			b.Update(testIdentifier(id), &FakeDocument{NewFakeField("_id", id, true, false, false)})
+			if err = idx.Batch(b); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err = idx.Close(); err != nil {
+			t.Fatal(err)
+		}
+		epochs, err := cfg.DirectoryFunc().List(ItemKindSnapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(epochs) != 1 {
+			t.Fatalf("round %d: snapshots after close %v, want 1", i, epochs)
+		}
+	}
+}
+
+// closeCleanupPolicy records Cleanup calls made once the writer is closing.
+type closeCleanupPolicy struct {
+	*KeepNLatestDeletionPolicy
+	closing      <-chan struct{}
+	afterClosing int
+}
+
+func (p *closeCleanupPolicy) Cleanup(dir Directory) error {
+	if p.closing != nil {
+		select {
+		case <-p.closing:
+			p.afterClosing++
+		default:
+		}
+	}
+	return p.KeepNLatestDeletionPolicy.Cleanup(dir)
+}
+
+// TestCloseRunsDeletionCleanup checks that Close always cleans up: the
+// persister skips its cleanup when close interrupts it right after a persist.
+func TestCloseRunsDeletionCleanup(t *testing.T) {
+	cfg, cleanup := CreateConfig("TestCloseRunsDeletionCleanup")
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Log(err)
+		}
+	}()
+	policy := &closeCleanupPolicy{KeepNLatestDeletionPolicy: NewKeepNLatestDeletionPolicy(1)}
+	cfg.DeletionPolicyFunc = func() DeletionPolicy { return policy }
+	idx, err := OpenWriter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.closing = idx.closeCh
+	if err = idx.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if policy.afterClosing == 0 {
+		t.Fatal("Close did not run the deletion policy cleanup")
+	}
+}
+
 // TestReopenSkipsUnreadableSnapshotEpoch checks that new snapshots never
 // reuse the epoch of a newer snapshot file that failed to load.
 func TestReopenSkipsUnreadableSnapshotEpoch(t *testing.T) {

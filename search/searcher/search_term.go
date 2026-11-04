@@ -17,6 +17,7 @@ package searcher
 
 import (
 	"errors"
+	"sync"
 
 	segment "github.com/vcaesar/bluge_segment_api"
 	"github.com/vcaesar/riot/numeric"
@@ -121,6 +122,7 @@ func (s *TermSearcher) Advance(ctx *search.Context, number uint64) (*search.Docu
 }
 
 func (s *TermSearcher) Close() error {
+	s.cursor.release()
 	return s.reader.Close()
 }
 
@@ -241,7 +243,13 @@ type postingsBatch struct {
 	freqs  []int
 	norms  []float64
 	n, pos int
+	// want is how many postings the next fill reads: batches start small
+	// and double, so a search that skips blocks soon after its first hits
+	// has not decoded postings it then passes over
+	want int
 }
+
+const firstPostingsBatch = 16
 
 // batchPosting is a segment.Posting over the current batch entry.
 type batchPosting struct {
@@ -263,11 +271,12 @@ func (c *postingsCursor) fill() (bool, error) {
 	if b.pos < b.n {
 		return true, nil
 	}
-	n, err := c.batchReader.NextBatch(b.docs, b.freqs, b.norms)
+	want := max(b.want, firstPostingsBatch)
+	n, err := c.batchReader.NextBatch(b.docs[:want], b.freqs[:want], b.norms[:want])
 	if err != nil {
 		return false, err
 	}
-	b.n, b.pos = n, 0
+	b.n, b.pos, b.want = n, 0, min(2*want, len(b.docs))
 	return n > 0, nil
 }
 
@@ -322,18 +331,34 @@ func (c *postingsCursor) startBatch(reader segment.PostingsIterator, needLocatio
 		c.noBatch = true
 		return
 	}
-	c.batchReader = br
-	// rare terms need no more room than their postings
-	size := int(min(reader.Count(), postingsBatchSize))
-	if size == 0 {
+	if reader.Count() == 0 {
 		c.noBatch = true
 		return
 	}
-	c.batch = &postingsBatch{
-		docs:  make([]uint64, size),
-		freqs: make([]int, size),
-		norms: make([]float64, size),
+	c.batchReader = br
+	c.batch = postingsBatchPool.Get().(*postingsBatch)
+}
+
+// postingsBatchPool recycles batches between searches; each query would
+// otherwise allocate a few KiB per term.
+var postingsBatchPool = sync.Pool{New: func() any {
+	return &postingsBatch{
+		docs:  make([]uint64, postingsBatchSize),
+		freqs: make([]int, postingsBatchSize),
+		norms: make([]float64, postingsBatchSize),
 	}
+}}
+
+// release returns the batch to postingsBatchPool; the cursor must not be
+// read afterwards.
+func (c *postingsCursor) release() {
+	if c.batch == nil {
+		return
+	}
+	c.batch.n, c.batch.pos, c.batch.want = 0, 0, 0
+	postingsBatchPool.Put(c.batch)
+	c.batch, c.batchReader = nil, nil
+	c.noBatch = true
 }
 
 // nextAbove advances reader to the next posting scoring above floor, passing

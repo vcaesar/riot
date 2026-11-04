@@ -35,6 +35,9 @@ func NewCompositeSumScorerWithBoost(boost float64) *CompositeSumScorer {
 	}
 }
 
+// Boost returns the factor applied to the summed score.
+func (c *CompositeSumScorer) Boost() float64 { return c.boost }
+
 func (c *CompositeSumScorer) ScoreComposite(constituents []*search.DocumentMatch) float64 {
 	var rv float64
 	for _, constituent := range constituents {

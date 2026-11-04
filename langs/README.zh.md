@@ -399,6 +399,8 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 评分与 Bluge 不同是因为 riot 将 Bluge 的 BM25 idf 修正为 Lucene 的 `log(1 + (N − n + 0.5)/(n + 0.5))`。Bluge 不支持向量搜索；Bleve 的向量搜索需要 `vectors` 构建标签和经由 cgo 的 FAISS。以上为合成数据上的单机结果，并非正式基准测试。
 
+riot（Go）已与 Tantivy 相当：在同一次运行中，它在 10 项查询负载中有 7 项更快。一个更快的 riot Zig 版本也在开发中，目前仍是 beta，暂未发布。在同一次基准运行中，它在大多数查询上比 riot（Go）快约 2–5 倍，索引快 2.9 倍，并且在所有查询负载上都比 Tantivy 快至少 1.5 倍（大多数快 2–8 倍）。
+
 ## 许可证
 
 Apache License Version 2.0

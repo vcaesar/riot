@@ -17,6 +17,7 @@ package searcher
 
 import (
 	"fmt"
+	"sync"
 	"unicode/utf8"
 
 	segment "github.com/vcaesar/bluge_segment_api"
@@ -26,19 +27,16 @@ import (
 	"github.com/vcaesar/riot/search"
 )
 
-// reusable, thread-safe levenshtein builders
-var levAutomatonBuilders map[int]*levenshtein.LevenshteinAutomatonBuilder
-
-func init() {
-	levAutomatonBuilders = map[int]*levenshtein.LevenshteinAutomatonBuilder{}
-	supportedFuzziness := []uint8{1, 2}
-	for _, fuzziness := range supportedFuzziness {
-		lb, err := levenshtein.NewLevenshteinAutomatonBuilder(fuzziness, true)
-		if err != nil {
-			panic(fmt.Errorf("levenshtein automaton ed1 builder err: %v", err))
-		}
-		levAutomatonBuilders[int(fuzziness)] = lb
-	}
+// levAutomatonBuilders holds reusable, thread-safe levenshtein builders indexed
+// by fuzziness. They are built on first use: building both costs ~2 ms and
+// ~1 MB at startup, which every process paid even if it never ran a fuzzy query.
+var levAutomatonBuilders = [...]func() (*levenshtein.LevenshteinAutomatonBuilder, error){
+	1: sync.OnceValues(func() (*levenshtein.LevenshteinAutomatonBuilder, error) {
+		return levenshtein.NewLevenshteinAutomatonBuilder(1, true)
+	}),
+	2: sync.OnceValues(func() (*levenshtein.LevenshteinAutomatonBuilder, error) {
+		return levenshtein.NewLevenshteinAutomatonBuilder(2, true)
+	}),
 }
 
 var MaxFuzziness = 2
@@ -52,6 +50,11 @@ func NewFuzzySearcher(indexReader search.Reader, term string,
 
 	if fuzziness < 0 {
 		return nil, fmt.Errorf("invalid fuzziness, negative")
+	}
+
+	// distance 0 is the exact term, which already has the prefix
+	if fuzziness == 0 {
+		return NewTermSearcher(indexReader, term, field, boost, scorer, options)
 	}
 
 	// Note: we don't byte slice the term for a prefix because of runes.
@@ -131,11 +134,14 @@ func boostFromDistance(fuzziness int, automatons []segment.Automaton, dictTerm s
 }
 
 func getLevAutomaton(term string, fuzziness int) (segment.Automaton, error) {
-	if levAutomatonBuilder, ok := levAutomatonBuilders[fuzziness]; ok {
-		//nolint:gosec // G115: the builder map is initialized only with keys 1 and 2.
-		return levAutomatonBuilder.BuildDfa(term, uint8(fuzziness))
+	if fuzziness < 1 || fuzziness >= len(levAutomatonBuilders) {
+		return nil, fmt.Errorf("unsupported fuzziness: %d", fuzziness)
 	}
-	return nil, fmt.Errorf("unsupported fuzziness: %d", fuzziness)
+	levAutomatonBuilder, err := levAutomatonBuilders[fuzziness]()
+	if err != nil {
+		return nil, fmt.Errorf("error building levenshtein automaton builder: %v", err)
+	}
+	return levAutomatonBuilder.BuildDfa(term, uint8(fuzziness))
 }
 
 func getLevAutomatons(term string, maxFuzziness int) (rv []segment.Automaton, err error) {

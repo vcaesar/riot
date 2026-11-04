@@ -16,8 +16,11 @@ package similarity
 
 import (
 	"math"
+	"reflect"
 	"strconv"
 	"testing"
+
+	segment "github.com/vcaesar/bluge_segment_api"
 
 	"github.com/vcaesar/riot/search"
 )
@@ -106,5 +109,63 @@ func TestBM25ScorerMonotone(t *testing.T) {
 		if s.Score(1, long) > s.Score(5, long) || s.Score(5, long) > s.Score(5, short) {
 			t.Errorf("%s: scores not monotone", test.name)
 		}
+	}
+}
+
+type bm25Stats struct{ docFreq, docCount, sumTF uint64 }
+
+func (s bm25Stats) DocumentFrequency() uint64     { return s.docFreq }
+func (s bm25Stats) DocumentCount() uint64         { return s.docCount }
+func (s bm25Stats) TotalDocumentCount() uint64    { return s.docCount }
+func (s bm25Stats) SumTotalTermFrequency() uint64 { return s.sumTF }
+func (s bm25Stats) Merge(segment.CollectionStats) {}
+
+// TestBM25ScorerLazyIdf checks Scorer, which defers the idf explanation,
+// scores and explains bit-identically to a scorer built from the explanation.
+func TestBM25ScorerLazyIdf(t *testing.T) {
+	sim := NewBM25Similarity()
+	stats := bm25Stats{docFreq: 146, docCount: 100000, sumTF: 1000000}
+	lazy := sim.Scorer(1.5, stats, stats).(*BM25Scorer)
+	eager := NewBM25Scorer(1.5, sim.k1, sim.b, sim.AverageFieldLength(stats), sim.IdfExplainTerm(stats, stats))
+	if lazy.idf != nil {
+		t.Fatal("Scorer built the idf explanation up front")
+	}
+	norm := float64(math.Float32frombits(10))
+	for freq := 1; freq <= 4; freq++ {
+		if l, e := lazy.Score(freq, norm), eager.Score(freq, norm); l != e {
+			t.Fatalf("Score(%d) = %v, want %v", freq, l, e)
+		}
+		l, e := lazy.Explain(freq, norm), eager.Explain(freq, norm)
+		if !reflect.DeepEqual(l, e) {
+			t.Fatalf("Explain(%d) = %v, want %v", freq, l, e)
+		}
+	}
+}
+
+// TestBM25ScoreNotFused guards against arm64 fusing freq*normInverse+1 into
+// an FMA, which would make scores differ from amd64 in the last bit.
+func TestBM25ScoreNotFused(t *testing.T) {
+	s := NewBM25Scorer(1, 1.2, 0.75, 7.3, &search.Explanation{Value: 2.1})
+	checked := 0
+	for docLen := uint32(1); docLen <= 64; docLen++ {
+		norm := float64(math.Float32frombits(docLen))
+		inv := 1 / (s.k1 * ((1 - s.b) + s.b*float64(docLen)/s.avgDocLen))
+		for freq := 1; freq <= 64; freq++ {
+			product := float64(float64(freq) * inv)
+			if math.FMA(float64(freq), inv, 1) == 1+product {
+				continue // fused and unfused agree here
+			}
+			checked++
+			want := s.weight - s.weight/(1+product)
+			if got := s.Score(freq, norm); got != want {
+				t.Fatalf("Score(%d, %d) = %v, want unfused %v", freq, docLen, got, want)
+			}
+			if got := s.Explain(freq, norm).Value; got != want {
+				t.Fatalf("Explain(%d, %d) = %v, want unfused %v", freq, docLen, got, want)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no input where FMA and unfused rounding differ")
 	}
 }

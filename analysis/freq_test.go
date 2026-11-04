@@ -16,8 +16,12 @@
 package analysis
 
 import (
+	"bytes"
+	"math"
 	"reflect"
+	"strconv"
 	"testing"
+	"unsafe"
 )
 
 func TestTokenFrequency(t *testing.T) {
@@ -38,7 +42,7 @@ func TestTokenFrequency(t *testing.T) {
 	expectedResult := TokenFrequencies{
 		"water": &TokenFreq{
 			TermVal: []byte("water"),
-			Locations: []*TokenLocation{
+			Locations: []TokenLocation{
 				{
 					PositionVal: 1,
 					StartVal:    0,
@@ -63,7 +67,7 @@ func TestTokenFrequenciesMergeAll(t *testing.T) {
 	tf1 := TokenFrequencies{
 		"water": &TokenFreq{
 			TermVal: []byte("water"),
-			Locations: []*TokenLocation{
+			Locations: []TokenLocation{
 				{
 					PositionVal: 1,
 					StartVal:    0,
@@ -80,7 +84,7 @@ func TestTokenFrequenciesMergeAll(t *testing.T) {
 	tf2 := TokenFrequencies{
 		"water": &TokenFreq{
 			TermVal: []byte("water"),
-			Locations: []*TokenLocation{
+			Locations: []TokenLocation{
 				{
 					PositionVal: 1,
 					StartVal:    0,
@@ -97,7 +101,7 @@ func TestTokenFrequenciesMergeAll(t *testing.T) {
 	expectedResult := TokenFrequencies{
 		"water": &TokenFreq{
 			TermVal: []byte("water"),
-			Locations: []*TokenLocation{
+			Locations: []TokenLocation{
 				{
 					PositionVal: 1,
 					StartVal:    0,
@@ -134,7 +138,7 @@ func TestTokenFrequenciesMergeAllLeftEmpty(t *testing.T) {
 	tf2 := TokenFrequencies{
 		"water": &TokenFreq{
 			TermVal: []byte("water"),
-			Locations: []*TokenLocation{
+			Locations: []TokenLocation{
 				{
 					PositionVal: 1,
 					StartVal:    0,
@@ -151,7 +155,7 @@ func TestTokenFrequenciesMergeAllLeftEmpty(t *testing.T) {
 	expectedResult := TokenFrequencies{
 		"water": &TokenFreq{
 			TermVal: []byte("water"),
-			Locations: []*TokenLocation{
+			Locations: []TokenLocation{
 				{
 					FieldVal:    "tf2",
 					PositionVal: 1,
@@ -222,7 +226,7 @@ func TestTokenFrequenciesMergeAllDoesNotAliasSource(t *testing.T) {
 	if got := len(composite["x"].Locations); got != 4 {
 		t.Fatalf("composite has %d locations, want 4", got)
 	}
-	if len(src["x"].Locations) != 3 || srcLocs[:cap(srcLocs)][3] != nil {
+	if len(src["x"].Locations) != 3 || srcLocs[:cap(srcLocs)][3] != (TokenLocation{}) {
 		t.Fatal("merge wrote into the source field's spare capacity")
 	}
 	for _, l := range src["x"].Locations {
@@ -289,7 +293,7 @@ func TestTokenFrequencySliceDedupPaths(t *testing.T) {
 				}
 				for _, loc := range tf.Locations {
 					if tok := tokens[loc.Pos()-11]; string(tok.Term) != order[i] || tok.Start != loc.Start() {
-						t.Fatalf("n=%d term %q: location %+v points at %q", n, tf.Term(), *loc, tok.Term)
+						t.Fatalf("n=%d term %q: location %+v points at %q", n, tf.Term(), loc, tok.Term)
 					}
 				}
 				total += tf.Frequency()
@@ -306,5 +310,65 @@ func TestNewTokenFrequenciesPointsIntoSlice(t *testing.T) {
 	m := NewTokenFrequencies(tfs)
 	if len(m) != 2 || m["x"] != &tfs[0] || m["y"] != &tfs[1] {
 		t.Fatalf("map %v does not index the slice", m)
+	}
+}
+
+// Each term's locations are a capped window of one field block, so
+// appending to one term never overwrites its neighbour's locations.
+func TestTokenFrequencyLocationWindows(t *testing.T) {
+	wantSize := uintptr(32)
+	if strconv.IntSize == 32 {
+		wantSize = 20
+	}
+	if s := unsafe.Sizeof(TokenLocation{}); s != wantSize {
+		t.Fatalf("TokenLocation is %d bytes, want %d", s, wantSize)
+	}
+	tfs, _ := TokenFrequencySlice(TokenStream{
+		{Term: []byte("a"), Start: 0, End: 1, PositionIncr: 1},
+		{Term: []byte("b"), Start: 2, End: 3, PositionIncr: 1},
+		{Term: []byte("a"), Start: 4, End: 5, PositionIncr: 1},
+	}, true, 0)
+	a, b := &tfs[0], &tfs[1]
+	if len(a.Locations) != 2 || cap(a.Locations) != 2 || len(b.Locations) != 1 {
+		t.Fatalf("windows a=%d/%d b=%d", len(a.Locations), cap(a.Locations), len(b.Locations))
+	}
+	a.Locations = append(a.Locations, TokenLocation{PositionVal: 99})
+	if b.Locations[0].Pos() != 2 || b.Locations[0].Start() != 2 {
+		t.Fatalf("append to a clobbered b: %+v", b.Locations[0])
+	}
+}
+
+func TestLoc32(t *testing.T) {
+	for v, want := range map[int]int32{0: 0, 7: 7, math.MaxInt32: math.MaxInt32, -3: -3} {
+		if got := Loc32(v); got != want {
+			t.Fatalf("Loc32(%d) = %d", v, got)
+		}
+	}
+	if strconv.IntSize == 64 {
+		for _, v := range []int64{math.MaxInt32 + 1, math.MinInt32 - 1} {
+			if got := Loc32(int(v)); got != -1 {
+				t.Fatalf("Loc32(%d) = %d, want -1", v, got)
+			}
+		}
+	}
+}
+
+// SingleTokenFrequency matches TokenFrequencySlice of the one-token stream
+// a keyword field used to build, with and without term vectors.
+func TestSingleTokenFrequency(t *testing.T) {
+	for _, term := range [][]byte{[]byte("doc-42"), {}} {
+		for _, vectors := range []bool{false, true} {
+			stream := TokenStream{{Term: term, End: len(term), PositionIncr: 1, Type: AlphaNumeric}}
+			want, wantPos := TokenFrequencySlice(stream, vectors, 7)
+			got, gotPos := SingleTokenFrequency(term, vectors, 7)
+			if gotPos != wantPos || len(got) != 1 || len(want) != 1 {
+				t.Fatalf("%q vectors=%v: pos %d/%d len %d/%d", term, vectors, gotPos, wantPos, len(got), len(want))
+			}
+			g, w := got[0], want[0]
+			if !bytes.Equal(g.TermVal, w.TermVal) || g.Frequency() != w.Frequency() ||
+				!reflect.DeepEqual(g.Locations, w.Locations) || cap(g.Locations) != len(g.Locations) {
+				t.Fatalf("%q vectors=%v: got %+v want %+v", term, vectors, g, w)
+			}
+		}
 	}
 }

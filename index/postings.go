@@ -17,6 +17,7 @@ package index
 
 import (
 	"fmt"
+	"math"
 	"sync/atomic"
 
 	"github.com/RoaringBitmap/roaring/v2"
@@ -44,6 +45,9 @@ type postingsIterator struct {
 	// replaced the actual bitmap with (nil: untouched), so a backwards
 	// seek, which rebuilds the iterators, cannot bring excluded docs back
 	actuals []*roaring.Bitmap
+	// offsSeg is the segment of the last NextPosBatch, whose offsets
+	// handles LoadOffsets takes
+	offsSeg int
 }
 
 // replaceActual makes segment seg iterate bm and remembers it for restarts.
@@ -185,6 +189,120 @@ func (i *postingsIterator) NextBatch(docs []uint64, freqs []int, norms []float64
 		i.segmentOffset++
 	}
 	return 0, nil
+}
+
+// locBatcher is implemented by segment postings iterators that can read
+// many postings with their locations per call (ice.PostingsIterator).
+type locBatcher interface {
+	NextLocBatch(docs []uint64, freqs []int, norms []float64, ends []int,
+		fields []string, locs []int) (int, []string, []int, error)
+}
+
+// NextLocBatch is NextBatch with locations, numbered across the snapshot:
+// the field of each location read is appended to fields and its pos,
+// start and end to locs, and ends[k] is len(fields) after posting k.
+func (i *postingsIterator) NextLocBatch(docs []uint64, freqs []int, norms []float64, ends []int,
+	fields []string, locs []int) (n int, _ []string, _ []int, err error) {
+	for i.segmentOffset < len(i.iterators) {
+		it := i.iterators[i.segmentOffset]
+		n := 0
+		if b, ok := it.(locBatcher); ok {
+			var err error
+			if n, fields, locs, err = b.NextLocBatch(docs, freqs, norms, ends, fields, locs); err != nil {
+				return 0, fields, locs, err
+			}
+		} else {
+			for n < len(docs) {
+				p, err := it.Next()
+				if err != nil {
+					return 0, fields, locs, err
+				}
+				if p == nil {
+					break
+				}
+				docs[n], freqs[n], norms[n] = p.Number(), p.Frequency(), p.Norm()
+				for _, l := range p.Locations() {
+					fields = append(fields, l.Field())
+					locs = append(locs, l.Pos(), l.Start(), l.End())
+				}
+				ends[n] = len(fields)
+				n++
+			}
+		}
+		if n > 0 {
+			off := i.snapshot.offsets[i.segmentOffset]
+			for k := range n {
+				docs[k] += off
+			}
+			i.currID, i.batched = docs[n-1], true
+			return n, fields, locs, nil
+		}
+		i.segmentOffset++
+	}
+	return 0, fields, locs, nil
+}
+
+// noOffsets is the offsets handle of a posting whose locations carry their
+// start and end (ice.NoOffsets).
+const noOffsets = math.MaxUint64
+
+// posBatcher is implemented by segment postings iterators that can read
+// locations without their start and end, loaded later on demand
+// (ice.PostingsIterator, segment version 7+).
+type posBatcher interface {
+	NextPosBatch(docs []uint64, freqs []int, norms []float64, ends []int, offs []uint64,
+		fields []string, locs []int) (int, []string, []int, error)
+	LoadOffsets(h uint64, locs []int) error
+}
+
+// NextPosBatch is NextLocBatch that may leave the start and end of the
+// locations of posting k zero, with offs[k], else noOffsets, the handle
+// LoadOffsets fills them in with. offs must be as long as docs.
+func (i *postingsIterator) NextPosBatch(docs []uint64, freqs []int, norms []float64, ends []int, offs []uint64,
+	fields []string, locs []int) (n int, _ []string, _ []int, err error) {
+	for i.segmentOffset < len(i.iterators) {
+		b, ok := i.iterators[i.segmentOffset].(posBatcher)
+		if !ok {
+			break
+		}
+		n, fields, locs, err := b.NextPosBatch(docs, freqs, norms, ends, offs, fields, locs)
+		if err != nil {
+			return 0, fields, locs, err
+		}
+		if n > 0 {
+			batch := docs[:n]
+			if off := i.snapshot.offsets[i.segmentOffset]; off != 0 {
+				for k := range batch {
+					batch[k] += off
+				}
+			}
+			i.currID, i.batched, i.offsSeg = batch[len(batch)-1], true, i.segmentOffset
+			return n, fields, locs, nil
+		}
+		i.segmentOffset++
+	}
+	n, fields, locs, err = i.NextLocBatch(docs, freqs, norms, ends, fields, locs)
+	for k := range n {
+		offs[k] = noOffsets
+	}
+	return n, fields, locs, err
+}
+
+// LoadOffsets sets the start and end of the locations, given as (pos,
+// start, end) triples, of a posting of the last NextPosBatch with offsets
+// handle h.
+func (i *postingsIterator) LoadOffsets(h uint64, locs []int) error {
+	if h == noOffsets {
+		return nil
+	}
+	if i.offsSeg >= len(i.iterators) {
+		return fmt.Errorf("offsets handle without a batch")
+	}
+	b, ok := i.iterators[i.offsSeg].(posBatcher)
+	if !ok {
+		return fmt.Errorf("offsets handle from a segment without offsets")
+	}
+	return b.LoadOffsets(h, locs)
 }
 
 // blockSkipper is implemented by segment postings iterators that can skip

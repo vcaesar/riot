@@ -400,6 +400,8 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 Bluge와 점수가 다른 이유는 riot이 Bluge의 BM25 idf를 Lucene의 `log(1 + (N − n + 0.5)/(n + 0.5))`로 수정했기 때문입니다. Bluge는 벡터 검색을 지원하지 않으며, Bleve의 벡터 검색은 `vectors` 빌드 태그와 cgo를 통한 FAISS가 필요합니다. 합성 데이터에서 단일 머신으로 측정한 수치이며 공식 벤치마크가 아닙니다.
 
+riot(Go)는 이미 Tantivy와 대등합니다. 같은 실행에서 10개 쿼리 워크로드 중 7개에서 더 빨랐습니다. 더 빠른 riot의 Zig 버전도 개발 중입니다. 아직 beta라서 공개하지 않았습니다. 같은 벤치마크 실행에서 대부분의 쿼리에서 riot(Go)보다 약 2–5배, 색인은 2.9배 빨랐고, 모든 쿼리 워크로드에서 Tantivy보다 최소 1.5배 빨랐습니다(대부분 2–8배).
+
 ## 라이선스
 
 Apache License Version 2.0

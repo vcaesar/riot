@@ -20,11 +20,13 @@ import (
 	"net"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	segment "github.com/vcaesar/bluge_segment_api"
 
 	"github.com/vcaesar/riot/analysis/analyzer"
+	"github.com/vcaesar/riot/analysis/tokenizer"
 
 	"github.com/vcaesar/riot/analysis"
 	"github.com/vcaesar/riot/numeric"
@@ -79,6 +81,7 @@ type TermField struct {
 	// analyzedTerms holds the terms Analyze produced; the map form is only
 	// built on demand by AnalyzedTokenFrequencies.
 	analyzedTerms        []analysis.TokenFreq
+	freqBlock            *analysis.FreqBlock // analyzedTerms' storage when pooled
 	analyzer             Analyzer
 	positionIncrementGap int
 }
@@ -169,16 +172,29 @@ func (b *TermField) Length() int {
 	return b.analyzedLength
 }
 
+// ReleaseAnalysis drops the analyzed terms; Analyze rebuilds them.
+func (b *TermField) ReleaseAnalysis() {
+	b.analyzedTerms = nil
+	if b.freqBlock != nil {
+		analysis.ReleaseFreqBlock(b.freqBlock)
+		b.freqBlock = nil
+	}
+}
+
 func (b *TermField) baseAnalayze(typ analysis.TokenType) analysis.TokenStream {
-	var tokens analysis.TokenStream
-	tokens = append(tokens, &analysis.Token{
+	// the token and the stream pointing to it in one allocation
+	one := &struct {
+		token  analysis.Token
+		tokens [1]*analysis.Token
+	}{token: analysis.Token{
 		Start:        0,
 		End:          len(b.value),
 		Term:         b.value,
 		PositionIncr: 1,
 		Type:         typ,
-	})
-	return tokens
+	}}
+	one.tokens[0] = &one.token
+	return one.tokens[:]
 }
 
 func (b *TermField) WithAnalyzer(fieldAnalyzer Analyzer) *TermField {
@@ -192,6 +208,12 @@ func (b *TermField) Analyze(startOffset int) (lastPos int) {
 		b.analyzedTerms = nil
 		return startOffset
 	}
+	if n, ok := b.analyzer.(*numericAnalyzer); ok && n.shiftBy == 0 && !b.IncludeLocations() {
+		// the terms are known without a token stream, and the analyzer
+		// does not change the value, so it needs no copy either
+		b.analyzedTerms, b.analyzedLength = n.terms(b.value)
+		return 0
+	}
 	var tokens analysis.TokenStream
 	if b.analyzer != nil {
 		bytesToAnalyze := b.Value()
@@ -201,9 +223,27 @@ func (b *TermField) Analyze(startOffset int) (lastPos int) {
 			copy(bytesCopied, bytesToAnalyze)
 			bytesToAnalyze = bytesCopied
 		}
+		if b.analyzer == Analyzer(standardAnalyzer) {
+			// the tokens are dead once their frequencies are counted
+			// (terms and locations are copied out), so reuse their storage
+			s := tokenScratch.Get().(*tokenizer.Scratch)
+			tokens = standardTokenizer.TokenizeInto(bytesToAnalyze, s)
+			for _, tf := range standardAnalyzer.TokenFilters {
+				tokens = tf.Filter(tokens)
+			}
+			b.analyzedLength = len(tokens)
+			// a composite field may still point into the previous storage,
+			// so only ReleaseAnalysis recycles it
+			b.analyzedTerms, lastPos, b.freqBlock = analysis.TokenFrequencyPooled(tokens, b.IncludeLocations(), startOffset)
+			tokenScratch.Put(s)
+			return lastPos
+		}
 		tokens = b.analyzer.Analyze(bytesToAnalyze)
 	} else {
-		tokens = b.baseAnalayze(analysis.AlphaNumeric)
+		// a keyword is the one token baseAnalayze would make
+		b.analyzedLength = 1
+		b.analyzedTerms, lastPos = analysis.SingleTokenFrequency(b.value, b.IncludeLocations(), startOffset)
+		return lastPos
 	}
 	b.analyzedLength = len(tokens) // number of tokens in this doc field
 	b.analyzedTerms, lastPos = analysis.TokenFrequencySlice(tokens, b.IncludeLocations(), startOffset)
@@ -217,6 +257,12 @@ type Analyzer interface {
 }
 
 var standardAnalyzer = analyzer.NewStandardAnalyzer()
+
+// standardTokenizer is standardAnalyzer's tokenizer, whose token storage
+// Analyze reuses from tokenScratch.
+var standardTokenizer = standardAnalyzer.Tokenizer.(*tokenizer.UnicodeTokenizer)
+
+var tokenScratch = sync.Pool{New: func() any { return new(tokenizer.Scratch) }}
 
 func NewKeywordField(name, value string) *TermField {
 	return newTextField(name, []byte(value), nil)
@@ -247,7 +293,9 @@ func newTextField(name string, value []byte, fieldAnalyzer Analyzer) *TermField 
 
 const defaultNumericIndexingOptions = Index | Sortable | Aggregatable
 
-const defaultNumericPrecisionStep uint = 4
+// defaultNumericPrecisionStep 0 indexes one exact term per value: ranges
+// are served from the numeric column, not from trie terms.
+const defaultNumericPrecisionStep uint = 0
 
 func addShiftTokens(tokens analysis.TokenStream, original int64, shiftBy uint, typ analysis.TokenType) analysis.TokenStream {
 	// size one token block and one term buffer for every shift up front
@@ -287,32 +335,55 @@ type numericAnalyzer struct {
 }
 
 func (n *numericAnalyzer) Analyze(input []byte) analysis.TokenStream {
-	tokens := analysis.TokenStream{
-		&analysis.Token{
-			Start:        0,
-			End:          len(input),
-			Term:         input,
-			PositionIncr: 1,
-			Type:         n.tokenType,
-		},
+	// the value and original tokens share a block, and the stream has room
+	// for the shift tokens, so nothing regrows
+	numShifts := 0
+	if n.shiftBy > 0 {
+		numShifts = int(63 / n.shiftBy)
 	}
+	block := make([]analysis.Token, 1, 2)
+	block[0] = analysis.Token{
+		Start:        0,
+		End:          len(input),
+		Term:         input,
+		PositionIncr: 1,
+		Type:         n.tokenType,
+	}
+	tokens := make(analysis.TokenStream, 1, 2+numShifts)
+	tokens[0] = &block[0]
 	if n.emitOriginal {
 		if origVal, err := DecodeNumericFloat64(input); err == nil {
-			origStr := strconv.FormatFloat(origVal, 'f', -1, 64)
-			tokens = append(tokens, &analysis.Token{
+			orig := strconv.AppendFloat(make([]byte, 0, 24), origVal, 'f', -1, 64)
+			block = append(block, analysis.Token{
 				Start:        0,
-				End:          len(origStr),
-				Term:         []byte(origStr),
+				End:          len(orig),
+				Term:         orig,
 				PositionIncr: 0,
 				Type:         analysis.AlphaNumeric,
 			})
+			tokens = append(tokens, &block[1])
 		}
+	}
+	if n.shiftBy == 0 {
+		return tokens
 	}
 	original, err := numeric.PrefixCoded(input).Int64()
 	if err == nil {
 		tokens = addShiftTokens(tokens, original, n.shiftBy, n.tokenType)
 	}
 	return tokens
+}
+
+// terms is Analyze's term frequencies without term vectors when shiftBy is
+// zero, and the number of tokens Analyze would emit.
+func (n *numericAnalyzer) terms(input []byte) (tfs []analysis.TokenFreq, count int) {
+	tfs = analysis.AppendTerm(make([]analysis.TokenFreq, 0, 2), input)
+	if n.emitOriginal {
+		if v, err := DecodeNumericFloat64(input); err == nil {
+			return analysis.AppendTerm(tfs, strconv.AppendFloat(make([]byte, 0, 24), v, 'f', -1, 64)), 2
+		}
+	}
+	return tfs, 1
 }
 
 func NewNumericField(name string, number float64) *TermField {
@@ -336,6 +407,16 @@ func newNumericFieldWithIndexingOptions(name string, number float64, options Fie
 	}
 }
 
+// WithoutDecimalTerm stops a numeric field from also indexing its decimal
+// text term (e.g. "3.4"), which is on by default; term queries on the
+// decimal text then no longer match it, numeric range queries still do.
+func (b *TermField) WithoutDecimalTerm() *TermField {
+	if n, ok := b.analyzer.(*numericAnalyzer); ok && n.emitOriginal {
+		b.analyzer = &numericAnalyzer{tokenType: n.tokenType, shiftBy: n.shiftBy}
+	}
+	return b
+}
+
 func DecodeNumericFloat64(value []byte) (float64, error) {
 	i64, err := numeric.PrefixCoded(value).Int64()
 	if err != nil {
@@ -346,7 +427,7 @@ func DecodeNumericFloat64(value []byte) (float64, error) {
 
 const defaultDateTimeIndexingOptions = Index | Sortable | Aggregatable
 
-const defaultDateTimePrecisionStep uint = 4
+const defaultDateTimePrecisionStep uint = 0
 
 func NewDateTimeField(name string, dt time.Time) *TermField {
 	dtInt64 := dt.UnixNano()
@@ -557,6 +638,13 @@ func (c *CompositeField) Consume(field Field) {
 		c.analyzedLength += field.Length()
 		c.analyzedTokenFreqs.MergeAll(field.Name(), field.AnalyzedTokenFrequencies())
 	}
+}
+
+// ReleaseAnalysis drops the consumed terms, so the next Analyze of the
+// document starts from empty.
+func (c *CompositeField) ReleaseAnalysis() {
+	clear(c.analyzedTokenFreqs)
+	c.analyzedLength = 0
 }
 
 func (c *CompositeField) EachTerm(vt segment.VisitTerm) {

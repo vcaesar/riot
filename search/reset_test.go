@@ -31,42 +31,45 @@ func TestDocumentMatchResetClearsAndKeeps(t *testing.T) {
 		HitNumber:          3,
 		SortValue:          [][]byte{[]byte("a")},
 		FieldTermLocations: []FieldTermLocation{{Field: "body"}},
-		docNumbers:         []docNumber{{field: "year", value: 2000}},
-		numScratch:         []float64{1},
-		termScratch:        [][]byte{[]byte("x")},
-		termBytes:          []byte("x"),
 	}
-	dm.addDocValue("category", []byte("go"))
-	dm.termVisitor, dm.numVisitor = dm.addDocValue, dm.addDocNumber
-	sortCap, ftlCap, numCap, bytesCap := cap(dm.SortValue), cap(dm.FieldTermLocations), cap(dm.docNumbers), cap(dm.termBytes)
+	v := dm.vals()
+	v.docNumbers = []docNumber{{field: "year", value: 2000}}
+	v.numScratch = []float64{1}
+	v.termScratch = [][]byte{[]byte("x")}
+	v.termBytes = []byte("x")
+	v.addDocValue("category", []byte("go"))
+	sortCap, ftlCap, numCap, bytesCap := cap(dm.SortValue), cap(dm.FieldTermLocations), cap(v.docNumbers), cap(v.termBytes)
 
 	if dm.Reset() != dm {
 		t.Fatal("Reset must return the receiver")
 	}
 
+	if dm.values != v {
+		t.Fatal("Reset dropped the loaded values")
+	}
 	if dm.reader != nil || dm.Number != 0 || dm.Score != 0 || dm.Explanation != nil ||
 		dm.Locations != nil || dm.HitNumber != 0 {
 		t.Fatalf("per-hit fields not cleared: %+v", dm)
 	}
 	for name, n := range map[string]int{
 		"SortValue": len(dm.SortValue), "FieldTermLocations": len(dm.FieldTermLocations),
-		"docNumbers": len(dm.docNumbers), "numScratch": len(dm.numScratch),
-		"termScratch": len(dm.termScratch), "termBytes": len(dm.termBytes),
-		"docValues[category]": len(dm.docValues["category"]),
+		"docNumbers": len(v.docNumbers), "numScratch": len(v.numScratch),
+		"termScratch": len(v.termScratch), "termBytes": len(v.termBytes),
+		"docValues[category]": len(v.docValues["category"]),
 	} {
 		if n != 0 {
 			t.Errorf("%s has len %d after Reset", name, n)
 		}
 	}
 	if cap(dm.SortValue) != sortCap || cap(dm.FieldTermLocations) != ftlCap ||
-		cap(dm.docNumbers) != numCap || cap(dm.termBytes) != bytesCap {
+		cap(v.docNumbers) != numCap || cap(v.termBytes) != bytesCap {
 		t.Error("Reset dropped a buffer's backing array")
 	}
-	if dm.docValues == nil {
+	if v.docValues == nil {
 		t.Error("Reset dropped the docValues map")
 	}
 	for name, values := range map[string][][]byte{
-		"terms": dm.termScratch, "docValues": dm.docValues["category"],
+		"terms": v.termScratch, "docValues": v.docValues["category"],
 	} {
 		for _, value := range values[:cap(values)] {
 			if value != nil {
@@ -74,7 +77,7 @@ func TestDocumentMatchResetClearsAndKeeps(t *testing.T) {
 			}
 		}
 	}
-	for _, value := range dm.docNumbers[:cap(dm.docNumbers)] {
+	for _, value := range v.docNumbers[:cap(v.docNumbers)] {
 		if value != (docNumber{}) {
 			t.Error("Reset retained a numeric field reference")
 		}
@@ -84,14 +87,39 @@ func TestDocumentMatchResetClearsAndKeeps(t *testing.T) {
 			t.Error("Reset retained a field term location")
 		}
 	}
-	if dm.termVisitor == nil || dm.numVisitor == nil {
+	if v.termVisitor == nil || v.numVisitor == nil {
 		t.Error("Reset dropped the bound visitors")
 	}
 
 	// the field list is the contract: adding a field means deciding whether
 	// Reset clears or keeps it, and updating this test
-	if n := reflect.TypeOf(DocumentMatch{}).NumField(); n != 15 {
+	if n := reflect.TypeOf(DocumentMatch{}).NumField(); n != 9 {
 		t.Fatalf("DocumentMatch has %d fields; update Reset and this test", n)
+	}
+	if n := reflect.TypeOf(matchValues{}).NumField(); n != 7 {
+		t.Fatalf("matchValues has %d fields; update reset and this test", n)
+	}
+}
+
+// TestDocumentMatchValuesLazy checks a match that never loads values does
+// not allocate them, and that its accessors still read as empty.
+func TestDocumentMatchValuesLazy(t *testing.T) {
+	dm := &DocumentMatch{}
+	if dm.DocValues("f") != nil {
+		t.Fatal("DocValues of an unloaded match")
+	}
+	if got, ok := dm.DocNumbers("f", nil); ok || got != nil {
+		t.Fatalf("DocNumbers of an unloaded match: %v %v", got, ok)
+	}
+	dm.Reset()
+	if dm.values != nil {
+		t.Fatal("reading an unloaded match allocated its values")
+	}
+	if n := Field("f").Numbers(dm); len(n) != 0 {
+		t.Fatalf("Numbers of an unloaded match: %v", n)
+	}
+	if size := reflect.TypeOf(DocumentMatch{}).Size(); size > 128 {
+		t.Fatalf("DocumentMatch is %d bytes; the pool allocates one per candidate", size)
 	}
 }
 
@@ -100,7 +128,7 @@ func TestDocumentMatchResetClearsAndKeeps(t *testing.T) {
 // low single-digit ns range.
 func BenchmarkDocumentMatchReset(b *testing.B) {
 	dm := &DocumentMatch{}
-	dm.termVisitor, dm.numVisitor = dm.addDocValue, dm.addDocNumber
+	dm.vals()
 	b.ReportAllocs()
 	for b.Loop() {
 		dm.Number = 1

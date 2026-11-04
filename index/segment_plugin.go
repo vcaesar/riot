@@ -30,6 +30,18 @@ type SegmentPlugin struct {
 	New     func(results []segment.Document, normCalc func(string, int) float32) (segment.Segment, uint64, error)
 	Load    func(*segment.Data) (segment.Segment, error)
 	Merge   func([]segment.Segment, []*roaring.Bitmap, int) segment.Merger
+	// NewBuilder, when set, builds a segment from documents added one at
+	// a time, so a Stream need not keep them; nil packs them for New.
+	NewBuilder func(normCalc func(string, int) float32) SegmentBuilder
+}
+
+// SegmentBuilder builds the segment New would build over the documents
+// added, in order; Add does not keep the document.
+type SegmentBuilder interface {
+	Add(segment.Document) error
+	Len() int
+	Size() int // approximate heap use
+	Build() (segment.Segment, uint64, error)
 }
 
 func supportedSegmentTypes(supportedSegmentPlugins map[string]map[uint32]*SegmentPlugin) (rv []string) {

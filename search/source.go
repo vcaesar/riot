@@ -92,15 +92,16 @@ func (f FieldSource) Number(match *DocumentMatch) float64 {
 }
 
 func (f FieldSource) Numbers(match *DocumentMatch) []float64 {
-	first := len(match.numScratch)
-	rv := match.numScratch
+	v := match.vals()
+	first := len(v.numScratch)
+	rv := v.numScratch
 	if match.hasDocNumbers(string(f)) {
-		for _, n := range match.docNumbers {
+		for _, n := range v.docNumbers {
 			if n.field == string(f) {
 				rv = append(rv, numeric.Int64ToFloat64(n.value))
 			}
 		}
-		match.numScratch = rv
+		v.numScratch = rv
 		return rv[first:len(rv):len(rv)]
 	}
 	for _, term := range f.Values(match) {
@@ -114,7 +115,7 @@ func (f FieldSource) Numbers(match *DocumentMatch) []float64 {
 			}
 		}
 	}
-	match.numScratch = rv
+	v.numScratch = rv
 	return rv[first:len(rv):len(rv)]
 }
 

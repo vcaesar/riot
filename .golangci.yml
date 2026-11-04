@@ -159,6 +159,17 @@ linters:
         linters:
           - gochecknoinits
 
+      # language packages register their analyzer when imported
+      - path: ^analysis/lang/.*/register\.go$
+        linters:
+          - gochecknoinits
+
+      # test stubs implement interfaces with value receivers
+      - path: _test\.go
+        linters:
+          - gocritic
+        text: "hugeParam:"
+
       # and allow init here
       - path: analysis/freq.go
         linters:

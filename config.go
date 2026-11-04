@@ -39,6 +39,9 @@ type Config struct {
 
 	SearchStartFunc func(size uint64) error
 	SearchEndFunc   func(size uint64)
+
+	// langErr is WithLang's error, returned when the index is opened.
+	// langErr error
 }
 
 // WithVirtualField allows you to describe a field that
@@ -89,6 +92,35 @@ const (
 // WithVectorStorage selects where persisted HNSW graphs keep their vectors.
 func (config Config) WithVectorStorage(storage VectorStorage) Config {
 	config.indexConfig = config.indexConfig.WithVectorStorage(storage)
+	return config
+}
+
+// IndexMode selects how Writer.Batch builds segments.
+type IndexMode = index.Mode
+
+const (
+	// IndexModeBatch builds segments of up to a set number
+	// of documents, see WithBatchIndexing. For bounded indexing memory,
+	// add documents through Writer.NewStream.
+	IndexModeBatch = index.IndexModeBatch
+	// IndexModeStream, the default, packs analyzed documents compactly and
+	// builds a segment per memory budget, see WithStreamIndexing.
+	IndexModeStream = index.IndexModeStream
+)
+
+// WithBatchIndexing makes Writer.Batch build segments of up to segmentDocs
+// documents, releasing each segment's analysis once built; zero or less
+// builds one segment per batch.
+func (config Config) WithBatchIndexing(segmentDocs int) Config {
+	config.indexConfig = config.indexConfig.WithBatchIndexing(segmentDocs)
+	return config
+}
+
+// WithStreamIndexing makes Writer.Batch index like a Stream, with a segment
+// every memoryBudget packed bytes; zero or less uses
+// index.DefaultStreamMemoryBudget. It also sets NewStream(0)'s budget.
+func (config Config) WithStreamIndexing(memoryBudget int) Config {
+	config.indexConfig = config.indexConfig.WithStreamIndexing(memoryBudget)
 	return config
 }
 

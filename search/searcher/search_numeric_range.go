@@ -23,6 +23,7 @@ import (
 
 	"github.com/vcaesar/riot/numeric"
 	"github.com/vcaesar/riot/search"
+	"github.com/vcaesar/riot/search/similarity"
 )
 
 func NewNumericRangeSearcher(indexReader search.Reader,
@@ -50,43 +51,38 @@ func NewNumericRangeSearcher(indexReader search.Reader,
 		maxInt64--
 	}
 
-	var fieldDict segment.DictionaryLookup
-	var isIndexed filterFunc
-	var err error
-
-	fieldDict, err = indexReader.DictionaryLookup(field)
-	if err != nil {
-		return nil, err
+	if minInt64 > maxInt64 {
+		return NewMatchNoneSearcher(indexReader, options)
 	}
+	// numeric fields index one exact term per value, so [lo, hi] is one
+	// contiguous dictionary range (prefix coding preserves order)
+	loTerm := numeric.MustNewPrefixCodedInt64(minInt64, 0)
+	hiTermEnd := append(numeric.MustNewPrefixCodedInt64(maxInt64, 0), 0)
 
-	isIndexed = func(term []byte) bool {
-		found, err2 := fieldDict.Contains(term)
-		return err2 == nil && found
-	}
-
-	// FIXME hard-coded precision, should match field declaration
-	termRanges := splitInt64Range(minInt64, maxInt64, 4)
-	terms := termRanges.Enumerate(isIndexed)
-	if fieldDict != nil {
-		err = fieldDict.Close()
-		if err != nil {
-			return nil, err
+	// numeric terms carry no locations, so term vectors need not keep the
+	// range off the column, whose alternative is one term searcher per value
+	colOptions := options
+	colOptions.IncludeTermVectors = false
+	if score, ok := constantScoreEligible(boost, scorer, compScorer, colOptions); ok {
+		if nr, ok := indexReader.(numericRangeReader); ok {
+			it, err := nr.NumericRange(field, minInt64, maxInt64, loTerm, hiTermEnd)
+			if err != nil {
+				return nil, err
+			}
+			if it != nil {
+				return newTermSearcherFromReader(indexReader, it,
+					multiTermConstantScoreTerm, field, score, similarity.ConstantScorer(score), colOptions)
+			}
 		}
 	}
+	return NewTermRangeSearcher(indexReader, loTerm, hiTermEnd, true, false, field,
+		boost, scorer, compScorer, options)
+}
 
-	if len(terms) < 1 {
-		// cannot return MatchNoneSearcher because of interaction with
-		// commit f391b991c20f02681bacd197afc6d8aed444e132
-		return NewMultiTermSearcherBytes(indexReader, terms, field, boost, scorer, compScorer,
-			options, true)
-	}
-
-	if tooManyClauses(len(terms)) {
-		return nil, tooManyClausesErr(field, len(terms))
-	}
-
-	return NewMultiTermSearcherBytes(indexReader, terms, field, boost, scorer, compScorer,
-		options, true)
+// numericRangeReader is implemented by readers that answer numeric ranges
+// from typed columns (index.Snapshot); a nil iterator means cannot.
+type numericRangeReader interface {
+	NumericRange(field string, lo, hi int64, loTerm, hiTermEnd []byte) (segment.PostingsIterator, error)
 }
 
 type termRange struct {
