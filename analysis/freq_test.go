@@ -316,8 +316,12 @@ func TestNewTokenFrequenciesPointsIntoSlice(t *testing.T) {
 // Each term's locations are a capped window of one field block, so
 // appending to one term never overwrites its neighbour's locations.
 func TestTokenFrequencyLocationWindows(t *testing.T) {
-	if s := unsafe.Sizeof(TokenLocation{}); s != 32 {
-		t.Fatalf("TokenLocation is %d bytes, want 32", s)
+	wantSize := uintptr(32)
+	if strconv.IntSize == 32 {
+		wantSize = 20
+	}
+	if s := unsafe.Sizeof(TokenLocation{}); s != wantSize {
+		t.Fatalf("TokenLocation is %d bytes, want %d", s, wantSize)
 	}
 	tfs, _ := TokenFrequencySlice(TokenStream{
 		{Term: []byte("a"), Start: 0, End: 1, PositionIncr: 1},
@@ -341,8 +345,8 @@ func TestLoc32(t *testing.T) {
 		}
 	}
 	if strconv.IntSize == 64 {
-		for _, v := range []int{math.MaxInt32 + 1, math.MinInt32 - 1} {
-			if got := Loc32(v); got != -1 {
+		for _, v := range []int64{math.MaxInt32 + 1, math.MinInt32 - 1} {
+			if got := Loc32(int(v)); got != -1 {
 				t.Fatalf("Loc32(%d) = %d, want -1", v, got)
 			}
 		}
