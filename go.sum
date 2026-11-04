@@ -4,8 +4,6 @@ github.com/axiomhq/hyperloglog v0.3.0 h1:IQzzb1zjZiODMwCgBRHKak4oIp2Oj7K0Q0rVoAo
 github.com/axiomhq/hyperloglog v0.3.0/go.mod h1:YjX/dQqCR/7QYX0g8mu8UZAjpIenz1FKM71UEsjFoTo=
 github.com/bits-and-blooms/bitset v1.29.0 h1:xq4g46l2NlweICLMDJ8LiyrZJQJTeC2Q0b3CCnLCAbg=
 github.com/bits-and-blooms/bitset v1.29.0/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
-github.com/blevesearch/mmap-go v1.2.0 h1:l33nNKPFcBjJUMwem6sAYJPUzhUCABoK9FxZDGiFNBI=
-github.com/blevesearch/mmap-go v1.2.0/go.mod h1:Vd6+20GBhEdwJnU1Xohgt88XCD/CTWcqbCNxkZpyBo0=
 github.com/caio/go-tdigest/v5 v5.0.0 h1:XQKgYSazZPbWFDAJ51dKqoZoDrISmTrB8UcWwCmfo6Y=
 github.com/caio/go-tdigest/v5 v5.0.0/go.mod h1:wI618wZoAYzIDZlpX2CfyTQdrdGtwEZOJuXdrI3zk/Y=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
@@ -39,8 +37,8 @@ github.com/vcaesar/bluge_segment_api v1.2.2 h1:8nCzQvlyUQLqerP6zRiB4YUc2NYrdRX+9
 github.com/vcaesar/bluge_segment_api v1.2.2/go.mod h1:KO7cpxXvohHHktHmWOaJcsYwt/I9a8fuhTUrVGUPPYk=
 github.com/vcaesar/cedar v0.50.1 h1:JhchIiYZyvjT7EhjMR3oN7JH7QNgeqLrw/zaPBrTWRQ=
 github.com/vcaesar/cedar v0.50.1/go.mod h1:eHvpmJXJmOowP8mW/Xqjra+HmKovJNcRxRPtezHjh7I=
-github.com/vcaesar/ice v1.4.1 h1:8qWHPrXLy9s1Xtb8ORvypOBGmsByv5kAzWGkrRPLzP8=
-github.com/vcaesar/ice v1.4.1/go.mod h1:ADjW4NfWHUnw+zLPJ1yPU9rNlSZP7Qm91Ijikof9PSo=
+github.com/vcaesar/ice v1.5.0 h1:zvFFwAqRvkz6i0Rz2eJzW00REgoZRqIMvWdf0664h3U=
+github.com/vcaesar/ice v1.5.0/go.mod h1:s6Xr2q3eRfloT40FAiu2ytUh00oprbHh/uJZZr3wGoc=
 github.com/vcaesar/tt v0.40.0 h1:vWUNRJn13ozP3xXlAXV5q9WivaDSHRS2jQ2J2ayCvQs=
 github.com/vcaesar/tt v0.40.0/go.mod h1:cH2+AwGAJm19Wa6xvEa+0r+sXDJBT0QgNQey6mwqLeU=
 github.com/zedsearch/go-porterstemmer v1.0.4 h1:31kpH/obTTGM9K+ek5HDsvS77h7dMVGWry+rY86XYIA=
@@ -51,8 +49,8 @@ github.com/zedsearch/segment v0.9.2 h1:XPmmo66bgyZpfejq4D/YCDwqm5eD4fs0+/iW3W1TU
 github.com/zedsearch/segment v0.9.2/go.mod h1:AMh+UEXlsoMChEnE1X504mUwRqSqIe4cUSnOO3F40W8=
 github.com/zedsearch/snowballstem v0.9.1 h1:0+/takNN9pwSK1jFhbpex+LhhY04k9uOCHiFJxWpJ2w=
 github.com/zedsearch/snowballstem v0.9.1/go.mod h1:FfZYi0UfI1JfzG496N/5b2CUpwUVK+yPH/zBeTKHxMo=
-github.com/zedsearch/vellum v0.0.0-20261103000700-007f9e51fd72 h1:PTau2sNOzy+eLRNmFSZCE+4Cg3eTBHf1g23t3W5+dPI=
-github.com/zedsearch/vellum v0.0.0-20261103000700-007f9e51fd72/go.mod h1:589H9BuuJCwEuu2MgzAdt5xr/NmTN3hbr81D4tHp3xc=
+github.com/zedsearch/vellum v1.2.2 h1:svIzYouSxFPc9m9JbcOI/F93OnMKM9rioui39Q9U/8g=
+github.com/zedsearch/vellum v1.2.2/go.mod h1:589H9BuuJCwEuu2MgzAdt5xr/NmTN3hbr81D4tHp3xc=
 go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
 golang.org/x/sys v0.49.0 h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
 golang.org/x/sys v0.49.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=

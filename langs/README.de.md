@@ -10,7 +10,7 @@
 
 Schnelle, moderne Volltextindizierung in Go, Fork von [bluge](https://github.com/blugelabs/bluge)
 
-Eine verteilte Suchmaschine und eine leichtgewichtige Alternative zu einem vollständigen Elasticsearch auf Basis von riot finden Sie in [zed](https://github.com/vcaesar/zedsearch).
+Eine verteilte Suchmaschine und eine leichtgewichtige Alternative zu einem vollständigen Elasticsearch auf Basis von riot finden Sie in [zedsearch](https://github.com/vcaesar/zedsearch).
 
 ## Funktionen
 
@@ -375,32 +375,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 ## Benchmarks
 
-### Riot vs. Bluge (die Engine, von der es geforkt wurde)
+### Riot vs. Bleve und Bluge (die Engine, von der es geforkt wurde)
 
-Ein einziges Go-Programm, gebaut gegen `blugelabs/bluge v0.2.2` (neuester Tag) und `vcaesar/riot v1.61.2`, nur der Importpfad unterscheidet sich: 200.000 Dokumente auf der Festplatte (12 zufällige Wörter, ein Keyword und eine Zahl), jede Abfrage 50-mal ausgeführt (Top 10 mit Trefferzahl), Median aus drei abwechselnden Durchläufen (Apple M1, Load Average 2,5 bis 3,3).
+Alle drei Engines laufen mit derselben Last: 100.000 synthetische Dokumente (`body`-Text mit Positionen, gespeichert; numerisches `id`; Keyword `category`). Bleve v2.6.1 (scorch, BM25) und Bluge v0.2.2 treten gegen das aktuelle riot (Go 1.27.3) in seinem Standard-Stream-Indizierungsmodus an, jeweils ein Prozess auf einem Kern (`GOMAXPROCS=1`), Median aus 5 rotierenden Runden (Apple M1, Load Average 3,1 bis 5,4). In jedem Lauf lieferten alle drei dieselben Trefferzahlen und Treffermengen wie ein dokumentweises Orakel.
 
-| Workload | Treffer | Bluge v0.2.2 | Riot v1.61.2 | Riot vs. Bluge |
-| --- | --- | --- | --- | --- |
-| 200.000 Dokumente indizieren und schließen | | 4.83 s | 2.78 s | 1.7× schneller |
-| Indexgröße auf der Festplatte | | 57.3 MB | 36.4 MB | 36 % kleiner |
-| Term | 67,086 | 9.03 ms | 0.31 ms | 29× schneller |
-| Match, 2 Wörter | 112,469 | 19.9 ms | 5.65 ms | 3.5× schneller |
-| Match phrase | 2,435 | 12.8 ms | 6.94 ms | 1.8× schneller |
-| Bool `must` rag, chunk + `must_not` edge | 14,975 | 7.70 ms | 3.41 ms | 2.3× schneller |
-| Bool `must` rag, chunk | 21,207 | 6.20 ms | 4.18 ms | 1.5× schneller |
-| Bool `should` rag, chunk, `min_should` 2 | 21,207 | 8.79 ms | 4.19 ms | 2.1× schneller |
-| Bool `should` rag, chunk, edge, `min_should` 3 | 6,232 | 10.2 ms | 2.75 ms | 3.7× schneller |
-| Bool `should` rag, chunk (beliebig) | 112,377 | 19.7 ms | 5.87 ms | 3.4× schneller |
-| Prefix `se*` (konstanter Score in riot) | 112,414 | 18.7 ms | 0.18 ms | 104× schneller |
-| Fuzzy `clustr` | 67,002 | 10.0 ms | 2.66 ms | 3.8× schneller |
-| Numerischer Bereich | 19,648 | 4.17 ms | 2.46 ms | 1.7× schneller |
-| Match, sortiert nach einem numerischen Feld | 66,690 | 123 ms | 27.4 ms | 4.5× schneller |
+| Workload | Bleve v2.6.1 | Bluge v0.2.2 | Riot | Riot vs. Bleve | Riot vs. Bluge |
+| --- | --- | --- | --- | --- | --- |
+| Erstindizierung, 100.000 Dokumente | 6,546 ms | 5,029 ms | 516 ms | 12.7× schneller | 9.8× schneller |
+| Commit eines Dokuments + sichtbarer Reader | 0.151 ms | 0.313 ms | 0.199 ms§ | 1.3× langsamer | 1.6× schneller |
+| Indexgröße auf der Festplatte | 76.71 MB | 61.06 MB | 8.22 MB | 9.3× kleiner | 7.4× kleiner |
+| Spitzenspeicher (RSS) | 1,931 MiB | 1,974 MiB | 144 MiB | 13.4× weniger | 13.7× weniger |
+| CPU gesamt, ganzer Lauf | 17.84 s | 19.50 s | 1.08 s | 16.5× weniger | 18.1× weniger |
+| Seltener Term | 11.90 µs | 16.98 µs | 2.21 µs | 5.4× schneller | 7.7× schneller |
+| Häufiger Term, Top 10 + Anzahl | 5,848 µs | 10,861 µs | 7.30 µs† | 801× schneller | 1,488× schneller |
+| Boolean AND | 1,788 µs | 1,990 µs | 25.38 µs† | 70× schneller | 78× schneller |
+| Boolean OR | 27.18 µs | 43.61 µs | 6.91 µs | 3.9× schneller | 6.3× schneller |
+| Phrase | 60,645 µs | 61,758 µs | 2,262 µs | 27× schneller | 27× schneller |
+| Präfix `term12*` (konstanter Score in riot) | 3,133 µs | 3,597 µs | 50.18 µs | 62× schneller | 72× schneller |
+| Fuzzy `serch`, Distanz 1 | 6,798 µs | 12,035 µs | 29.98 µs† | 227× schneller | 401× schneller |
+| Typisierter numerischer Bereich | 166.2 µs | 164.6 µs | 10.56 µs | 16× schneller | 16× schneller |
+| Keyword- / Facetten-Term | 385.1 µs | 645.7 µs | 2.98 µs | 129× schneller | 217× schneller |
+| Numerische Statistik‡ | 45,375 µs | 105,356 µs | 433.6 µs | 105× schneller | 243× schneller |
 
-Jeder riot-Durchlauf war schneller als jeder Bluge-Durchlauf, bei gleichen Trefferzahlen. Die Scores unterscheiden sich, weil riot die BM25-idf von Bluge auf die von Lucene korrigiert hat: `log(1 + (N − n + 0.5)/(n + 0.5))`. Bluge hat keine Vektorsuche. Dies sind Messwerte von einer einzelnen Maschine mit Zufallsdaten, kein formaler Benchmark.
+- Spitzenspeicher und CPU umfassen den gesamten Benchmark-Prozess (10K- und 100K-Aufbau plus alle Abfrageschleifen), ermittelt aus `wait4`-rusage. Die Indexgröße stammt aus einem separaten Aufbau auf der Festplatte (Median aus 3).
 
-<!-- ## Repobeats
-
-![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
+Die Scores unterscheiden sich von Bluge, weil riot Bluges BM25-idf auf Lucenes `log(1 + (N − n + 0.5)/(n + 0.5))` korrigiert hat. Bluge hat keine Vektorsuche; die von Bleve benötigt das Build-Tag `vectors` und FAISS über cgo. Dies sind Zahlen von einer einzelnen Maschine mit synthetischen Daten, kein formaler Benchmark.
 
 ## Lizenz
 

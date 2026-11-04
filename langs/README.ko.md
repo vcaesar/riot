@@ -10,7 +10,7 @@
 
 Go로 작성된 빠르고 현대적인 전문 색인 라이브러리. [bluge](https://github.com/blugelabs/bluge)에서 포크했습니다.
 
-riot 기반의 분산 검색 엔진이자 완전한 Elasticsearch의 경량 대안은 [zed](https://github.com/vcaesar/zedsearch)를 참고하세요.
+riot 기반의 분산 검색 엔진이자 완전한 Elasticsearch의 경량 대안은 [zedsearch](https://github.com/vcaesar/zedsearch)를 참고하세요.
 
 ## 기능
 
@@ -374,32 +374,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 ## 벤치마크
 
-### Riot vs Bluge (포크 원본 엔진)
+### Riot vs Bleve, Bluge (포크 원본 엔진)
 
-하나의 Go 프로그램을 `blugelabs/bluge v0.2.2`(최신 태그)와 `vcaesar/riot v1.61.2`로 각각 빌드하고 import 경로만 바꿨습니다. 디스크에 저장된 문서 200,000개(무작위 단어 12개, 키워드 1개, 숫자 1개), 쿼리마다 50회 실행(상위 10개와 히트 수), 번갈아 실행한 3회의 중앙값(Apple M1, 부하 평균 2.5~3.3)입니다.
+세 엔진을 같은 워크로드로 측정했습니다. 합성 문서 100,000개(위치 정보와 함께 저장되는 `body` 텍스트, 숫자 `id`, `category` 키워드)를 사용했고, Bleve v2.6.1(scorch, BM25)와 Bluge v0.2.2를 기본 스트림 색인 모드의 현재 riot(Go 1.27.3)과 비교했습니다. 한 번에 프로세스 하나씩, 단일 코어(`GOMAXPROCS=1`)에서 5라운드 순환의 중앙값(Apple M1, 부하 평균 3.1~5.4)입니다. 모든 실행에서 세 엔진 모두 문서 단위 오라클과 같은 매치 수와 매치 집합을 반환했습니다.
 
-| 워크로드 | 히트 수 | Bluge v0.2.2 | Riot v1.61.2 | Riot vs Bluge |
-| --- | --- | --- | --- | --- |
-| 문서 200,000개 색인 후 닫기 | | 4.83 s | 2.78 s | 1.7배 빠름 |
-| 디스크상 인덱스 크기 | | 57.3 MB | 36.4 MB | 36% 작음 |
-| Term | 67,086 | 9.03 ms | 0.31 ms | 29배 빠름 |
-| Match, 2단어 | 112,469 | 19.9 ms | 5.65 ms | 3.5배 빠름 |
-| Match phrase | 2,435 | 12.8 ms | 6.94 ms | 1.8배 빠름 |
-| Bool `must` rag, chunk + `must_not` edge | 14,975 | 7.70 ms | 3.41 ms | 2.3배 빠름 |
-| Bool `must` rag, chunk | 21,207 | 6.20 ms | 4.18 ms | 1.5배 빠름 |
-| Bool `should` rag, chunk, `min_should` 2 | 21,207 | 8.79 ms | 4.19 ms | 2.1배 빠름 |
-| Bool `should` rag, chunk, edge, `min_should` 3 | 6,232 | 10.2 ms | 2.75 ms | 3.7배 빠름 |
-| Bool `should` rag, chunk (하나 이상) | 112,377 | 19.7 ms | 5.87 ms | 3.4배 빠름 |
-| Prefix `se*` (riot에서는 상수 점수) | 112,414 | 18.7 ms | 0.18 ms | 104배 빠름 |
-| Fuzzy `clustr` | 67,002 | 10.0 ms | 2.66 ms | 3.8배 빠름 |
-| 숫자 범위 | 19,648 | 4.17 ms | 2.46 ms | 1.7배 빠름 |
-| Match, 숫자 필드로 정렬 | 66,690 | 123 ms | 27.4 ms | 4.5배 빠름 |
+| 워크로드 | Bleve v2.6.1 | Bluge v0.2.2 | Riot | Riot vs Bleve | Riot vs Bluge |
+| --- | --- | --- | --- | --- | --- |
+| 초기 색인, 문서 100,000개 | 6,546 ms | 5,029 ms | 516 ms | 12.7배 빠름 | 9.8배 빠름 |
+| 문서 1개 커밋 + 가시 reader | 0.151 ms | 0.313 ms | 0.199 ms§ | 1.3배 느림 | 1.6배 빠름 |
+| 디스크상 인덱스 크기 | 76.71 MB | 61.06 MB | 8.22 MB | 9.3배 작음 | 7.4배 작음 |
+| 최대 메모리(RSS) | 1,931 MiB | 1,974 MiB | 144 MiB | 13.4배 적음 | 13.7배 적음 |
+| 총 CPU, 전체 실행 | 17.84 s | 19.50 s | 1.08 s | 16.5배 적음 | 18.1배 적음 |
+| 희귀 단어 | 11.90 µs | 16.98 µs | 2.21 µs | 5.4배 빠름 | 7.7배 빠름 |
+| 흔한 단어, 상위 10개 + 개수 | 5,848 µs | 10,861 µs | 7.30 µs† | 801배 빠름 | 1,488배 빠름 |
+| Boolean AND | 1,788 µs | 1,990 µs | 25.38 µs† | 70배 빠름 | 78배 빠름 |
+| Boolean OR | 27.18 µs | 43.61 µs | 6.91 µs | 3.9배 빠름 | 6.3배 빠름 |
+| 구문 | 60,645 µs | 61,758 µs | 2,262 µs | 27배 빠름 | 27배 빠름 |
+| 접두사 `term12*`(riot에서는 상수 점수) | 3,133 µs | 3,597 µs | 50.18 µs | 62배 빠름 | 72배 빠름 |
+| 퍼지 `serch`, 거리 1 | 6,798 µs | 12,035 µs | 29.98 µs† | 227배 빠름 | 401배 빠름 |
+| 타입 지정 숫자 범위 | 166.2 µs | 164.6 µs | 10.56 µs | 16배 빠름 | 16배 빠름 |
+| 키워드 / 패싯 term | 385.1 µs | 645.7 µs | 2.98 µs | 129배 빠름 | 217배 빠름 |
+| 숫자 통계‡ | 45,375 µs | 105,356 µs | 433.6 µs | 105배 빠름 | 243배 빠름 |
 
-모든 riot 실행이 모든 Bluge 실행보다 빨랐고 히트 수는 동일했습니다. 점수가 다른 이유는 riot이 Bluge의 BM25 idf를 Lucene의 `log(1 + (N − n + 0.5)/(n + 0.5))`로 수정했기 때문입니다. Bluge에는 벡터 검색이 없습니다. 무작위 데이터로 한 대의 머신에서 측정한 수치이며 공식 벤치마크가 아닙니다.
+- 최대 메모리와 CPU는 벤치마크 프로세스 전체(10K와 100K 빌드 및 모든 쿼리 루프)를 포함하며 `wait4` rusage에서 얻었습니다. 인덱스 크기는 별도의 디스크 빌드(3회 중앙값)에서 측정했습니다.
 
-<!-- ## Repobeats
-
-![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
+Bluge와 점수가 다른 이유는 riot이 Bluge의 BM25 idf를 Lucene의 `log(1 + (N − n + 0.5)/(n + 0.5))`로 수정했기 때문입니다. Bluge는 벡터 검색을 지원하지 않으며, Bleve의 벡터 검색은 `vectors` 빌드 태그와 cgo를 통한 FAISS가 필요합니다. 합성 데이터에서 단일 머신으로 측정한 수치이며 공식 벤치마크가 아닙니다.
 
 ## 라이선스
 
