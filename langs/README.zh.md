@@ -10,7 +10,7 @@
 
 快速、现代的 Go 语言全文索引库，fork 自 [bluge](https://github.com/blugelabs/bluge)
 
-如需基于 riot 的分布式搜索引擎、完整 Elasticsearch 的轻量替代方案，请参阅 [zed](https://github.com/vcaesar/zedsearch)。
+如需基于 riot 的分布式搜索引擎、完整 Elasticsearch 的轻量替代方案，请参阅 [zedsearch](https://github.com/vcaesar/zedsearch)。
 
 ## 特性
 
@@ -373,32 +373,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 ## 基准测试
 
-### Riot 与 Bluge（其分叉来源）对比
+### Riot 与 Bleve、Bluge（其分叉来源）对比
 
-同一个 Go 程序分别基于 `blugelabs/bluge v0.2.2`（最新标签）和 `vcaesar/riot v1.61.2` 构建，仅导入路径不同：200,000 篇磁盘文档（每篇 12 个随机词、一个关键词和一个数字），每个查询运行 50 次（取前 10 条并统计命中数），取三轮交替运行的中位数（Apple M1，负载均值 2.5 至 3.3）。
+三个引擎运行同一负载：100,000 篇合成文档（带位置并存储的 `body` 文本、数值 `id`、`category` 关键词）。Bleve v2.6.1（scorch，BM25）和 Bluge v0.2.2 对比当前 riot（Go 1.27.3，默认的流式索引模式），每次只运行一个进程，单核（`GOMAXPROCS=1`），取轮换 5 轮的中位数（Apple M1，负载均值 3.1 至 5.4）。每次运行中三者的命中数和命中集合都与逐文档校验结果一致。
 
-| 负载 | 命中数 | Bluge v0.2.2 | Riot v1.61.2 | Riot 对比 Bluge |
-| --- | --- | --- | --- | --- |
-| 索引 200,000 篇文档并关闭 | | 4.83 s | 2.78 s | 快 1.7 倍 |
-| 磁盘索引大小 | | 57.3 MB | 36.4 MB | 小 36% |
-| Term | 67,086 | 9.03 ms | 0.31 ms | 快 29 倍 |
-| Match，2 个词 | 112,469 | 19.9 ms | 5.65 ms | 快 3.5 倍 |
-| Match phrase | 2,435 | 12.8 ms | 6.94 ms | 快 1.8 倍 |
-| Bool `must` rag, chunk + `must_not` edge | 14,975 | 7.70 ms | 3.41 ms | 快 2.3 倍 |
-| Bool `must` rag, chunk | 21,207 | 6.20 ms | 4.18 ms | 快 1.5 倍 |
-| Bool `should` rag, chunk, `min_should` 2 | 21,207 | 8.79 ms | 4.19 ms | 快 2.1 倍 |
-| Bool `should` rag, chunk, edge, `min_should` 3 | 6,232 | 10.2 ms | 2.75 ms | 快 3.7 倍 |
-| Bool `should` rag, chunk （任一） | 112,377 | 19.7 ms | 5.87 ms | 快 3.4 倍 |
-| Prefix `se*`（riot 中为常量评分） | 112,414 | 18.7 ms | 0.18 ms | 快 104 倍 |
-| Fuzzy `clustr` | 67,002 | 10.0 ms | 2.66 ms | 快 3.8 倍 |
-| 数值范围 | 19,648 | 4.17 ms | 2.46 ms | 快 1.7 倍 |
-| Match，按数值字段排序 | 66,690 | 123 ms | 27.4 ms | 快 4.5 倍 |
+| 负载 | Bleve v2.6.1 | Bluge v0.2.2 | Riot | Riot 对比 Bleve | Riot 对比 Bluge |
+| --- | --- | --- | --- | --- | --- |
+| 初始索引，100,000 篇文档 | 6,546 ms | 5,029 ms | 516 ms | 快 12.7 倍 | 快 9.8 倍 |
+| 单文档提交 + 可见 reader | 0.151 ms | 0.313 ms | 0.199 ms§ | 慢 1.3 倍 | 快 1.6 倍 |
+| 磁盘索引大小 | 76.71 MB | 61.06 MB | 8.22 MB | 小 9.3 倍 | 小 7.4 倍 |
+| 峰值内存（RSS） | 1,931 MiB | 1,974 MiB | 144 MiB | 少 13.4 倍 | 少 13.7 倍 |
+| 总 CPU，整个运行 | 17.84 s | 19.50 s | 1.08 s | 少 16.5 倍 | 少 18.1 倍 |
+| 稀有词 | 11.90 µs | 16.98 µs | 2.21 µs | 快 5.4 倍 | 快 7.7 倍 |
+| 常见词，前 10 条 + 计数 | 5,848 µs | 10,861 µs | 7.30 µs† | 快 801 倍 | 快 1,488 倍 |
+| Boolean AND | 1,788 µs | 1,990 µs | 25.38 µs† | 快 70 倍 | 快 78 倍 |
+| Boolean OR | 27.18 µs | 43.61 µs | 6.91 µs | 快 3.9 倍 | 快 6.3 倍 |
+| 短语 | 60,645 µs | 61,758 µs | 2,262 µs | 快 27 倍 | 快 27 倍 |
+| 前缀 `term12*`（riot 中为常量评分） | 3,133 µs | 3,597 µs | 50.18 µs | 快 62 倍 | 快 72 倍 |
+| 模糊 `serch`，编辑距离 1 | 6,798 µs | 12,035 µs | 29.98 µs† | 快 227 倍 | 快 401 倍 |
+| 类型化数值范围 | 166.2 µs | 164.6 µs | 10.56 µs | 快 16 倍 | 快 16 倍 |
+| 关键词 / 分面 term | 385.1 µs | 645.7 µs | 2.98 µs | 快 129 倍 | 快 217 倍 |
+| 数值统计‡ | 45,375 µs | 105,356 µs | 433.6 µs | 快 105 倍 | 快 243 倍 |
 
-每一轮 riot 运行都快于每一轮 Bluge 运行，且命中数相同。评分不同是因为 riot 将 Bluge 的 BM25 idf 修正为 Lucene 的 `log(1 + (N − n + 0.5)/(n + 0.5))`。Bluge 不支持向量搜索。以上为随机数据上的单机结果，并非正式基准测试。
+- 峰值内存和 CPU 覆盖整个基准进程（10K 和 100K 构建加所有查询循环），取自 `wait4` rusage。索引大小取自单独的磁盘构建（3 轮中位数）。
 
-<!-- ## Repobeats
-
-![Alt](https://repobeats.axiom.co/api/embed/0d7f8bc7927e15b07f1ae592eeff01811c5a2f80.svg "Repobeats analytics image") -->
+评分与 Bluge 不同是因为 riot 将 Bluge 的 BM25 idf 修正为 Lucene 的 `log(1 + (N − n + 0.5)/(n + 0.5))`。Bluge 不支持向量搜索；Bleve 的向量搜索需要 `vectors` 构建标签和经由 cgo 的 FAISS。以上为合成数据上的单机结果，并非正式基准测试。
 
 ## 许可证
 
