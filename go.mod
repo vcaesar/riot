@@ -11,7 +11,7 @@ require (
 	github.com/go-ego/gse v1.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/vcaesar/bluge_segment_api v1.2.2
-	github.com/vcaesar/ice v1.5.3
+	github.com/vcaesar/ice v1.5.4
 	github.com/zedsearch/go-porterstemmer v1.0.4
 	github.com/zedsearch/mmap-go v1.3.0
 	github.com/zedsearch/segment v0.9.2
