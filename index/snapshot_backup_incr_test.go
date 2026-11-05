@@ -140,8 +140,10 @@ func TestBackupReplacesMismatchedItem(t *testing.T) {
 		}
 	})
 	writeDocs(t, cfg, "1", "2")
-	r := openTestReader(t, cfg)
+	// before the reader: cleanups run last in first out, and Windows cannot
+	// remove a link of the segment the reader still maps
 	dst, path := backupDir(t)
+	r := openTestReader(t, cfg)
 
 	outside := filepath.Join(t.TempDir(), "other-index.seg")
 	junk := []byte("segment of another index")

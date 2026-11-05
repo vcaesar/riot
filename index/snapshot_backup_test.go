@@ -17,6 +17,7 @@ package index
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 )
@@ -250,6 +251,9 @@ func BenchmarkBackup(b *testing.B) {
 // TestBackupSegmentFileRemoved checks that a segment whose file the deletion
 // policy removed after a merge is still backed up from the open snapshot.
 func TestBackupSegmentFileRemoved(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows cannot remove a segment file the snapshot maps")
+	}
 	cfg, cleanup := CreateConfig("TestBackupSegmentFileRemoved")
 	t.Cleanup(func() {
 		if err := cleanup(); err != nil {
