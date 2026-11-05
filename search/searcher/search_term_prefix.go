@@ -65,23 +65,24 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 		}
 	}()
 
-	var terms []string
-	tfd, err := fieldDict.Next()
-	for err == nil && tfd != nil {
-		terms = append(terms, tfd.Term())
-		if tooManyClauses(len(terms)) {
-			return nil, tooManyClausesErr(field, len(terms))
-		}
-		tfd, err = fieldDict.Next()
+	// a prefix scores every match the same, as in Lucene and tantivy,
+	// whatever the number of terms it expands to
+	score, constant := constantScoreEligible(boost, scorer, compScorer, options)
+	rr, ranged := indexReader.(rangeBitmapReader)
+
+	// the range pass needs only to know there are enough terms, so listing
+	// them all, a merge of every segment's dictionary, is left for fallbacks
+	pt := &prefixTerms{dict: fieldDict, field: field}
+	stop := 0
+	if constant && ranged && DisjunctionMaxClauseCount == 0 {
+		stop = minRangeTerms
 	}
-	if err != nil {
+	if err := pt.list(stop); err != nil {
 		return nil, err
 	}
 
-	// a prefix scores every match the same, as in Lucene and tantivy,
-	// whatever the number of terms it expands to
-	if score, ok := constantScoreEligible(boost, scorer, compScorer, options); ok && len(terms) > 0 {
-		if rr, ok := indexReader.(rangeBitmapReader); ok && len(terms) >= minRangeTerms {
+	if constant && len(pt.terms) > 0 {
+		if ranged && len(pt.terms) >= minRangeTerms {
 			it, err := rr.DocsMatchingRange(field, nil, kBeg, kEnd)
 			if err != nil {
 				return nil, err
@@ -91,8 +92,11 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 					multiTermConstantScoreTerm, field, score, similarity.ConstantScorer(score), options)
 			}
 		}
-		bterms := make([][]byte, len(terms))
-		for i, t := range terms {
+		if err := pt.list(0); err != nil {
+			return nil, err
+		}
+		bterms := make([][]byte, len(pt.terms))
+		for i, t := range pt.terms {
 			bterms[i] = []byte(t)
 		}
 		rv, err := newConstantScoreMultiTermSearcher(indexReader, bterms, field, score, options)
@@ -101,5 +105,32 @@ func NewTermPrefixSearcher(indexReader search.Reader, prefix, field string,
 		}
 	}
 
-	return NewMultiTermSearcher(indexReader, terms, field, boost, scorer, compScorer, options, true)
+	return NewMultiTermSearcher(indexReader, pt.terms, field, boost, scorer, compScorer, options, true)
+}
+
+// prefixTerms lists the terms of a dictionary iterator on demand.
+type prefixTerms struct {
+	dict   segment.DictionaryIterator
+	field  string
+	terms  []string
+	listed bool
+}
+
+// list lists terms until there are stop of them, or all if stop is 0.
+func (p *prefixTerms) list(stop int) error {
+	for !p.listed && (stop == 0 || len(p.terms) < stop) {
+		tfd, err := p.dict.Next()
+		if err != nil {
+			return err
+		}
+		if tfd == nil {
+			p.listed = true
+			return nil
+		}
+		p.terms = append(p.terms, tfd.Term())
+		if tooManyClauses(len(p.terms)) {
+			return tooManyClausesErr(p.field, len(p.terms))
+		}
+	}
+	return nil
 }

@@ -82,6 +82,15 @@ func (o SortOrder) ScoreDescOnly() bool {
 	return len(o) == 1 && o[0].score && o[0].desc
 }
 
+// NumericFirst returns the field and direction of the first sort when its
+// key is the prefix-coded int64 doc value of field (see NumericFieldSource).
+func (o SortOrder) NumericFirst() (field string, desc, ok bool) {
+	if len(o) == 0 || o[0].score || o[0].numField == "" {
+		return "", false, false
+	}
+	return o[0].numField, o[0].desc, true
+}
+
 func (o SortOrder) scoreOnly() bool {
 	for _, sort := range o {
 		if !sort.score {
@@ -162,11 +171,16 @@ type Sort struct {
 	// score: source is the document score, compared as a float64 instead
 	// of through its prefix-coded key
 	score bool
+	// numField is the field of a NumericFieldSource source
+	numField string
 }
 
 func SortBy(source TextValueSource) *Sort {
 	rv := &Sort{}
 	_, rv.score = source.(*ScoreSource)
+	if n, ok := source.(NumericFieldSource); ok {
+		rv.numField = n.NumericField()
+	}
 
 	rv.source = MissingTextValue(source, &sortFirstLast{
 		desc:  &rv.desc,

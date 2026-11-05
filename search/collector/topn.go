@@ -56,6 +56,15 @@ type TopNCollector struct {
 	searchAfter               *search.DocumentMatch
 	// scoreDesc is set during Collect when only the score orders hits
 	scoreDesc bool
+	// numSort is set during Collect when the first sort key is an int64
+	// doc value and the aggregations only read the score; once results are
+	// full, hits whose value sorts after numFloor, the first key of
+	// lowestMatchOutsideResults, are counted without loading their values
+	numSort     bool
+	numField    string
+	numDesc     bool
+	numFloorSet bool
+	numFloor    int64
 }
 
 // CheckDoneEvery controls how frequently we check the context deadline
@@ -148,6 +157,8 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 	bucket := search.NewBucket("", aggs)
 	hc.scoreDesc = hc.sort.ScoreDescOnly()
 	searchContext.SkipBlocks = bucket.BoundOnly()
+	hc.numField, hc.numDesc, hc.numSort = hc.sort.NumericFirst()
+	hc.numSort = hc.numSort && hc.searchAfter == nil && bucket.ScoreOnly()
 
 	var hitNumber int
 	// skipErr is the cancellation seen while a ScoreSkipper passed over hits
@@ -179,9 +190,15 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 		hitNumber++
 		next.HitNumber = hitNumber
 
-		err = hc.collectSingle(searchContext, next, bucket)
-		if err != nil {
-			return nil, err
+		skip, serr := hc.belowNumFloor(searchContext, next)
+		if serr != nil {
+			return nil, serr
+		}
+		if skip {
+			bucket.ConsumeScore(next.Score, 1)
+			searchContext.DocumentMatchPool.Put(next)
+		} else if cerr := hc.collectSingle(searchContext, next, bucket); cerr != nil {
+			return nil, cerr
 		}
 
 		next, err = nextHit()
@@ -271,17 +288,54 @@ func (hc *TopNCollector) collectSingle(ctx *search.Context, d *search.DocumentMa
 	removed := hc.store.AddNotExceedingSize(d, hc.size+hc.skip)
 	if removed != nil {
 		if hc.lowestMatchOutsideResults == nil {
-			hc.lowestMatchOutsideResults = removed
+			hc.setLowest(removed)
 		} else {
 			cmp := hc.sort.Compare(removed, hc.lowestMatchOutsideResults)
 			if cmp < 0 {
 				tmp := hc.lowestMatchOutsideResults
-				hc.lowestMatchOutsideResults = removed
+				hc.setLowest(removed)
 				ctx.DocumentMatchPool.Put(tmp)
 			}
 		}
 	}
 	return nil
+}
+
+// setLowest sets lowestMatchOutsideResults and, for a numeric first sort,
+// the floor decoded from its key.
+func (hc *TopNCollector) setLowest(d *search.DocumentMatch) {
+	hc.lowestMatchOutsideResults = d
+	if !hc.numSort {
+		return
+	}
+	hc.numFloorSet = false
+	if len(d.SortValue) == 0 {
+		return
+	}
+	key := numeric.PrefixCoded(d.SortValue[0])
+	if valid, shift := numeric.ValidPrefixCodedTermBytes(key); !valid || shift != 0 {
+		return // a missing value placeholder
+	}
+	if v, err := key.Int64(); err == nil {
+		hc.numFloor, hc.numFloorSet = v, true
+	}
+}
+
+// belowNumFloor reports whether d's first sort key sorts strictly after the
+// floor, so d cannot enter the results whatever its other keys. Equal keys
+// and documents without exactly one value take the full path.
+func (hc *TopNCollector) belowNumFloor(ctx *search.Context, d *search.DocumentMatch) (bool, error) {
+	if !hc.numFloorSet {
+		return false, nil
+	}
+	v, ok, err := d.DocNumber(ctx, hc.neededFields, hc.numField)
+	if err != nil || !ok {
+		return false, err
+	}
+	if hc.numDesc {
+		return v < hc.numFloor, nil
+	}
+	return v > hc.numFloor, nil
 }
 
 // outsideResults reports whether d sorts at or after the lowest hit already

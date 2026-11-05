@@ -69,7 +69,19 @@ type GeoPointValuesSource interface {
 	GeoPoints(match *DocumentMatch) []*geo.Point
 }
 
+// NumericFieldSource is a sort source whose value, for a document with
+// exactly one int64 doc value in NumericField, is that value prefix-coded
+// at shift 0. Collectors use it to reject hits by their typed value.
+type NumericFieldSource interface {
+	NumericField() string
+}
+
 type FieldSource string
+
+// NumericField implements NumericFieldSource.
+func (f FieldSource) NumericField() string {
+	return string(f)
+}
 
 func Field(field string) FieldSource {
 	return FieldSource(field)

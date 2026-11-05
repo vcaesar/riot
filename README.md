@@ -377,31 +377,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 ### Riot vs Bleve and Bluge (the engine it forked)
 
-All three engines run the same workload: 100,000 synthetic documents (`body` text with positions, stored; numeric `id`; `category` keyword). Bleve v2.6.1 (scorch, BM25) and Bluge v0.2.2 run against current riot (Go 1.27.3) in its default stream indexing mode, one process at a time on one core (`GOMAXPROCS=1`), median of 5 rotated rounds (Apple M1, load average 3.1 to 5.4). In every run all three returned the same match counts and match sets as a per-document oracle.
+All three engines run the same workload: 100,000 synthetic documents (`body` text with positions, stored; numeric `id`; `category` keyword). Bleve v2.6.2 (scorch, BM25) and Bluge v0.2.2 run against current riot (Go 1.27.3) in its default stream indexing mode, one process at a time on one core (`GOMAXPROCS=1`), median of 5 rotated rounds (Apple M1, load average 3.1 to 5.4). In every run all three returned the same match counts and match sets as a per-document oracle. The riot column was re-measured on 2026-11-05 with the same harness (load 2.5 to 2.7); the other engines' figures are from the earlier run.
 
-| Workload                                  | Bleve v2.6.1 | Bluge v0.2.2 | Riot      | Riot vs Bleve | Riot vs Bluge |
+| Workload                                  | Bleve v2.6.2 | Bluge v0.2.2 | Riot      | Riot vs Bleve | Riot vs Bluge |
 | ----------------------------------------- | ------------ | ------------ | --------- | ------------- | ------------- |
-| Initial indexing, 100,000 docs            | 6,546 ms     | 5,029 ms     | 516 ms    | 12.7× faster  | 9.8× faster   |
-| 1-doc commit + visible reader             | 0.151 ms     | 0.313 ms     | 0.199 ms§ | 1.3× slower   | 1.6× faster   |
+| Initial indexing, 100,000 docs            | 6,546 ms     | 5,029 ms     | 500 ms    | 13.1× faster  | 10.1× faster  |
+| 1-doc commit + visible reader             | 0.151 ms     | 0.313 ms     | 0.151 ms§ | ≈             | 2.1× faster   |
 | Index size on disk                        | 76.71 MB     | 61.06 MB     | 8.22 MB   | 9.3× smaller  | 7.4× smaller  |
 | Peak memory (RSS)                         | 1,931 MiB    | 1,974 MiB    | 144 MiB   | 13.4× less    | 13.7× less    |
-| Total CPU, whole run                      | 17.84 s      | 19.50 s      | 1.08 s    | 16.5× less    | 18.1× less    |
-| Rare term                                 | 11.90 µs     | 16.98 µs     | 2.21 µs   | 5.4× faster   | 7.7× faster   |
-| Common term, top 10 + count               | 5,848 µs     | 10,861 µs    | 7.30 µs†  | 801× faster   | 1,488× faster |
-| Boolean AND                               | 1,788 µs     | 1,990 µs     | 25.38 µs† | 70× faster    | 78× faster    |
-| Boolean OR                                | 27.18 µs     | 43.61 µs     | 6.91 µs   | 3.9× faster   | 6.3× faster   |
-| Phrase                                    | 60,645 µs    | 61,758 µs    | 2,262 µs  | 27× faster    | 27× faster    |
-| Prefix `term12*` (constant score in riot) | 3,133 µs     | 3,597 µs     | 50.18 µs  | 62× faster    | 72× faster    |
-| Fuzzy `serch`, distance 1                 | 6,798 µs     | 12,035 µs    | 29.98 µs† | 227× faster   | 401× faster   |
-| Typed numeric range                       | 166.2 µs     | 164.6 µs     | 10.56 µs  | 16× faster    | 16× faster    |
-| Keyword / facet term                      | 385.1 µs     | 645.7 µs     | 2.98 µs   | 129× faster   | 217× faster   |
-| Numeric stats‡                            | 45,375 µs    | 105,356 µs   | 433.6 µs  | 105× faster   | 243× faster   |
+| Total CPU, whole run                      | 17.84 s      | 19.50 s      | 1.05 s    | 17.0× less    | 18.6× less    |
+| Rare term                                 | 11.90 µs     | 16.98 µs     | 2.25 µs   | 5.3× faster   | 7.5× faster   |
+| Common term, top 10 + count               | 5,848 µs     | 10,861 µs    | 7.17 µs†  | 816× faster   | 1,516× faster |
+| Boolean AND                               | 1,788 µs     | 1,990 µs     | 27.83 µs† | 64× faster    | 71× faster    |
+| Boolean OR                                | 27.18 µs     | 43.61 µs     | 4.75 µs   | 5.7× faster   | 9.2× faster   |
+| Phrase                                    | 60,645 µs    | 61,758 µs    | 2,175 µs  | 28× faster    | 28× faster    |
+| Prefix `term12*` (constant score in riot) | 3,133 µs     | 3,597 µs     | 45.38 µs  | 69× faster    | 79× faster    |
+| Fuzzy `serch`, distance 1                 | 6,798 µs     | 12,035 µs    | 26.17 µs† | 260× faster   | 460× faster   |
+| Typed numeric range                       | 166.2 µs     | 164.6 µs     | 8.79 µs   | 19× faster    | 19× faster    |
+| Keyword / facet term                      | 385.1 µs     | 645.7 µs     | 2.75 µs   | 140× faster   | 235× faster   |
+| Numeric stats‡                            | 45,375 µs    | 105,356 µs   | 433.2 µs  | 105× faster   | 243× faster   |
 
 - Peak memory and CPU cover the whole benchmark process (10K and 100K builds plus every query loop), taken from `wait4` rusage. Index size comes from a separate on-disk build (median of 3).
 
 Scores differ from Bluge's because riot fixed Bluge's BM25 idf to Lucene's `log(1 + (N − n + 0.5)/(n + 0.5))`. Bluge has no vector search; Bleve's needs the `vectors` build tag and FAISS through cgo. These are single-machine numbers on synthetic data, not a formal benchmark.
 
-Riot (Go) is already on par with Tantivy: it is faster on 7 of 10 query workloads in the same run. An even faster Zig version of riot is also in development. It is still beta and not published yet. In the same benchmark run it was about 2–5× faster than riot (Go) on most queries and 2.9× faster at indexing, and it was at least 1.5× faster than Tantivy on every query workload (2–8× on most).
+Riot (Go) is already on par with Tantivy: it is faster on 7 of 10 query workloads in the same run. An even faster Zig version of riot is also in development. It is still beta and not published yet. In the same benchmark run it was about 2–5× faster than riot (Go) on most queries and 2.8× faster at indexing, and it was at least 1.5× faster than Tantivy on every query workload (2–8× on most).
 
 ## License
 

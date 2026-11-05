@@ -384,6 +384,13 @@ type Context struct {
 	// segment by segment, so this skips a map lookup per document
 	lastDVR DocumentValueReadable
 	lastDV  segment.DocumentValueReader
+	// scratch of DocNumber
+	numField    string
+	numVal      int64
+	numN        int
+	numTerm     bool
+	numVisitor  segment.NumericValueVisitor
+	termVisitor segment.DocumentValueVisitor
 	// Ctx is the caller's cancellation context; collectors set it from Collect.
 	Ctx context.Context
 	// SkipBlocks lets a ScoreSkipper pass over postings blocks whose score
@@ -418,6 +425,45 @@ func (sc *Context) DocValueReaderForReader(r DocumentValueReadable, fields []str
 	}
 	sc.lastDVR, sc.lastDV = r, dvReader
 	return dvReader, nil
+}
+
+func (sc *Context) visitNumber(field string, value int64) {
+	if field == sc.numField {
+		sc.numVal = value
+		sc.numN++
+	}
+}
+
+// visitTerm notes a term of numField, such as a virtual field's, which
+// would make the sort key differ from the column value.
+func (sc *Context) visitTerm(field string, _ []byte) {
+	if field == sc.numField {
+		sc.numTerm = true
+	}
+}
+
+// DocNumber reads the int64 doc value of field for dm without loading its
+// document values; fields are the fields the context's readers were
+// opened with. ok is false unless field is a numeric column holding
+// exactly one value and no terms for dm.
+func (dm *DocumentMatch) DocNumber(ctx *Context, fields []string, field string) (value int64, ok bool, err error) {
+	dvReader, err := ctx.DocValueReaderForReader(dm.reader, fields)
+	if err != nil {
+		return 0, false, err
+	}
+	nr, isNum := dvReader.(segment.NumericDocumentValueReader)
+	if !isNum {
+		return 0, false, nil
+	}
+	if ctx.numVisitor == nil {
+		ctx.numVisitor = ctx.visitNumber
+		ctx.termVisitor = ctx.visitTerm
+	}
+	ctx.numField, ctx.numN, ctx.numTerm = field, 0, false
+	if verr := nr.VisitDocumentNumbers(dm.Number, ctx.termVisitor, ctx.numVisitor); verr != nil {
+		return 0, false, verr
+	}
+	return ctx.numVal, ctx.numN == 1 && !ctx.numTerm, nil
 }
 
 func (sc *Context) Size() int {
