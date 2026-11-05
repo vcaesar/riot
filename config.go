@@ -95,6 +95,16 @@ func (config Config) WithVectorStorage(storage VectorStorage) Config {
 	return config
 }
 
+// WithVectorIndex declares an approximate search on field, so a Writer
+// builds its HNSW graphs in the background at index time instead of on the
+// first SearchVectorsANN or KNNQuery.SetANN. Searches use these graphs only
+// with the same metric, M, EfConstruction and Quantization. Builds of large
+// segments use all CPUs; OpenReader ignores the declaration.
+func (config Config) WithVectorIndex(field string, metric Metric, params ANNParams) Config {
+	config.indexConfig = config.indexConfig.WithVectorIndex(field, metric, params)
+	return config
+}
+
 // IndexMode selects how Writer.Batch builds segments.
 type IndexMode = index.Mode
 

@@ -267,6 +267,31 @@ func (d *FileSystemDirectory) Sync() error {
 	return d.syncDir()
 }
 
+// linkFrom hard links the item of src into d instead of copying it, false
+// when it cannot (another file system, the item is gone or still being
+// written). Only immutable items may be linked: the copy shares its data
+// with the original.
+func (d *FileSystemDirectory) linkFrom(src *FileSystemDirectory, kind string, id uint64) bool {
+	name := d.fileName(kind, id)
+	from, to := filepath.Join(src.path, name), filepath.Join(d.path, name)
+	// Persist holds an exclusive lock while it writes the item
+	f, err := src.openShared(from, os.O_RDONLY, 0)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	if os.Link(from, to) == nil {
+		return true
+	}
+	// linked by an earlier backup: a copy would truncate the original
+	fromInfo, err := os.Stat(from)
+	if err != nil {
+		return false
+	}
+	toInfo, err := os.Stat(to)
+	return err == nil && os.SameFile(fromInfo, toInfo)
+}
+
 func (d *FileSystemDirectory) fileName(kind string, id uint64) string {
 	return fmt.Sprintf("%012x", id) + kind
 }

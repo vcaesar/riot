@@ -16,11 +16,16 @@
 package index
 
 import (
+	"fmt"
 	"math"
+	"slices"
 
 	segment "github.com/vcaesar/bluge_segment_api"
 
 	iceV1 "github.com/vcaesar/ice"
+	"github.com/vcaesar/ice/vec"
+
+	"github.com/vcaesar/riot/hnsw"
 	"github.com/vcaesar/riot/index/mergeplan"
 )
 
@@ -51,6 +56,11 @@ type Config struct {
 	// VectorStorage selects where persisted HNSW graphs keep their vectors;
 	// the zero value is VectorStorageDisk.
 	VectorStorage VectorStorage
+
+	// VectorIndexes declares the approximate searches to prepare: a Writer
+	// builds their HNSW graphs in the background as segments are introduced,
+	// persisted and merged, rather than on the first search.
+	VectorIndexes []VectorIndex
 
 	// Inclusive segment time bounds; zero leaves that bound unrestricted.
 	// Unknown timestamps are retained. Only read-only OpenReader accepts a range.
@@ -170,6 +180,42 @@ const (
 // WithVectorStorage selects where persisted HNSW graphs keep their vectors.
 func (config Config) WithVectorStorage(storage VectorStorage) Config {
 	config.VectorStorage = storage
+	return config
+}
+
+// VectorIndex declares an approximate search on Field. A search uses the
+// prebuilt graph only with the same Metric, M, EfConstruction and
+// Quantization; EfSearch and ConcurrentAccept do not matter.
+type VectorIndex struct {
+	Field  string
+	Metric vec.Metric
+	Params hnsw.Params
+}
+
+func (v VectorIndex) validate() error {
+	if v.Field == "" {
+		return fmt.Errorf("vector index field must be non-empty")
+	}
+	switch v.Metric {
+	case vec.Cosine, vec.DotProduct, vec.L2:
+	default:
+		return fmt.Errorf("vector index %q: unsupported metric %q", v.Field, v.Metric)
+	}
+	if err := v.Params.Validate(); err != nil {
+		return fmt.Errorf("vector index %q: %w", v.Field, err)
+	}
+	return nil
+}
+
+func (v VectorIndex) key() graphKey {
+	return newGraphKey(v.Field, v.Metric, v.Params.WithDefaults())
+}
+
+// WithVectorIndex declares an approximate search whose graphs a Writer
+// builds at index time; see VectorIndex.
+func (config Config) WithVectorIndex(field string, metric vec.Metric, params hnsw.Params) Config {
+	config.VectorIndexes = append(slices.Clip(config.VectorIndexes),
+		VectorIndex{Field: field, Metric: metric, Params: params})
 	return config
 }
 

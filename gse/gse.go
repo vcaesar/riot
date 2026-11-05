@@ -45,7 +45,8 @@ type Option struct {
 	// Dicts selects the dictionaries: "zh", "zh_s", "zh_t", "ja"/"jp" or
 	// comma separated dictionary file paths. Prefix with "embed, " to use the
 	// dictionaries compiled into gse instead of reading files from the gse
-	// module directory. Empty loads the embedded "zh" dictionary.
+	// module directory, e.g. "embed, ja, zh". Empty loads the embedded "zh"
+	// dictionary.
 	Dicts string
 	// Stop selects the stop word dictionary: "zh", "embed, zh" or file paths.
 	// Empty loads none. Stop words are dropped from the token stream.
@@ -67,7 +68,16 @@ func NewSegmenter(opt Option) (*gogse.Segmenter, error) {
 	case dicts == "":
 		err = seg.LoadDictEmbed("zh")
 	case strings.HasPrefix(dicts, embedPrefix):
-		err = seg.LoadDictEmbed(strings.Replace(strings.TrimPrefix(dicts, embedPrefix), "jp", "ja", 1))
+		// gse reads only the first name of a list and parses the rest as
+		// dictionary text, so load each embedded dictionary on its own.
+		for name := range strings.SplitSeq(strings.TrimPrefix(dicts, embedPrefix), ",") {
+			if name = strings.TrimSpace(name); name == "jp" {
+				name = "ja"
+			}
+			if err = seg.LoadDictEmbed(name); err != nil {
+				break
+			}
+		}
 	default:
 		err = seg.LoadDict(dicts)
 	}

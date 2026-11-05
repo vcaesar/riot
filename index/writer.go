@@ -58,7 +58,7 @@ type Writer struct {
 	// closeCh, so close can wait for graphPersists.
 	graphPersistMu sync.Mutex
 	graphPersists  sync.WaitGroup
-	// graphKeys holds the keys searched approximately, built in the
+	// graphKeys holds the keys declared or searched approximately, built in the
 	// background for new segments; graphWarmMu runs one warm-up at a time.
 	graphKeysMu sync.Mutex
 	graphKeys   map[graphKey]struct{}
@@ -73,6 +73,11 @@ type Writer struct {
 func OpenWriter(config Config) (*Writer, error) {
 	if config.hasTimeRange() {
 		return nil, fmt.Errorf("time ranges are only supported by read-only readers")
+	}
+	for _, v := range config.VectorIndexes {
+		if err := v.validate(); err != nil {
+			return nil, err
+		}
 	}
 	rv := &Writer{
 		config:         config,
@@ -142,6 +147,9 @@ func OpenWriter(config Config) (*Writer, error) {
 	}
 	if err = rv.removeOrphanGraphs(); err != nil {
 		log.Printf("error removing orphan vector graphs: %v", err)
+	}
+	for _, v := range config.VectorIndexes {
+		rv.noteGraphKey(v.key())
 	}
 	rv.warmPersistedGraphs()
 
