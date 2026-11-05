@@ -111,6 +111,63 @@ func TestTermPrefixSearcherRangeNeedsThreeTerms(t *testing.T) {
 	}
 }
 
+// rangeAcceptingReader answers DocsMatchingRange with the postings of all,
+// counting how many terms are listed from the dictionary.
+type rangeAcceptingReader struct {
+	search.Reader
+	all    string
+	listed int
+}
+
+type countingDictItr struct {
+	segment.DictionaryIterator
+	n *int
+}
+
+func (i *countingDictItr) Next() (segment.DictionaryEntry, error) {
+	*i.n++
+	return i.DictionaryIterator.Next()
+}
+
+func (r *rangeAcceptingReader) DictionaryIterator(field string, a segment.Automaton, start, end []byte) (
+	segment.DictionaryIterator, error) {
+	itr, err := r.Reader.DictionaryIterator(field, a, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return &countingDictItr{DictionaryIterator: itr, n: &r.listed}, nil
+}
+
+func (r *rangeAcceptingReader) DocsMatchingRange(field string, _ segment.Automaton, _, _ []byte) (
+	segment.PostingsIterator, error) {
+	return r.PostingsIterator([]byte(r.all), field, false, false, false)
+}
+
+// TestTermPrefixSearcherRangeListsFewTerms checks the range pass stops
+// listing terms once it knows there are enough for it.
+func TestTermPrefixSearcherRangeListsFewTerms(t *testing.T) {
+	stub := newStubIndexReader()
+	for i, body := range []string{"pa all", "pb all", "pc all", "pd all", "pe all"} {
+		stub.add(&FakeDocument{
+			NewFakeField("_id", strconv.Itoa(i), true, false, false, nil),
+			NewFakeField("desc", body, false, false, false, nil),
+		})
+	}
+	reader := &rangeAcceptingReader{Reader: stub, all: "all"}
+	rv, err := NewTermPrefixSearcher(reader, "p", "desc", 1.0, nil,
+		similarity.NewCompositeSumScorer(), testSearchOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rv.Close()
+	if reader.listed != minRangeTerms {
+		t.Errorf("listed %d terms, want %d", reader.listed, minRangeTerms)
+	}
+	if got := rv.Count(); got != 5 {
+		t.Errorf("count = %d, want 5", got)
+	}
+}
+
 func TestTermPrefixSearcherHappyPath(t *testing.T) {
 	rv, err := NewTermPrefixSearcher(baseTestIndexReader, "be", "desc", 1.0, nil, similarity.NewCompositeSumScorer(), testSearchOptions)
 	if err != nil {

@@ -660,7 +660,11 @@ func readVarLenString(r *bufio.Reader) (n int, str string, err error) {
 
 func (i *Snapshot) DocumentValueReader(fields []string) (
 	segment.DocumentValueReader, error) {
-	return &documentValueReader{i: i, fields: fields, currSegmentIndex: -1}, nil
+	rv := &documentValueReader{i: i, fields: fields, currSegmentIndex: -1}
+	for _, field := range fields {
+		rv.vFields = append(rv.vFields, i.parent.config.virtualFields[field]...)
+	}
+	return rv, nil
 }
 
 func (i *Snapshot) Backup(remote Directory, cancel chan struct{}) error {
@@ -684,6 +688,9 @@ type documentValueReader struct {
 	i      *Snapshot
 	fields []string
 	sdvr   segment.DocumentValueReader
+	// vFields are the virtual fields of fields, looked up once instead of
+	// per document
+	vFields []segment.Field
 
 	currSegmentIndex int
 }
@@ -715,15 +722,10 @@ func (dvr *documentValueReader) VisitDocumentNumbers(number uint64,
 	}
 
 	// handle virtual fields first
-	for _, field := range dvr.fields {
-		if vFields, ok := dvr.i.parent.config.virtualFields[field]; ok {
-			for _, vField := range vFields {
-				vField := vField
-				vField.EachTerm(func(term segment.FieldTerm) {
-					visitor(vField.Name(), term.Term())
-				})
-			}
-		}
+	for _, vField := range dvr.vFields {
+		vField.EachTerm(func(term segment.FieldTerm) {
+			visitor(vField.Name(), term.Term())
+		})
 	}
 
 	if numVisitor != nil {

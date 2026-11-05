@@ -377,31 +377,31 @@ config := riot.DefaultConfig("./riot_vectors").WithVectorStorage(riot.VectorStor
 
 ### Riot vs. Bleve und Bluge (die Engine, von der es geforkt wurde)
 
-Alle drei Engines laufen mit derselben Last: 100.000 synthetische Dokumente (`body`-Text mit Positionen, gespeichert; numerisches `id`; Keyword `category`). Bleve v2.6.1 (scorch, BM25) und Bluge v0.2.2 treten gegen das aktuelle riot (Go 1.27.3) in seinem Standard-Stream-Indizierungsmodus an, jeweils ein Prozess auf einem Kern (`GOMAXPROCS=1`), Median aus 5 rotierenden Runden (Apple M1, Load Average 3,1 bis 5,4). In jedem Lauf lieferten alle drei dieselben Trefferzahlen und Treffermengen wie ein dokumentweises Orakel.
+Alle drei Engines laufen mit derselben Last: 100.000 synthetische Dokumente (`body`-Text mit Positionen, gespeichert; numerisches `id`; Keyword `category`). Bleve v2.6.2 (scorch, BM25) und Bluge v0.2.2 treten gegen das aktuelle riot (Go 1.27.3) in seinem Standard-Stream-Indizierungsmodus an, jeweils ein Prozess auf einem Kern (`GOMAXPROCS=1`), Median aus 5 rotierenden Runden (Apple M1, Load Average 3,1 bis 5,4). In jedem Lauf lieferten alle drei dieselben Trefferzahlen und Treffermengen wie ein dokumentweises Orakel. Die riot-Spalte wurde am 2026-11-05 mit demselben Harness neu gemessen (Load Average 2,5 bis 2,7); die Werte der anderen Engines stammen aus dem früheren Lauf.
 
-| Workload | Bleve v2.6.1 | Bluge v0.2.2 | Riot | Riot vs. Bleve | Riot vs. Bluge |
+| Workload | Bleve v2.6.2 | Bluge v0.2.2 | Riot | Riot vs. Bleve | Riot vs. Bluge |
 | --- | --- | --- | --- | --- | --- |
-| Erstindizierung, 100.000 Dokumente | 6,546 ms | 5,029 ms | 516 ms | 12.7× schneller | 9.8× schneller |
-| Commit eines Dokuments + sichtbarer Reader | 0.151 ms | 0.313 ms | 0.199 ms§ | 1.3× langsamer | 1.6× schneller |
+| Erstindizierung, 100.000 Dokumente | 6,546 ms | 5,029 ms | 500 ms | 13.1× schneller | 10.1× schneller |
+| Commit eines Dokuments + sichtbarer Reader | 0.151 ms | 0.313 ms | 0.151 ms§ | ≈ | 2.1× schneller |
 | Indexgröße auf der Festplatte | 76.71 MB | 61.06 MB | 8.22 MB | 9.3× kleiner | 7.4× kleiner |
 | Spitzenspeicher (RSS) | 1,931 MiB | 1,974 MiB | 144 MiB | 13.4× weniger | 13.7× weniger |
-| CPU gesamt, ganzer Lauf | 17.84 s | 19.50 s | 1.08 s | 16.5× weniger | 18.1× weniger |
-| Seltener Term | 11.90 µs | 16.98 µs | 2.21 µs | 5.4× schneller | 7.7× schneller |
-| Häufiger Term, Top 10 + Anzahl | 5,848 µs | 10,861 µs | 7.30 µs† | 801× schneller | 1,488× schneller |
-| Boolean AND | 1,788 µs | 1,990 µs | 25.38 µs† | 70× schneller | 78× schneller |
-| Boolean OR | 27.18 µs | 43.61 µs | 6.91 µs | 3.9× schneller | 6.3× schneller |
-| Phrase | 60,645 µs | 61,758 µs | 2,262 µs | 27× schneller | 27× schneller |
-| Präfix `term12*` (konstanter Score in riot) | 3,133 µs | 3,597 µs | 50.18 µs | 62× schneller | 72× schneller |
-| Fuzzy `serch`, Distanz 1 | 6,798 µs | 12,035 µs | 29.98 µs† | 227× schneller | 401× schneller |
-| Typisierter numerischer Bereich | 166.2 µs | 164.6 µs | 10.56 µs | 16× schneller | 16× schneller |
-| Keyword- / Facetten-Term | 385.1 µs | 645.7 µs | 2.98 µs | 129× schneller | 217× schneller |
-| Numerische Statistik‡ | 45,375 µs | 105,356 µs | 433.6 µs | 105× schneller | 243× schneller |
+| CPU gesamt, ganzer Lauf | 17.84 s | 19.50 s | 1.05 s | 17.0× weniger | 18.6× weniger |
+| Seltener Term | 11.90 µs | 16.98 µs | 2.25 µs | 5.3× schneller | 7.5× schneller |
+| Häufiger Term, Top 10 + Anzahl | 5,848 µs | 10,861 µs | 7.17 µs† | 816× schneller | 1,516× schneller |
+| Boolean AND | 1,788 µs | 1,990 µs | 27.83 µs† | 64× schneller | 71× schneller |
+| Boolean OR | 27.18 µs | 43.61 µs | 4.75 µs | 5.7× schneller | 9.2× schneller |
+| Phrase | 60,645 µs | 61,758 µs | 2,175 µs | 28× schneller | 28× schneller |
+| Präfix `term12*` (konstanter Score in riot) | 3,133 µs | 3,597 µs | 45.38 µs | 69× schneller | 79× schneller |
+| Fuzzy `serch`, Distanz 1 | 6,798 µs | 12,035 µs | 26.17 µs† | 260× schneller | 460× schneller |
+| Typisierter numerischer Bereich | 166.2 µs | 164.6 µs | 8.79 µs | 19× schneller | 19× schneller |
+| Keyword- / Facetten-Term | 385.1 µs | 645.7 µs | 2.75 µs | 140× schneller | 235× schneller |
+| Numerische Statistik‡ | 45,375 µs | 105,356 µs | 433.2 µs | 105× schneller | 243× schneller |
 
 - Spitzenspeicher und CPU umfassen den gesamten Benchmark-Prozess (10K- und 100K-Aufbau plus alle Abfrageschleifen), ermittelt aus `wait4`-rusage. Die Indexgröße stammt aus einem separaten Aufbau auf der Festplatte (Median aus 3).
 
 Die Scores unterscheiden sich von Bluge, weil riot Bluges BM25-idf auf Lucenes `log(1 + (N − n + 0.5)/(n + 0.5))` korrigiert hat. Bluge hat keine Vektorsuche; die von Bleve benötigt das Build-Tag `vectors` und FAISS über cgo. Dies sind Zahlen von einer einzelnen Maschine mit synthetischen Daten, kein formaler Benchmark.
 
-Riot (Go) ist bereits gleichauf mit Tantivy: Im selben Lauf ist es bei 7 von 10 Abfrage-Workloads schneller. Eine noch schnellere Zig-Version von riot ist ebenfalls in Entwicklung. Sie ist noch Beta und noch nicht veröffentlicht. Im selben Benchmark-Lauf war sie bei den meisten Abfragen etwa 2–5× schneller als riot (Go), bei der Indizierung 2.9× schneller und bei allen Abfrage-Workloads mindestens 1.5× schneller als Tantivy (bei den meisten 2–8×).
+Riot (Go) ist bereits gleichauf mit Tantivy: Im selben Lauf ist es bei 7 von 10 Abfrage-Workloads schneller. Eine noch schnellere Zig-Version von riot ist ebenfalls in Entwicklung. Sie ist noch Beta und noch nicht veröffentlicht. Im selben Benchmark-Lauf war sie bei den meisten Abfragen etwa 2–5× schneller als riot (Go), bei der Indizierung 2.8× schneller und bei allen Abfrage-Workloads mindestens 1.5× schneller als Tantivy (bei den meisten 2–8×).
 
 ## Lizenz
 
