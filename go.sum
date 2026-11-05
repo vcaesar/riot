@@ -41,8 +41,8 @@ github.com/vcaesar/bluge_segment_api v1.2.2 h1:8nCzQvlyUQLqerP6zRiB4YUc2NYrdRX+9
 github.com/vcaesar/bluge_segment_api v1.2.2/go.mod h1:KO7cpxXvohHHktHmWOaJcsYwt/I9a8fuhTUrVGUPPYk=
 github.com/vcaesar/cedar v0.50.1 h1:JhchIiYZyvjT7EhjMR3oN7JH7QNgeqLrw/zaPBrTWRQ=
 github.com/vcaesar/cedar v0.50.1/go.mod h1:eHvpmJXJmOowP8mW/Xqjra+HmKovJNcRxRPtezHjh7I=
-github.com/vcaesar/ice v1.5.3 h1:Aofvz/xRixGevuxTEtLLKbBa0PMBm52KQTbkKECSEZc=
-github.com/vcaesar/ice v1.5.3/go.mod h1:EVJP3pcOV6+wKwtu4d69Jw2lTquXui9yBba8Bi4klKw=
+github.com/vcaesar/ice v1.5.4 h1:16mijW9OBuXIQgqEhIu9dWIlFK1EYTG0eDjibf2917M=
+github.com/vcaesar/ice v1.5.4/go.mod h1:EVJP3pcOV6+wKwtu4d69Jw2lTquXui9yBba8Bi4klKw=
 github.com/vcaesar/tt v0.40.0 h1:vWUNRJn13ozP3xXlAXV5q9WivaDSHRS2jQ2J2ayCvQs=
 github.com/vcaesar/tt v0.40.0/go.mod h1:cH2+AwGAJm19Wa6xvEa+0r+sXDJBT0QgNQey6mwqLeU=
 github.com/zedsearch/go-porterstemmer v1.0.4 h1:31kpH/obTTGM9K+ek5HDsvS77h7dMVGWry+rY86XYIA=
