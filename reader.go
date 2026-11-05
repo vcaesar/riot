@@ -102,6 +102,13 @@ func (r *Reader) Backup(path string, cancel chan struct{}) error {
 	return r.reader.Backup(dir, cancel)
 }
 
+// BackupTo writes the reader's snapshot to dir, which must be set up.
+// Backing up into the same dir again sends only the segments and vector
+// graphs dir does not hold yet; see index.Snapshot.Backup.
+func (r *Reader) BackupTo(dir index.Directory, cancel chan struct{}) error {
+	return r.reader.Backup(dir, cancel)
+}
+
 func (r *Reader) Close() error {
 	return r.reader.Close()
 }

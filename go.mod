@@ -11,7 +11,7 @@ require (
 	github.com/go-ego/gse v1.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/vcaesar/bluge_segment_api v1.2.2
-	github.com/vcaesar/ice v1.5.2
+	github.com/vcaesar/ice v1.5.3
 	github.com/zedsearch/go-porterstemmer v1.0.4
 	github.com/zedsearch/mmap-go v1.3.0
 	github.com/zedsearch/segment v0.9.2
@@ -25,7 +25,9 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kamstrup/intmap v0.5.2 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
+	github.com/minio/minlz v1.2.3 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.33 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/vcaesar/cedar v0.50.1 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect

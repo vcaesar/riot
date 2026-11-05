@@ -667,16 +667,31 @@ func (i *Snapshot) DocumentValueReader(fields []string) (
 	return rv, nil
 }
 
+// Backup writes the snapshot, its segments and their persisted HNSW graphs
+// to remote. It is incremental: an item remote already holds with the same
+// length and trailing checksum is skipped, so backing up into the same
+// remote again sends only new segments and graphs, then the snapshot, which
+// is written last. Persisted items are hard linked into a file system remote
+// when possible, the rest is copied. Old items in remote are not removed.
 func (i *Snapshot) Backup(remote Directory, cancel chan struct{}) error {
-	// first copy all the segments
-	for j := range i.segment {
-		err := remote.Persist(ItemKindSegment, i.segment[j].id, i.segment[j].segment, cancel)
-		if err != nil {
-			return fmt.Errorf("error backing up segment %d: %w", i.segment[j].id, err)
+	have, err := listItems(remote, ItemKindSegment)
+	if err != nil {
+		return fmt.Errorf("error listing backup segments: %w", err)
+	}
+	for _, s := range i.segment {
+		var src Directory
+		if s.segment.persisted && s.segment.writer != nil {
+			src = s.segment.writer.directory
+		}
+		if err = backupItem(remote, have, src, ItemKindSegment, s.id, s.segment, cancel); err != nil {
+			return fmt.Errorf("error backing up segment %d: %w", s.id, err)
 		}
 	}
+	if err := i.backupGraphs(remote, cancel); err != nil {
+		return err
+	}
 	// now persist ourself (snapshot)
-	err := remote.Persist(ItemKindSnapshot, i.epoch, i, cancel)
+	err = remote.Persist(ItemKindSnapshot, i.epoch, i, cancel)
 	if err != nil {
 		return fmt.Errorf("error backing up snapshot %d: %w", i.epoch, err)
 	}

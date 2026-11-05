@@ -21,8 +21,12 @@ github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTf
 github.com/klauspost/compress v1.20.3/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
 github.com/leesper/go_rng v0.0.0-20190531154944-a612b043e353 h1:X/79QL0b4YJVO5+OsPH9rF2u428CIrGL/jLmPsoOQQ4=
 github.com/leesper/go_rng v0.0.0-20190531154944-a612b043e353/go.mod h1:N0SVk0uhy+E1PZ3C9ctsPRlvOPAFPkCNlcPBDkt0N3U=
+github.com/minio/minlz v1.2.3 h1:xUNhxBd8AlRJbJIsFkVmrN96gk9as9PjheVh3f9x90s=
+github.com/minio/minlz v1.2.3/go.mod h1:xHhZ+MJmC2U4ssK/rSENsoyCfv0VFQo1mT6AdCA2RJ8=
 github.com/mschoch/smat v0.2.0 h1:8imxQsjDm8yFEAVBe7azKmKSgzSkZXDuKkSq9374khM=
 github.com/mschoch/smat v0.2.0/go.mod h1:kc9mz7DoBKqDyiRL7VZN8KvXQMWeTaVnttLRXOlotKw=
+github.com/pierrec/lz4/v4 v4.1.33 h1:GjG1TJ1V4IzKP8L96muuuDNpTwd7D+l2ccXrjAbe014=
+github.com/pierrec/lz4/v4 v4.1.33/go.mod h1:7SE9MC2STkNtL4PIwGhjmyVwvILaGI9/COYQNBhKM/c=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
@@ -37,8 +41,8 @@ github.com/vcaesar/bluge_segment_api v1.2.2 h1:8nCzQvlyUQLqerP6zRiB4YUc2NYrdRX+9
 github.com/vcaesar/bluge_segment_api v1.2.2/go.mod h1:KO7cpxXvohHHktHmWOaJcsYwt/I9a8fuhTUrVGUPPYk=
 github.com/vcaesar/cedar v0.50.1 h1:JhchIiYZyvjT7EhjMR3oN7JH7QNgeqLrw/zaPBrTWRQ=
 github.com/vcaesar/cedar v0.50.1/go.mod h1:eHvpmJXJmOowP8mW/Xqjra+HmKovJNcRxRPtezHjh7I=
-github.com/vcaesar/ice v1.5.2 h1:wlrybsdlTod2j0wLnR7/UWDke7wNwEZfRBLI21dnxfg=
-github.com/vcaesar/ice v1.5.2/go.mod h1:q5ORtthuIg4HN4UxqyzkzXALXm6uzXP+VmzeA4bpNmg=
+github.com/vcaesar/ice v1.5.3 h1:Aofvz/xRixGevuxTEtLLKbBa0PMBm52KQTbkKECSEZc=
+github.com/vcaesar/ice v1.5.3/go.mod h1:EVJP3pcOV6+wKwtu4d69Jw2lTquXui9yBba8Bi4klKw=
 github.com/vcaesar/tt v0.40.0 h1:vWUNRJn13ozP3xXlAXV5q9WivaDSHRS2jQ2J2ayCvQs=
 github.com/vcaesar/tt v0.40.0/go.mod h1:cH2+AwGAJm19Wa6xvEa+0r+sXDJBT0QgNQey6mwqLeU=
 github.com/zedsearch/go-porterstemmer v1.0.4 h1:31kpH/obTTGM9K+ek5HDsvS77h7dMVGWry+rY86XYIA=

@@ -68,6 +68,18 @@ func TestNewAnalyzerDicts(t *testing.T) {
 			want:  []string{"運命", "の", "犠牲", "者"},
 		},
 		{
+			name:  "embedded ja and zh list",
+			opt:   Option{Dicts: "embed, ja, zh", Opt: "hmm"},
+			input: "運命の犠牲者，全文搜索引擎",
+			want:  []string{"運命", "の", "犠牲", "者", "全文", "搜索引擎"},
+		},
+		{
+			name:  "embedded zh and jp list",
+			opt:   Option{Dicts: "embed, zh, jp", Opt: "hmm"},
+			input: "運命の犠牲者，全文搜索引擎",
+			want:  []string{"運命", "の", "犠牲", "者", "全文", "搜索引擎"},
+		},
+		{
 			name:  "file zh",
 			opt:   Option{Dicts: "zh"},
 			input: "搜索引擎",
