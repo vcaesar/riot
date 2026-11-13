@@ -112,7 +112,9 @@ type DocumentMatch struct {
 // matchValues is a DocumentMatch's loaded document values; it survives
 // Reset, so a pooled match reuses its buffers.
 type matchValues struct {
-	docValues map[string][][]byte
+	// docValues holds the values of each loaded field; a hit loads a few
+	// fields, so a scan beats hashing, and entries are kept across Reset
+	docValues []fieldValues
 	// docNumbers holds typed values of numeric column fields; docValues
 	// has no entry for those fields
 	docNumbers []docNumber
@@ -124,6 +126,21 @@ type matchValues struct {
 	// visitors bound once so LoadDocumentValues does not allocate
 	termVisitor segment.DocumentValueVisitor
 	numVisitor  segment.NumericValueVisitor
+}
+
+type fieldValues struct {
+	field  string
+	values [][]byte
+}
+
+// fieldDocValues returns the values loaded for field, nil when none.
+func (v *matchValues) fieldDocValues(field string) [][]byte {
+	for i := range v.docValues {
+		if v.docValues[i].field == field {
+			return v.docValues[i].values
+		}
+	}
+	return nil
 }
 
 type docNumber struct {
@@ -146,10 +163,13 @@ func (dm *DocumentMatch) vals() *matchValues {
 }
 
 func (v *matchValues) addDocValue(name string, value []byte) {
-	if v.docValues == nil {
-		v.docValues = make(map[string][][]byte)
+	for i := range v.docValues {
+		if fv := &v.docValues[i]; fv.field == name {
+			fv.values = append(fv.values, value)
+			return
+		}
 	}
-	v.docValues[name] = append(v.docValues[name], value)
+	v.docValues = append(v.docValues, fieldValues{field: name, values: [][]byte{value}})
 }
 
 func (v *matchValues) addDocNumber(name string, value int64) {
@@ -173,10 +193,8 @@ func (dm *DocumentMatch) DocValues(field string) [][]byte {
 	if v == nil {
 		return nil
 	}
-	if v.docValues != nil {
-		if vals := v.docValues[field]; len(vals) > 0 {
-			return vals
-		}
+	if vals := v.fieldDocValues(field); len(vals) > 0 {
+		return vals
 	}
 	if !dm.hasDocNumbers(field) {
 		return nil
@@ -241,11 +259,10 @@ func (dm *DocumentMatch) Reset() *DocumentMatch {
 }
 
 func (v *matchValues) reset() {
-	if len(v.docValues) > 0 { // ranging a nil map still pays for mapiterinit
-		for k, vals := range v.docValues {
-			clear(vals)
-			v.docValues[k] = vals[:0]
-		}
+	for i := range v.docValues {
+		fv := &v.docValues[i]
+		clear(fv.values)
+		fv.values = fv.values[:0]
 	}
 	clear(v.docNumbers)
 	v.docNumbers = v.docNumbers[:0]
@@ -400,11 +417,19 @@ type Context struct {
 	SkipBlocks bool
 }
 
+// contextWithPool lets NewSearchContext allocate the Context and its pool
+// together
+type contextWithPool struct {
+	Context
+	pool DocumentMatchPool
+}
+
 func NewSearchContext(size, sortSize int) *Context {
-	return &Context{
-		DocumentMatchPool: NewDocumentMatchPool(size, sortSize),
-		Ctx:               context.Background(),
-	}
+	c := &contextWithPool{}
+	c.pool.init(size, sortSize)
+	c.DocumentMatchPool = &c.pool
+	c.Ctx = context.Background()
+	return &c.Context
 }
 
 func (sc *Context) DocValueReaderForReader(r DocumentValueReadable, fields []string) (segment.DocumentValueReader, error) {

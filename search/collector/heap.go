@@ -22,14 +22,14 @@ import (
 )
 
 type collectStoreHeap struct {
-	heap    search.DocumentMatchCollection
-	compare collectorCompare
+	heap search.DocumentMatchCollection
+	sort search.SortOrder
 }
 
-func newStoreHeap(capacity int, compare collectorCompare) *collectStoreHeap {
+func newStoreHeap(capacity int, sort search.SortOrder) *collectStoreHeap {
 	rv := &collectStoreHeap{
-		heap:    make(search.DocumentMatchCollection, 0, capacity),
-		compare: compare,
+		heap: make(search.DocumentMatchCollection, 0, capacity),
+		sort: sort,
 	}
 	heap.Init(rv)
 	return rv
@@ -52,22 +52,17 @@ func (c *collectStoreHeap) removeLast() *search.DocumentMatch {
 	return heap.Pop(c).(*search.DocumentMatch)
 }
 
-func (c *collectStoreHeap) Final(skip int, fixup collectorFixup) (search.DocumentMatchCollection, error) {
+func (c *collectStoreHeap) Final(skip int) search.DocumentMatchCollection {
 	count := c.Len()
 	size := count - skip
 	if size <= 0 {
-		return make(search.DocumentMatchCollection, 0), nil
+		return make(search.DocumentMatchCollection, 0)
 	}
 	rv := make(search.DocumentMatchCollection, size)
 	for i := size - 1; i >= 0; i-- {
-		doc := heap.Pop(c).(*search.DocumentMatch)
-		rv[i] = doc
-		err := fixup(doc)
-		if err != nil {
-			return nil, err
-		}
+		rv[i] = heap.Pop(c).(*search.DocumentMatch)
 	}
-	return rv, nil
+	return rv
 }
 
 // heap interface implementation
@@ -77,7 +72,7 @@ func (c *collectStoreHeap) Len() int {
 }
 
 func (c *collectStoreHeap) Less(i, j int) bool {
-	so := c.compare(c.heap[i], c.heap[j])
+	so := c.sort.Compare(c.heap[i], c.heap[j])
 	return -so < 0
 }
 

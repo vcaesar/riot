@@ -24,10 +24,29 @@ import (
 
 type Document []Field
 
+// documentInline is how many fields a new Document holds before AddField
+// allocates
+const documentInline = 4
+
+// documentBlock allocates a Document with room for its first fields
+type documentBlock struct {
+	doc    Document
+	fields [documentInline]Field
+}
+
 func NewDocument(id string) *Document {
-	return &Document{
-		NewKeywordField(_idField, id).StoreValue().Sortable(),
-	}
+	blk := &documentBlock{}
+	blk.fields[0] = NewKeywordField(_idField, id).StoreValue().Sortable()
+	blk.doc = blk.fields[:1]
+	return &blk.doc
+}
+
+// NewDocumentWithoutID returns a document with no _id field, which saves
+// the identifier's term, stored value and doc values in the index. Such a
+// document can only be added with Insert: it cannot be updated or deleted
+// by identifier, and its matches have no _id stored field.
+func NewDocumentWithoutID() *Document {
+	return &Document{}
 }
 
 func NewDocumentWithIdentifier(id Identifier) *Document {
@@ -48,7 +67,11 @@ func (d Document) Size() int {
 
 // ID is an experimental helper method
 // to simplify common use cases
+// It returns nil for a document without an _id field.
 func (d Document) ID() segment.Term {
+	if len(d) == 0 || d[0].Name() != _idField {
+		return nil
+	}
 	return Identifier(d[0].Value())
 }
 

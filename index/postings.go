@@ -288,9 +288,48 @@ func (i *postingsIterator) NextPosBatch(docs []uint64, freqs []int, norms []floa
 	return n, fields, locs, err
 }
 
+// ownPosBatcher is implemented by segment postings iterators that can read
+// the locations of postings that are all of the list's own field as their
+// encoded positions (ice.PostingsIterator, segment version 10+).
+type ownPosBatcher interface {
+	NextOwnPosBatch(docs []uint64, freqs []int, norms []float64, starts, ends []int,
+		offs []uint64) (int, []byte, bool, error)
+}
+
+// NextOwnPosBatch is NextPosBatch for postings whose locations are all of
+// the iterator's field, at positions that do not decrease. It does not
+// decode them: recs[starts[k]:ends[k]] holds the positions of posting k as
+// complete uvarint deltas, until the iterator is read again. own false,
+// with n 0, says the next postings are not stored that way and
+// NextPosBatch must read them; n 0 with own true is the end.
+func (i *postingsIterator) NextOwnPosBatch(docs []uint64, freqs []int, norms []float64, starts, ends []int,
+	offs []uint64) (n int, recs []byte, own bool, err error) {
+	for i.segmentOffset < len(i.iterators) {
+		b, ok := i.iterators[i.segmentOffset].(ownPosBatcher)
+		if !ok {
+			return 0, nil, false, nil
+		}
+		if n, recs, own, err = b.NextOwnPosBatch(docs, freqs, norms, starts, ends, offs); err != nil || !own {
+			return 0, nil, own, err
+		}
+		if n > 0 {
+			batch := docs[:n]
+			if off := i.snapshot.offsets[i.segmentOffset]; off != 0 {
+				for k := range batch {
+					batch[k] += off
+				}
+			}
+			i.currID, i.batched, i.offsSeg = batch[len(batch)-1], true, i.segmentOffset
+			return n, recs, true, nil
+		}
+		i.segmentOffset++
+	}
+	return 0, nil, true, nil
+}
+
 // LoadOffsets sets the start and end of the locations, given as (pos,
-// start, end) triples, of a posting of the last NextPosBatch with offsets
-// handle h.
+// start, end) triples, of a posting of the last NextPosBatch or
+// NextOwnPosBatch with offsets handle h.
 func (i *postingsIterator) LoadOffsets(h uint64, locs []int) error {
 	if h == noOffsets {
 		return nil

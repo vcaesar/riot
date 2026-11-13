@@ -11,24 +11,24 @@ require (
 	github.com/go-ego/gse v1.3.1
 	github.com/spf13/cobra v1.10.2
 	github.com/vcaesar/bluge_segment_api v1.2.2
-	github.com/vcaesar/ice v1.5.4
+	github.com/vcaesar/ice v1.6.1
 	github.com/zedsearch/go-porterstemmer v1.0.4
 	github.com/zedsearch/mmap-go v1.3.0
 	github.com/zedsearch/segment v0.9.2
 	github.com/zedsearch/snowballstem v0.9.1
-	golang.org/x/sys v0.49.0
-	golang.org/x/text v0.43.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/text v0.44.0
 )
 
 require (
 	github.com/dgryski/go-metro v0.0.0-20261008173524-5059e0b1da03 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/kamstrup/intmap v0.5.2 // indirect
-	github.com/klauspost/compress v1.20.3 // indirect
-	github.com/minio/minlz v1.2.3 // indirect
+	github.com/klauspost/compress v1.20.4 // indirect
+	github.com/minio/minlz v1.2.4 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/spf13/pflag v1.1.0 // indirect
 	github.com/vcaesar/cedar v0.50.1 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
 )

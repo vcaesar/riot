@@ -34,7 +34,9 @@ func OpenWriter(config Config) (*Writer, error) {
 	}
 
 	var err error
-	rv.chill, err = index.OpenWriter(config.indexConfig)
+	ic := config.indexConfig
+	ic.Logger = config.Logger
+	rv.chill, err = index.OpenWriter(ic)
 	if err != nil {
 		return nil, fmt.Errorf("error opening index: %w", err)
 	}

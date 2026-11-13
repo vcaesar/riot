@@ -296,7 +296,7 @@ func constantScoreEligible(boost float64, scorer search.Scorer,
 	return 0, false
 }
 
-var multiTermConstantScoreTerm = []byte("<multi-term:constant-score>")
+const multiTermConstantScoreTerm = "<multi-term:constant-score>"
 
 // termsBitmapReader is implemented by readers that can OR the postings of
 // many terms straight from their dictionaries (index.Snapshot). A nil

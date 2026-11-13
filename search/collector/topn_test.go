@@ -563,3 +563,75 @@ func (c *cancelAfterSearcher) Next(ctx *search.Context) (*search.DocumentMatch, 
 	}
 	return c.skipSearcher.Next(ctx)
 }
+
+// TestTopNCollectAllocations bounds a score-ordered top 10 with a count:
+// the collector, the context with its pool (4 more), the bucket and its
+// calculator, and the bound skip callback; the store, iterator and
+// per-Collect closures live in the collector.
+func TestTopNCollectAllocations(t *testing.T) {
+	scores := []float64{3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3, 2, 3, 8, 4, 6, 2, 6, 4, 3, 3}
+	matches := make([]*search.DocumentMatch, len(scores))
+	for i, s := range scores {
+		matches[i] = &search.DocumentMatch{Number: uint64(i), Score: s}
+	}
+	aggs := make(search.Aggregations)
+	aggs.Add("count", aggregations.CountMatches())
+	order := search.SortOrder{search.SortBy(search.DocumentScore()).Desc()}
+	skipper := &skipSearcher{}
+	n := testing.AllocsPerRun(100, func() {
+		*skipper = skipSearcher{stubSearcher: stubSearcher{matches: matches}}
+		dmi, err := NewTopNCollector(10, 0, order).Collect(context.Background(), aggs, poolOneSearcher{skipper})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dmi.Aggregations().Count() != uint64(len(scores)) {
+			t.Fatalf("count %d", dmi.Aggregations().Count())
+		}
+	})
+	if n > 10 {
+		t.Fatalf("Collect allocates %v, want <= 10", n)
+	}
+}
+
+// poolOneSearcher holds one match outside the results, as a TermSearcher
+// does, so the pool covers every match Collect needs.
+type poolOneSearcher struct{ *skipSearcher }
+
+func (poolOneSearcher) DocumentMatchPoolSize() int { return 1 }
+
+// A collector over more than switchFromSliceToHeap hits and one within it
+// return the same ordered hits, skipping included.
+func TestTopNSliceAndHeapStoresAgree(t *testing.T) {
+	scores := []float64{3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3, 2, 3, 8, 4, 6, 2, 6, 4, 3, 3}
+	matches := make([]*search.DocumentMatch, len(scores))
+	for i, s := range scores {
+		matches[i] = &search.DocumentMatch{Number: uint64(i), Score: s}
+	}
+	order := search.SortOrder{search.SortBy(search.DocumentScore()).Desc()}
+	collect := func(size, skip int) []uint64 {
+		dmi, err := NewTopNCollector(size, skip, order).
+			Collect(context.Background(), make(search.Aggregations), &stubSearcher{matches: matches})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var docs []uint64
+		for m, err := dmi.Next(); m != nil; m, err = dmi.Next() {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(m.SortValue) != 1 {
+				t.Fatalf("hit %d has %d sort keys", m.Number, len(m.SortValue))
+			}
+			docs = append(docs, m.Number)
+		}
+		return docs
+	}
+	heap := collect(20, 0) // heap store
+	for _, c := range []struct{ size, skip int }{{10, 0}, {5, 5}, {3, 2}, {4, 30}} {
+		got := collect(c.size, c.skip)
+		want := heap[min(c.skip, len(heap)):min(c.skip+c.size, len(heap))]
+		if len(got) != len(want) || (len(want) > 0 && !reflect.DeepEqual(got, want)) {
+			t.Fatalf("size %d skip %d: %v, want %v", c.size, c.skip, got, want)
+		}
+	}
+}

@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	segment "github.com/vcaesar/bluge_segment_api"
+
 	"github.com/vcaesar/riot/analysis"
 	"github.com/vcaesar/riot/numeric"
 )
@@ -368,7 +370,7 @@ func TestNumericAnalyzerTokens(t *testing.T) {
 // Text fields analyzed with pooled token storage keep their own terms and
 // locations when later fields reuse that storage.
 func TestTextFieldPooledAnalysis(t *testing.T) {
-	a := NewTextField("a", "Alpha beta alpha").SearchTermPositions()
+	a := NewTextField("a", "Alpha beta alpha").SearchTermPositions().HighlightMatches()
 	b := NewTextField("b", "gamma delta epsilon zeta eta theta").SearchTermPositions()
 	a.Analyze(0)
 	b.Analyze(0)
@@ -446,4 +448,69 @@ func dumpTerms(f *TermField) string {
 		b.WriteString(" ")
 	}
 	return b.String()
+}
+
+func TestFieldOffsetsOnlyWhenHighlighting(t *testing.T) {
+	analyzers := map[string]Analyzer{"standard": nil, "custom": whitespaceAnalyzer{}}
+	tests := []struct {
+		name       string
+		highlight  bool
+		wantOffset bool
+	}{
+		{name: "positions", wantOffset: false},
+		{name: "highlight", highlight: true, wantOffset: true},
+	}
+	for an, analyzer := range analyzers {
+		for _, tt := range tests {
+			t.Run(an+"/"+tt.name, func(t *testing.T) {
+				f := NewTextField("body", "quick brown quick").SearchTermPositions()
+				if analyzer != nil {
+					f.WithAnalyzer(analyzer)
+				}
+				if tt.highlight {
+					f.HighlightMatches()
+				}
+				f.Analyze(0)
+				defer f.ReleaseAnalysis()
+				var positions, offsets int
+				f.EachTerm(func(term segment.FieldTerm) {
+					term.EachLocation(func(l segment.Location) {
+						positions += l.Pos()
+						offsets += l.Start() + l.End()
+					})
+				})
+				if positions != 1+2+3 {
+					t.Fatalf("positions sum %d, want 6", positions)
+				}
+				if got := offsets > 0; got != tt.wantOffset {
+					t.Fatalf("offsets sum %d, want offsets %v", offsets, tt.wantOffset)
+				}
+			})
+		}
+	}
+	kw := NewKeywordField("tag", "a b").SearchTermPositions()
+	kw.Analyze(0)
+	kw.EachTerm(func(term segment.FieldTerm) {
+		term.EachLocation(func(l segment.Location) {
+			if l.Start() != 0 || l.End() != 0 || l.Pos() != 1 {
+				t.Fatalf("keyword location %d %d-%d, want pos 1 without offsets", l.Pos(), l.Start(), l.End())
+			}
+		})
+	})
+}
+
+type whitespaceAnalyzer struct{}
+
+func (whitespaceAnalyzer) Analyze(input []byte) analysis.TokenStream {
+	var tokens analysis.TokenStream
+	for i, start := 0, 0; i <= len(input); i++ {
+		if i < len(input) && input[i] != ' ' {
+			continue
+		}
+		if i > start {
+			tokens = append(tokens, &analysis.Token{Term: input[start:i], Start: start, End: i, PositionIncr: 1, Type: analysis.AlphaNumeric})
+		}
+		start = i + 1
+	}
+	return tokens
 }

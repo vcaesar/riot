@@ -49,3 +49,68 @@ func TestBucketConsumeAndMerge(t *testing.T) {
 		t.Fatalf("map/slice out of sync: %d vs %d", len(a.Aggregations()), len(a.calculators))
 	}
 }
+
+// A bucket keeps more aggregations than its inline storage holds, finds
+// them by name, and keeps a map built by Aggregations in step with Merge.
+func TestBucketBeyondInline(t *testing.T) {
+	aggs := Aggregations{"a": countAgg{}, "b": countAgg{}, "c": countAgg{}}
+	b := NewBucket("", aggs)
+	b.Consume(&DocumentMatch{})
+	for name := range aggs {
+		if got := b.Aggregation(name).(*countCalc).n; got != 1 {
+			t.Fatalf("%s consumed %d, want 1", name, got)
+		}
+	}
+	if b.Aggregation("missing") != nil || b.Metric("missing") != 0 || b.Buckets("missing") != nil {
+		t.Fatal("missing aggregation found")
+	}
+	m := b.Aggregations()
+	other := NewBucket("", Aggregations{"a": countAgg{}, "d": countAgg{}})
+	other.Consume(&DocumentMatch{})
+	b.Merge(other)
+	if len(m) != 4 || m["d"] != b.Aggregation("d") {
+		t.Fatalf("map not updated by Merge: %v", m)
+	}
+	if got := b.Aggregation("a").(*countCalc).n; got != 2 {
+		t.Fatalf("merged a = %d, want 2", got)
+	}
+}
+
+type scoreCalc struct{ countCalc }
+
+func (*scoreCalc) ScoreOnly() bool                 { return true }
+func (c *scoreCalc) ConsumeScore(_ float64, n int) { c.n += n }
+func (*scoreCalc) BoundOnly() bool                 { return true }
+
+type scoreAgg struct{}
+
+func (scoreAgg) Fields() []string       { return nil }
+func (scoreAgg) Calculator() Calculator { return &scoreCalc{} }
+
+// ScoreOnly holds only while every aggregation, merged ones included,
+// reads just the score.
+func TestBucketScoreOnly(t *testing.T) {
+	if !NewBucket("", nil).ScoreOnly() {
+		t.Fatal("empty bucket is not score only")
+	}
+	b := NewBucket("", Aggregations{"s": scoreAgg{}, "t": scoreAgg{}, "u": scoreAgg{}})
+	if !b.ScoreOnly() || !b.BoundOnly() {
+		t.Fatal("score aggregations not score only")
+	}
+	b.ConsumeScore(1, 3)
+	if got := b.Aggregation("u").(*scoreCalc).n; got != 3 {
+		t.Fatalf("ConsumeScore counted %d, want 3", got)
+	}
+	b.Merge(NewBucket("", Aggregations{"c": countAgg{}}))
+	if b.ScoreOnly() {
+		t.Fatal("bucket with a document aggregation is score only")
+	}
+}
+
+func TestNewBucketAllocations(t *testing.T) {
+	aggs := Aggregations{"count": scoreAgg{}}
+	// the bucket and the one calculator
+	if n := testing.AllocsPerRun(100, func() { NewBucket("", aggs) }); n > 2 {
+		t.Fatalf("NewBucket allocates %v, want <= 2", n)
+	}
+}

@@ -31,13 +31,20 @@ func (b *Batch) Insert(doc segment.Document) {
 	b.documents = append(b.documents, doc)
 }
 
+// Update replaces the documents with id by doc; a nil id (a document
+// without _id) only inserts doc.
 func (b *Batch) Update(id segment.Term, doc segment.Document) {
 	b.documents = append(b.documents, doc)
-	b.ids = append(b.ids, id)
+	if id != nil {
+		b.ids = append(b.ids, id)
+	}
 }
 
+// Delete removes the documents with id; a nil id deletes nothing.
 func (b *Batch) Delete(id segment.Term) {
-	b.ids = append(b.ids, id)
+	if id != nil {
+		b.ids = append(b.ids, id)
+	}
 }
 
 func (b *Batch) Reset() {

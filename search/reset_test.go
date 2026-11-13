@@ -55,7 +55,7 @@ func TestDocumentMatchResetClearsAndKeeps(t *testing.T) {
 		"SortValue": len(dm.SortValue), "FieldTermLocations": len(dm.FieldTermLocations),
 		"docNumbers": len(v.docNumbers), "numScratch": len(v.numScratch),
 		"termScratch": len(v.termScratch), "termBytes": len(v.termBytes),
-		"docValues[category]": len(v.docValues["category"]),
+		"docValues[category]": len(v.fieldDocValues("category")),
 	} {
 		if n != 0 {
 			t.Errorf("%s has len %d after Reset", name, n)
@@ -65,11 +65,11 @@ func TestDocumentMatchResetClearsAndKeeps(t *testing.T) {
 		cap(v.docNumbers) != numCap || cap(v.termBytes) != bytesCap {
 		t.Error("Reset dropped a buffer's backing array")
 	}
-	if v.docValues == nil {
-		t.Error("Reset dropped the docValues map")
+	if len(v.docValues) == 0 {
+		t.Error("Reset dropped the docValues entries")
 	}
 	for name, values := range map[string][][]byte{
-		"terms": v.termScratch, "docValues": v.docValues["category"],
+		"terms": v.termScratch, "docValues": v.fieldDocValues("category"),
 	} {
 		for _, value := range values[:cap(values)] {
 			if value != nil {

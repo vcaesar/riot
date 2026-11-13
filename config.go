@@ -16,7 +16,6 @@
 package riot
 
 import (
-	"io"
 	"log"
 
 	"github.com/vcaesar/riot/index"
@@ -128,7 +127,9 @@ func (config Config) WithBatchIndexing(segmentDocs int) Config {
 
 // WithStreamIndexing makes Writer.Batch index like a Stream, with a segment
 // every memoryBudget packed bytes; zero or less uses
-// index.DefaultStreamMemoryBudget. It also sets NewStream(0)'s budget.
+// index.DefaultBatchStreamMemoryBudget for Writer.Batch and
+// index.DefaultStreamMemoryBudget for NewStream(0). It also sets
+// NewStream(0)'s budget.
 func (config Config) WithStreamIndexing(memoryBudget int) Config {
 	config.indexConfig = config.indexConfig.WithStreamIndexing(memoryBudget)
 	return config
@@ -178,7 +179,7 @@ func DefaultConfigWithIndexConfig(indexConfig index.Config) Config {
 
 func defaultConfig(indexConfig *index.Config) Config {
 	rv := Config{
-		Logger:                log.New(io.Discard, "bluge", log.LstdFlags),
+		Logger:                log.Default(),
 		DefaultSearchField:    "_all",
 		DefaultSearchAnalyzer: analyzer.NewStandardAnalyzer(),
 		DefaultSimilarity:     similarity.NewBM25Similarity(),

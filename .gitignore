@@ -12,6 +12,7 @@ query_string.y.go.tmp
 /analysis/token_filters/cld2/cld2-read-only
 /analysis/token_filters/cld2/libcld2_full.a
 /cmd/bluge/bluge
+/cmd/riot/riot
 vendor/**
 !vendor/manifest
 /y.output
@@ -19,9 +20,9 @@ vendor/**
 
 *.test
 tags
+.codg
 .v0
-test/logs
-test/index
+test0
 
 # Binaries for programs and plugins
 *.exe

@@ -144,7 +144,7 @@ func NewSloppyMultiPhraseSearcher(indexReader search.Reader, terms [][]string, f
 	if rv.exact {
 		rv.exactLocs = make([][]int, len(terms))
 		rv.exactPtr = make([]int, len(terms))
-		rv.raw = newRawPhrase(mustSearcher, terms, options)
+		rv.raw = newRawPhrase(mustSearcher, terms, field, options)
 	}
 
 	return &rv, nil

@@ -134,7 +134,7 @@ func OpenWriter(config Config) (*Writer, error) {
 				continue
 			}
 			if err = rv.directory.Remove(ItemKindSegment, id); err != nil {
-				log.Printf("error removing orphan segment %d: %v", id, err)
+				rv.logf("error removing orphan segment %d: %v", id, err)
 			}
 		}
 	}
@@ -146,7 +146,7 @@ func OpenWriter(config Config) (*Writer, error) {
 		return nil, fmt.Errorf("error cleaning up on open: %v", err)
 	}
 	if err = rv.removeOrphanGraphs(); err != nil {
-		log.Printf("error removing orphan vector graphs: %v", err)
+		rv.logf("error removing orphan vector graphs: %v", err)
 	}
 	for _, v := range config.VectorIndexes {
 		rv.noteGraphKey(v.key())
@@ -201,7 +201,7 @@ func (s *Writer) loadSnapshots() (lastPersistedEpoch, nextSnapshotEpoch uint64,
 		var indexSnapshot *Snapshot
 		indexSnapshot, err = s.loadSnapshot(snapshotEpoch)
 		if err != nil {
-			log.Printf("error loading snapshot epoch: %d: %v", snapshotEpoch, err)
+			s.logf("error loading snapshot epoch: %d: %v", snapshotEpoch, err)
 			// but keep going and hope there is another newer snapshot that works
 			referenced = nil
 			continue
@@ -251,6 +251,14 @@ func (s *Writer) fireAsyncError(err error) {
 		s.config.AsyncError(err)
 	}
 	atomic.AddUint64(&s.stats.TotOnErrors, 1)
+}
+
+func (s *Writer) logf(format string, args ...any) {
+	if s.config.Logger != nil {
+		s.config.Logger.Printf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
 }
 
 func (s *Writer) Close() (err error) {
@@ -452,7 +460,11 @@ func (s *Writer) buildSegment(docs []segment.Document, first, release bool) (
 
 // batchStream is Batch in IndexModeStream.
 func (s *Writer) batchStream(batch *Batch) error {
-	st := s.NewStream(0)
+	budget := s.config.StreamMemoryBudget
+	if budget <= 0 {
+		budget = DefaultBatchStreamMemoryBudget
+	}
+	st := s.NewStream(budget)
 	st.ids = batch.ids
 	for _, doc := range batch.documents {
 		if err := st.Insert(doc); err != nil {
@@ -677,7 +689,7 @@ func OpenReader(config Config) (*Snapshot, error) {
 	for _, snapshotEpoch := range snapshotEpochs {
 		indexSnapshot, err = parent.loadSnapshot(snapshotEpoch)
 		if err != nil {
-			log.Printf("error loading snapshot epoch: %d: %v", snapshotEpoch, err)
+			parent.logf("error loading snapshot epoch: %d: %v", snapshotEpoch, err)
 			// but keep going and hope there is another newer snapshot that works
 			continue
 		}

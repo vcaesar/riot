@@ -296,7 +296,7 @@ func TestPhraseDenseSkippedRuns(t *testing.T) {
 // Phrase hits carry the byte offsets of their terms, which the raw path
 // loads only for the hits it returns: body[Start:End] is the term and
 // positions follow the phrase, for all matches and TopN, as the general
-// (explain) path reports them.
+// (explain) path reports them. Offsets are kept only for HighlightMatches.
 func TestPhraseHitOffsets(t *testing.T) {
 	w, err := OpenWriter(InMemoryOnlyConfig())
 	if err != nil {
@@ -322,7 +322,7 @@ func TestPhraseHitOffsets(t *testing.T) {
 	for _, size := range []int{3000, 700, 50} {
 		b := NewBatch()
 		for range size {
-			b.Insert(NewDocument(strconv.Itoa(id)).AddField(NewTextField("body", body(id)).SearchTermPositions()))
+			b.Insert(NewDocument(strconv.Itoa(id)).AddField(NewTextField("body", body(id)).SearchTermPositions().HighlightMatches()))
 			id++
 		}
 		if err := w.Batch(b); err != nil {

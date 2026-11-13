@@ -218,6 +218,10 @@ func (i *Snapshot) CollectionStats(field string) (segment.CollectionStats, error
 		}
 	}
 
+	// one segment's stats need no merge; return them as handed out
+	if len(i.segment) == 1 {
+		return i.segment[0].segment.CollectionStats(field)
+	}
 	// segments may hand out shared, immutable stats: merge into our own value
 	var rv *collectionStats
 	for _, seg := range i.segment {

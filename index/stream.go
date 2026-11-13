@@ -30,6 +30,13 @@ import (
 // memory).
 const DefaultStreamMemoryBudget = 16 << 20
 
+// DefaultBatchStreamMemoryBudget is the budget Writer.Batch uses in
+// IndexModeStream when Config.StreamMemoryBudget is not positive. A Batch
+// already holds all of its documents, so a larger budget costs it little,
+// while it builds a 100K-document bulk load into one segment instead of
+// several that then merge and slow every query until they do.
+const DefaultBatchStreamMemoryBudget = 128 << 20
+
 // streamAnalyzeDocs is how many documents a Stream analyzes at a time;
 // the next part is analyzed while the current one is added.
 const streamAnalyzeDocs = 2048
@@ -127,15 +134,21 @@ func (st *Stream) Insert(doc segment.Document) error {
 	return st.pack()
 }
 
-// Update deletes the committed documents with id at Commit and inserts doc.
+// Update deletes the committed documents with id at Commit and inserts doc;
+// a nil id (a document without _id) only inserts doc.
 func (st *Stream) Update(id segment.Term, doc segment.Document) error {
-	st.ids = append(st.ids, id)
+	if id != nil {
+		st.ids = append(st.ids, id)
+	}
 	return st.Insert(doc)
 }
 
-// Delete deletes the committed documents with id at Commit.
+// Delete deletes the committed documents with id at Commit; a nil id deletes
+// nothing.
 func (st *Stream) Delete(id segment.Term) {
-	st.ids = append(st.ids, id)
+	if id != nil {
+		st.ids = append(st.ids, id)
+	}
 }
 
 // pack starts analyzing the pending documents and meanwhile moves the

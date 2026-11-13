@@ -17,6 +17,7 @@ package riot
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -1593,6 +1594,27 @@ func (q *IPRangeQuery) ipNet() (*net.IPNet, error) {
 func (q *IPRangeQuery) Validate() error {
 	_, err := q.ipNet()
 	return err
+}
+
+// NewIPv4RangeQuery creates a Query matching NewIPv4Field values inside the
+// given IPv4 network in CIDR notation ("10.0.0.0/8"); a bare address
+// ("10.0.0.1") matches exactly that address.
+func NewIPv4RangeQuery(cidr string) (*NumericRangeQuery, error) {
+	ipNet, err := (&IPRangeQuery{cidr: cidr}).ipNet()
+	if err != nil {
+		return nil, err
+	}
+	lo := ipNet.IP.To4()
+	mask := ipNet.Mask
+	if len(mask) == net.IPv6len {
+		mask = mask[net.IPv6len-net.IPv4len:]
+	}
+	if lo == nil || len(mask) != net.IPv4len {
+		return nil, fmt.Errorf("%q is not an ipv4 network", cidr)
+	}
+	low := binary.BigEndian.Uint32(lo)
+	high := low | ^binary.BigEndian.Uint32(mask)
+	return NewNumericRangeInclusiveQuery(float64(low), float64(high), true, true), nil
 }
 
 type WildcardQuery struct {
