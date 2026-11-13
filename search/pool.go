@@ -43,6 +43,12 @@ const sortSlotBytes = 11
 // pre-allocated to accommodate the requested number of DocumentMatch
 // instances
 func NewDocumentMatchPool(size, sortSize int) *DocumentMatchPool {
+	p := &DocumentMatchPool{}
+	p.init(size, sortSize)
+	return p
+}
+
+func (p *DocumentMatchPool) init(size, sortSize int) {
 	avail := make(DocumentMatchCollection, size)
 	// pre-allocate the expected number of instances
 	startBlock := make([]DocumentMatch, size)
@@ -59,10 +65,8 @@ func NewDocumentMatchPool(size, sortSize int) *DocumentMatchPool {
 		i++
 		j += sortSize
 	}
-	return &DocumentMatchPool{
-		avail:    avail,
-		TooSmall: defaultDocumentMatchPoolTooSmall,
-	}
+	p.avail = avail
+	p.TooSmall = defaultDocumentMatchPoolTooSmall
 }
 
 // Get returns an available DocumentMatch from the pool

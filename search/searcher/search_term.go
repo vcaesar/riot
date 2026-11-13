@@ -36,17 +36,24 @@ type TermSearcher struct {
 
 func NewTermSearcher(indexReader search.Reader, term, field string, boost float64, scorer search.Scorer,
 	options search.SearcherOptions) (*TermSearcher, error) {
-	return NewTermSearcherBytes(indexReader, []byte(term), field, boost, scorer, options)
+	return newTermSearcher(indexReader, []byte(term), term, field, boost, scorer, options)
 }
 
 func NewTermSearcherBytes(indexReader search.Reader, term []byte, field string, boost float64, scorer search.Scorer,
+	options search.SearcherOptions) (*TermSearcher, error) {
+	return newTermSearcher(indexReader, term, string(term), field, boost, scorer, options)
+}
+
+// newTermSearcher takes the term as both bytes and string, so callers holding
+// either convert once.
+func newTermSearcher(indexReader search.Reader, term []byte, queryTerm, field string, boost float64, scorer search.Scorer,
 	options search.SearcherOptions) (*TermSearcher, error) {
 	needFreqNorm := options.Score != "none"
 	reader, err := indexReader.PostingsIterator(term, field, needFreqNorm, needFreqNorm, options.IncludeTermVectors)
 	if err != nil {
 		return nil, err
 	}
-	rv, err := newTermSearcherFromReader(indexReader, reader, term, field, boost, scorer, options)
+	rv, err := newTermSearcherFromReader(indexReader, reader, queryTerm, field, boost, scorer, options)
 	if err != nil {
 		return nil, errors.Join(err, reader.Close())
 	}
@@ -62,7 +69,7 @@ func (t *termStatsWrapper) DocumentFrequency() uint64 {
 }
 
 func newTermSearcherFromReader(indexReader search.Reader, reader segment.PostingsIterator,
-	term []byte, field string, boost float64, scorer search.Scorer, options search.SearcherOptions) (*TermSearcher, error) {
+	term, field string, boost float64, scorer search.Scorer, options search.SearcherOptions) (*TermSearcher, error) {
 	if scorer == nil {
 		collStats, err := indexReader.CollectionStats(field)
 		if err != nil {
@@ -75,7 +82,7 @@ func newTermSearcherFromReader(indexReader search.Reader, reader segment.Posting
 		reader:      reader,
 		scorer:      scorer,
 		options:     options,
-		queryTerm:   string(term),
+		queryTerm:   term,
 	}, nil
 }
 
@@ -404,11 +411,15 @@ func (c *postingsCursor) nextAboveBatch(reader segment.PostingsIterator, scorer 
 	b := c.batch
 	bs, canSkip := reader.(blockSkipper)
 	canSkip = canSkip && skipBlocks && !c.advanced && monotoneScorer(scorer)
-	competitive := func(maxFreq int, minNorm float64) bool {
-		return numeric.Float64ToInt64(scorer.Score(maxFreq, minNorm)) > floorBits
-	}
+	// built on first skip: it escapes, and most calls never skip
+	var competitive func(maxFreq int, minNorm float64) bool
 	for {
 		if canSkip && b.pos >= b.n {
+			if competitive == nil {
+				competitive = func(maxFreq int, minNorm float64) bool {
+					return numeric.Float64ToInt64(scorer.Score(maxFreq, minNorm)) > floorBits
+				}
+			}
 			n, err := bs.SkipBlocks(competitive)
 			if err != nil {
 				return nil, 0, err

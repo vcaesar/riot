@@ -73,41 +73,57 @@ type BucketCalculator interface {
 	Buckets() []*Bucket
 }
 
+// bucketInline is how many aggregations a Bucket holds without allocating
+// beyond itself; most searches have one or two
+const bucketInline = 2
+
 type Bucket struct {
-	name         string
-	aggregations map[string]Calculator
-	// calculators mirrors aggregations; iterated per hit because ranging
-	// over a map is far slower than a slice
+	name string
+	// names and calculators are parallel; lookups scan names, which beats
+	// a map for the few aggregations a bucket has
+	names       []string
 	calculators []Calculator
 	// scoreCalcs is set when every calculator only reads the score
 	scoreCalcs []ScoreCalculator
+	// aggregations is built by Aggregations on first use
+	aggregations map[string]Calculator
+
+	nameBuf  [bucketInline]string
+	calcBuf  [bucketInline]Calculator
+	scoreBuf [bucketInline]ScoreCalculator
 }
 
 func NewBucket(name string, aggregations map[string]Aggregation) *Bucket {
-	rv := &Bucket{
-		name:         name,
-		aggregations: make(map[string]Calculator, len(aggregations)),
-		calculators:  make([]Calculator, 0, len(aggregations)),
-	}
+	rv := &Bucket{name: name}
+	rv.names, rv.calculators = rv.nameBuf[:0], rv.calcBuf[:0]
 	for name, agg := range aggregations {
-		calc := agg.Calculator()
-		rv.aggregations[name] = calc
-		rv.calculators = append(rv.calculators, calc)
+		rv.names = append(rv.names, name)
+		rv.calculators = append(rv.calculators, agg.Calculator())
 	}
-	rv.scoreCalcs = scoreCalculators(rv.calculators)
+	rv.setScoreCalcs()
 	return rv
 }
 
-func scoreCalculators(calcs []Calculator) []ScoreCalculator {
-	rv := make([]ScoreCalculator, 0, len(calcs))
-	for _, calc := range calcs {
+func (b *Bucket) setScoreCalcs() {
+	b.scoreCalcs = nil
+	rv := b.scoreBuf[:0]
+	for _, calc := range b.calculators {
 		sc, ok := calc.(ScoreCalculator)
 		if !ok || !sc.ScoreOnly() {
-			return nil
+			return
 		}
 		rv = append(rv, sc)
 	}
-	return rv
+	b.scoreCalcs = rv
+}
+
+func (b *Bucket) lookup(name string) Calculator {
+	for i, n := range b.names {
+		if n == name {
+			return b.calculators[i]
+		}
+	}
+	return nil
 }
 
 // ScoreOnly reports whether every aggregation only reads the hit score, so
@@ -136,15 +152,19 @@ func (b *Bucket) ConsumeScore(score float64, n int) {
 }
 
 func (b *Bucket) Merge(other *Bucket) {
-	for otherAggName, otherCalculator := range other.aggregations {
-		if thisCalculator, ok := b.aggregations[otherAggName]; ok {
+	for i, otherAggName := range other.names {
+		otherCalculator := other.calculators[i]
+		if thisCalculator := b.lookup(otherAggName); thisCalculator != nil {
 			thisCalculator.Merge(otherCalculator)
 		} else {
-			b.aggregations[otherAggName] = otherCalculator
+			b.names = append(b.names, otherAggName)
 			b.calculators = append(b.calculators, otherCalculator)
+			if b.aggregations != nil {
+				b.aggregations[otherAggName] = otherCalculator
+			}
 		}
 	}
-	b.scoreCalcs = scoreCalculators(b.calculators)
+	b.setScoreCalcs()
 }
 
 func (b *Bucket) Name() string {
@@ -164,11 +184,17 @@ func (b *Bucket) Finish() {
 }
 
 func (b *Bucket) Aggregations() map[string]Calculator {
+	if b.aggregations == nil {
+		b.aggregations = make(map[string]Calculator, len(b.names))
+		for i, name := range b.names {
+			b.aggregations[name] = b.calculators[i]
+		}
+	}
 	return b.aggregations
 }
 
 func (b *Bucket) Count() uint64 {
-	if countAgg, ok := b.aggregations["count"]; ok {
+	if countAgg := b.lookup("count"); countAgg != nil {
 		if countCalc, ok := countAgg.(MetricCalculator); ok {
 			return uint64(countCalc.Value())
 		}
@@ -177,7 +203,7 @@ func (b *Bucket) Count() uint64 {
 }
 
 func (b *Bucket) Duration() time.Duration {
-	if durationAgg, ok := b.aggregations["duration"]; ok {
+	if durationAgg := b.lookup("duration"); durationAgg != nil {
 		if durationCalc, ok := durationAgg.(DurationCalculator); ok {
 			return durationCalc.Duration()
 		}
@@ -186,7 +212,7 @@ func (b *Bucket) Duration() time.Duration {
 }
 
 func (b *Bucket) Metric(name string) float64 {
-	if agg, ok := b.aggregations[name]; ok {
+	if agg := b.lookup(name); agg != nil {
 		if calc, ok := agg.(MetricCalculator); ok {
 			return calc.Value()
 		}
@@ -195,7 +221,7 @@ func (b *Bucket) Metric(name string) float64 {
 }
 
 func (b *Bucket) Buckets(name string) []*Bucket {
-	if agg, ok := b.aggregations[name]; ok {
+	if agg := b.lookup(name); agg != nil {
 		if calc, ok := agg.(BucketCalculator); ok {
 			return calc.Buckets()
 		}
@@ -204,5 +230,5 @@ func (b *Bucket) Buckets(name string) []*Bucket {
 }
 
 func (b *Bucket) Aggregation(name string) Calculator {
-	return b.aggregations[name]
+	return b.lookup(name)
 }

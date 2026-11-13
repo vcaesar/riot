@@ -107,3 +107,24 @@ func TestDocumentMatchPoolPreallocatesSortKeys(t *testing.T) {
 		t.Fatalf("growing a's slot changed b's key: %v", b.SortValue[0])
 	}
 }
+
+// NewSearchContext's pool hands out its preallocated matches, and the
+// context and pool come from one allocation.
+func TestNewSearchContextPool(t *testing.T) {
+	sc := NewSearchContext(2, 1)
+	if sc.Ctx == nil || sc.DocumentMatchPool == nil {
+		t.Fatal("context not initialized")
+	}
+	a, b := sc.DocumentMatchPool.Get(), sc.DocumentMatchPool.Get()
+	if a == b || cap(a.SortValue) == 0 || cap(b.SortValue) == 0 {
+		t.Fatalf("pooled matches %p %p sort caps %d %d", a, b, cap(a.SortValue), cap(b.SortValue))
+	}
+	sc.DocumentMatchPool.Put(a)
+	if sc.DocumentMatchPool.Get() != a {
+		t.Fatal("Put match not reused")
+	}
+	// context+pool, avail, matches, sort slots, sort keys
+	if n := testing.AllocsPerRun(100, func() { NewSearchContext(12, 1) }); n > 5 {
+		t.Fatalf("NewSearchContext allocates %v, want <= 5", n)
+	}
+}

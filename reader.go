@@ -38,7 +38,9 @@ func OpenReader(config Config) (*Reader, error) {
 		config: config,
 	}
 	var err error
-	rv.reader, err = index.OpenReader(config.indexConfig)
+	ic := config.indexConfig
+	ic.Logger = config.Logger
+	rv.reader, err = index.OpenReader(ic)
 	if err != nil {
 		return nil, fmt.Errorf("error opening index: %w", err)
 	}

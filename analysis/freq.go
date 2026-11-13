@@ -248,12 +248,16 @@ func TokenFrequencySlice(tokens TokenStream, includeTermVectors bool, startOffse
 
 // FreqBlock is the storage behind a TokenFrequencyPooled result.
 type FreqBlock struct {
-	tfs []TokenFreq
-	tls []TokenLocation
+	tfs  []TokenFreq
+	tls  []TokenLocation
+	text []byte
 }
 
 // maxPooledFreqBlock bounds the terms of a block kept for reuse.
 const maxPooledFreqBlock = 1 << 12
+
+// maxPooledFreqText bounds the copied text of a block kept for reuse.
+const maxPooledFreqText = 1 << 16
 
 var freqBlocks = sync.Pool{New: func() any { return new(FreqBlock) }}
 
@@ -261,7 +265,27 @@ var freqBlocks = sync.Pool{New: func() any { return new(FreqBlock) }}
 // result is valid until blk is passed to ReleaseFreqBlock.
 func TokenFrequencyPooled(tokens TokenStream, includeTermVectors bool, startOffset int) (
 	tfs []TokenFreq, position int, blk *FreqBlock) {
-	blk = freqBlocks.Get().(*FreqBlock)
+	blk = NewFreqBlock()
+	tfs, position = blk.TokenFrequency(tokens, includeTermVectors, startOffset)
+	return tfs, position, blk
+}
+
+// NewFreqBlock returns recycled storage for TokenFrequency and CopyText.
+func NewFreqBlock() *FreqBlock {
+	return freqBlocks.Get().(*FreqBlock)
+}
+
+// CopyText copies text into blk, so tokens may alias and modify the copy;
+// it is valid until blk is passed to ReleaseFreqBlock.
+func (blk *FreqBlock) CopyText(text []byte) []byte {
+	blk.text = append(blk.text[:0], text...)
+	return blk.text
+}
+
+// TokenFrequency is TokenFrequencySlice into blk. The result is valid until
+// blk is passed to ReleaseFreqBlock.
+func (blk *FreqBlock) TokenFrequency(tokens TokenStream, includeTermVectors bool, startOffset int) (
+	tfs []TokenFreq, position int) {
 	if cap(blk.tfs) < len(tokens) {
 		blk.tfs = make([]TokenFreq, 0, len(tokens))
 	}
@@ -272,13 +296,12 @@ func TokenFrequencyPooled(tokens TokenStream, includeTermVectors bool, startOffs
 		}
 		tls = blk.tls[:len(tokens)]
 	}
-	tfs, position = tokenFrequency(tokens, includeTermVectors, startOffset, blk.tfs[:0], tls)
-	return tfs, position, blk
+	return tokenFrequency(tokens, includeTermVectors, startOffset, blk.tfs[:0], tls)
 }
 
 // ReleaseFreqBlock recycles blk; nothing may use its results afterwards.
 func ReleaseFreqBlock(blk *FreqBlock) {
-	if cap(blk.tfs) > maxPooledFreqBlock || cap(blk.tls) > maxPooledFreqBlock {
+	if cap(blk.tfs) > maxPooledFreqBlock || cap(blk.tls) > maxPooledFreqBlock || cap(blk.text) > maxPooledFreqText {
 		return
 	}
 	// drop the term and value references so they can be collected

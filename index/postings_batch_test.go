@@ -15,6 +15,7 @@
 package index
 
 import (
+	"encoding/binary"
 	"reflect"
 	"strconv"
 	"strings"
@@ -172,5 +173,49 @@ func TestNextPosBatchMatchesNext(t *testing.T) {
 		if _, ok := it.iterators[0].(posBatcher); ok && lazyRead && lazy == 0 {
 			t.Fatal("no offsets loaded on demand")
 		}
+	}
+
+	// postings of the iterator's own field are read as encoded positions,
+	// with the same documents, positions and, once loaded, offsets
+	it = iterator()
+	if _, ok := it.iterators[0].(ownPosBatcher); !ok {
+		t.Skip("the segment plugin does not read positions alone")
+	}
+	starts := make([]int, size)
+	var got []batchPosting
+	for {
+		n, recs, own, err := it.NextOwnPosBatch(docs, freqs, norms, starts, ends, offs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !own {
+			t.Fatal("postings of one field are not read as positions")
+		}
+		if n == 0 {
+			break
+		}
+		for k := range n {
+			bp := batchPosting{number: docs[k], freq: freqs[k], norm: norms[k]}
+			var locs []int
+			pos := 0
+			for rec := recs[starts[k]:ends[k]]; len(rec) > 0; {
+				delta, w := binary.Uvarint(rec)
+				if w <= 0 {
+					t.Fatalf("doc %d: bad position record % x", docs[k], rec)
+				}
+				pos, rec = pos+int(delta), rec[w:] //nolint:gosec // G115: small test positions.
+				locs = append(locs, pos, 0, 0)
+			}
+			if err := it.LoadOffsets(offs[k], locs); err != nil {
+				t.Fatal(err)
+			}
+			for j := 0; j < len(locs); j += 3 {
+				bp.locs = append(bp.locs, batchLoc{"body", locs[j], locs[j+1], locs[j+2]})
+			}
+			got = append(got, bp)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("own batches read %d postings, Next %d, or they differ", len(got), len(want))
 	}
 }

@@ -17,17 +17,17 @@ package collector
 
 import "github.com/vcaesar/riot/search"
 
+// collectStoreSlice keeps up to switchFromSliceToHeap+1 hits sorted in an
+// inline buffer, so a TopNCollector embedding it allocates no store
 type collectStoreSlice struct {
-	slice   search.DocumentMatchCollection
-	compare collectorCompare
+	slice search.DocumentMatchCollection
+	sort  search.SortOrder
+	buf   [switchFromSliceToHeap + 1]*search.DocumentMatch
 }
 
-func newStoreSlice(capacity int, compare collectorCompare) *collectStoreSlice {
-	rv := &collectStoreSlice{
-		slice:   make(search.DocumentMatchCollection, 0, capacity),
-		compare: compare,
-	}
-	return rv
+func (c *collectStoreSlice) init(sort search.SortOrder) {
+	c.slice = c.buf[:0]
+	c.sort = sort
 }
 
 func (c *collectStoreSlice) AddNotExceedingSize(doc *search.DocumentMatch,
@@ -43,7 +43,7 @@ func (c *collectStoreSlice) add(doc *search.DocumentMatch) {
 	// find where to insert, starting at end (lowest)
 	i := len(c.slice)
 	for ; i > 0; i-- {
-		cmp := c.compare(doc, c.slice[i-1])
+		cmp := c.sort.Compare(doc, c.slice[i-1])
 		if cmp >= 0 {
 			break
 		}
@@ -60,17 +60,11 @@ func (c *collectStoreSlice) removeLast() *search.DocumentMatch {
 	return rv
 }
 
-func (c *collectStoreSlice) Final(skip int, fixup collectorFixup) (search.DocumentMatchCollection, error) {
-	for i := skip; i < len(c.slice); i++ {
-		err := fixup(c.slice[i])
-		if err != nil {
-			return nil, err
-		}
-	}
+func (c *collectStoreSlice) Final(skip int) search.DocumentMatchCollection {
 	if skip <= len(c.slice) {
-		return c.slice[skip:], nil
+		return c.slice[skip:]
 	}
-	return search.DocumentMatchCollection{}, nil
+	return search.DocumentMatchCollection{}
 }
 
 func (c *collectStoreSlice) len() int {

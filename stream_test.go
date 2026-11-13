@@ -691,3 +691,29 @@ func TestStreamBudgetPerDocument(t *testing.T) {
 		t.Fatalf("%d segments introduced, want 3", n)
 	}
 }
+
+// A bulk Batch in the default stream mode is built into one segment, where
+// a NewStream-sized budget would split it, unless a budget is configured.
+func TestBatchStreamDefaultBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("indexes 40K documents")
+	}
+	const n = 40_000
+	segments := func(config Config) uint64 {
+		w := openConfigWriter(t, config)
+		b := NewBatch()
+		for i := range n {
+			b.Insert(streamTestDoc(i))
+		}
+		if err := w.Batch(b); err != nil {
+			t.Fatal(err)
+		}
+		return w.Status().TotIntroducedSegmentsBatch
+	}
+	if got := segments(InMemoryOnlyConfig().WithStreamIndexing(index.DefaultStreamMemoryBudget)); got < 2 {
+		t.Fatalf("%d segments at the NewStream budget; the batch is too small to test", got)
+	}
+	if got := segments(InMemoryOnlyConfig()); got != 1 {
+		t.Fatalf("default config: %d segments, want 1", got)
+	}
+}

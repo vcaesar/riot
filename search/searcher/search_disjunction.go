@@ -98,7 +98,7 @@ func optimizeCompositeSearcher(optimizationKind string,
 	}
 
 	return newTermSearcherFromReader(indexReader, optimized,
-		[]byte(optimizationKind), "*", 1.0, similarity.ConstantScorer(1), options)
+		optimizationKind, "*", 1.0, similarity.ConstantScorer(1), options)
 }
 
 // optimizeComposite folds qsearchers into a single postings iterator, or

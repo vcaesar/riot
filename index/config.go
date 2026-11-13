@@ -17,6 +17,7 @@ package index
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"slices"
 
@@ -35,9 +36,11 @@ type Config struct {
 
 	supportedSegmentPlugins map[string]map[uint32]*SegmentPlugin
 
-	UnsafeBatch        bool
-	EventCallback      func(Event)
-	AsyncError         func(error)
+	UnsafeBatch   bool
+	EventCallback func(Event)
+	AsyncError    func(error)
+	// Logger receives recoverable open-time problems; nil uses log.Default().
+	Logger             *log.Logger
 	MergePlanOptions   mergeplan.Options
 	NumAnalysisWorkers int
 	AnalysisChan       chan func()
@@ -105,7 +108,8 @@ type Config struct {
 	BatchSegmentDocs int
 	// StreamMemoryBudget is the packed bytes per segment in IndexModeStream
 	// and of Writer.NewStream(0); zero or less uses
-	// DefaultStreamMemoryBudget.
+	// DefaultBatchStreamMemoryBudget for Writer.Batch and
+	// DefaultStreamMemoryBudget for Writer.NewStream.
 	StreamMemoryBudget int
 
 	virtualFields map[string][]segment.Field
@@ -137,7 +141,8 @@ func (config Config) WithBatchIndexing(segmentDocs int) Config {
 }
 
 // WithStreamIndexing selects IndexModeStream with a segment every
-// memoryBudget packed bytes; zero or less uses DefaultStreamMemoryBudget.
+// memoryBudget packed bytes; zero or less uses DefaultBatchStreamMemoryBudget
+// for Writer.Batch and DefaultStreamMemoryBudget for Writer.NewStream.
 // Each document's analysis is released once it is packed.
 func (config Config) WithStreamIndexing(memoryBudget int) Config {
 	config.IndexMode, config.StreamMemoryBudget = IndexModeStream, memoryBudget

@@ -38,7 +38,7 @@ func basicLoad(writer *bluge.Writer) error {
 
 	err := writer.Insert(bluge.NewDocument("a").
 		AddField(bluge.NewTextField("name", "marty").
-			SearchTermPositions().
+			SearchTermPositions().HighlightMatches().
 			StoreValue().
 			WithAnalyzer(enAnalyzer)).
 		AddField(bluge.NewNumericField("age", 19)).
@@ -46,10 +46,10 @@ func basicLoad(writer *bluge.Writer) error {
 			StoreValue()).
 		AddField(bluge.NewKeywordField("tags", "gopher").
 			StoreValue().
-			SearchTermPositions()).
+			SearchTermPositions().HighlightMatches()).
 		AddField(bluge.NewKeywordField("tags", "belieber").
 			StoreValue().
-			SearchTermPositions()).
+			SearchTermPositions().HighlightMatches()).
 		AddField(bluge.NewCompositeFieldExcluding("_all", []string{"_id"})))
 	if err != nil {
 		return err
@@ -61,7 +61,7 @@ func basicLoad(writer *bluge.Writer) error {
 	}
 	err = writer.Insert(bluge.NewDocument("b").
 		AddField(bluge.NewTextField("name", "steve has <a> long & complicated name").
-			SearchTermPositions().
+			SearchTermPositions().HighlightMatches().
 			StoreValue().
 			WithAnalyzer(enAnalyzer)).
 		AddField(bluge.NewNumericField("age", 27)).
@@ -79,7 +79,7 @@ func basicLoad(writer *bluge.Writer) error {
 	}
 	err = writer.Insert(bluge.NewDocument("c").
 		AddField(bluge.NewTextField("name", "bob walks home").
-			SearchTermPositions().
+			SearchTermPositions().HighlightMatches().
 			StoreValue().
 			WithAnalyzer(enAnalyzer)).
 		AddField(bluge.NewNumericField("age", 64)).
@@ -97,7 +97,7 @@ func basicLoad(writer *bluge.Writer) error {
 	}
 	err = writer.Insert(bluge.NewDocument("d").
 		AddField(bluge.NewTextField("name", "bobbleheaded wings top the phone").
-			SearchTermPositions().
+			SearchTermPositions().HighlightMatches().
 			StoreValue().
 			WithAnalyzer(enAnalyzer)).
 		AddField(bluge.NewNumericField("age", 72)).

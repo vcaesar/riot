@@ -28,16 +28,12 @@ type collectorStore interface {
 	// exceeded, nil is returned.
 	AddNotExceedingSize(doc *search.DocumentMatch, size int) *search.DocumentMatch
 
-	Final(skip int, fixup collectorFixup) (search.DocumentMatchCollection, error)
+	Final(skip int) search.DocumentMatchCollection
 }
 
 // PreAllocSizeSkipCap will cap preallocation to this amount when
 // size+skip exceeds this value
 var PreAllocSizeSkipCap = 1000
-
-type collectorCompare func(i, j *search.DocumentMatch) int
-
-type collectorFixup func(d *search.DocumentMatch) error
 
 // TopNCollector collects the top N hits, optionally skipping some results
 type TopNCollector struct {
@@ -65,6 +61,17 @@ type TopNCollector struct {
 	numDesc     bool
 	numFloorSet bool
 	numFloor    int64
+
+	// per-Collect state, kept here so Collect allocates no closures
+	ctx       context.Context
+	bucket    *search.Bucket
+	hitNumber int
+	// skipErr is the cancellation seen while a ScoreSkipper passed over hits
+	skipErr error
+	skipped func(float64, int) bool
+
+	slice collectStoreSlice
+	iter  TopNIterator
 }
 
 // CheckDoneEvery controls how frequently we check the context deadline
@@ -109,13 +116,10 @@ func newTopNCollector(size, skip int, sort search.SortOrder, reverse bool) *TopN
 	}
 
 	if size+skip > switchFromSliceToHeap {
-		hc.store = newStoreHeap(hc.backingSize, func(i, j *search.DocumentMatch) int {
-			return hc.sort.Compare(i, j)
-		})
+		hc.store = newStoreHeap(hc.backingSize, sort)
 	} else {
-		hc.store = newStoreSlice(hc.backingSize, func(i, j *search.DocumentMatch) int {
-			return hc.sort.Compare(i, j)
-		})
+		hc.slice.init(sort)
+		hc.store = &hc.slice
 	}
 
 	// these lookups traverse an interface, so do once up-front
@@ -160,26 +164,16 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 	hc.numField, hc.numDesc, hc.numSort = hc.sort.NumericFirst()
 	hc.numSort = hc.numSort && hc.searchAfter == nil && bucket.ScoreOnly()
 
-	var hitNumber int
-	// skipErr is the cancellation seen while a ScoreSkipper passed over hits
-	var skipErr error
-	nextHit := hc.nextHitFunc(searcher, searchContext, bucket, func(score float64, n int) bool {
-		before := hitNumber
-		hitNumber += n
-		bucket.ConsumeScore(score, n)
-		if hitNumber/CheckDoneEvery != before/CheckDoneEvery {
-			skipErr = ctx.Err()
-		}
-		return skipErr == nil
-	})
+	hc.ctx, hc.bucket, hc.hitNumber, hc.skipErr = ctx, bucket, 0, nil
+	skipper := hc.scoreSkipper(searcher, bucket)
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		next, err = nextHit()
+		next, err = hc.nextHit(searcher, skipper, searchContext)
 	}
 	for err == nil && next != nil {
-		if hitNumber%CheckDoneEvery == 0 {
+		if hc.hitNumber%CheckDoneEvery == 0 {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -187,8 +181,8 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 			}
 		}
 
-		hitNumber++
-		next.HitNumber = hitNumber
+		hc.hitNumber++
+		next.HitNumber = hc.hitNumber
 
 		skip, serr := hc.belowNumFloor(searchContext, next)
 		if serr != nil {
@@ -201,10 +195,10 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 			return nil, cerr
 		}
 
-		next, err = nextHit()
+		next, err = hc.nextHit(searcher, skipper, searchContext)
 	}
 	if err == nil {
-		err = skipErr
+		err = hc.skipErr
 	}
 	if err != nil {
 		return nil, err
@@ -213,36 +207,50 @@ func (hc *TopNCollector) Collect(ctx context.Context, aggs search.Aggregations,
 	bucket.Finish()
 
 	// finalize actual results
-	err = hc.finalizeResults()
-	if err != nil {
-		return nil, err
-	}
+	hc.finalizeResults()
 
-	rv := &TopNIterator{
+	hc.iter = TopNIterator{
 		results: hc.results,
 		bucket:  bucket,
-		index:   0,
-		err:     nil,
 	}
-	return rv, nil
+	return &hc.iter, nil
 }
 
-// nextHitFunc returns how Collect advances searcher. Once the results are
-// full, a ScoreSkipper only builds hits that beat the best evicted score and
-// hands the rest to skipped; that is exact when hits are ordered by score
-// alone and the aggregations only read the score.
-func (hc *TopNCollector) nextHitFunc(searcher search.Collectible, sctx *search.Context, bucket *search.Bucket,
-	skipped func(float64, int) bool) func() (*search.DocumentMatch, error) {
+// scoreSkipper returns searcher as a ScoreSkipper when Collect may use it:
+// once the results are full, a ScoreSkipper only builds hits that beat the
+// best evicted score and hands the rest to consumeSkipped; that is exact
+// when hits are ordered by score alone and the aggregations only read the
+// score.
+func (hc *TopNCollector) scoreSkipper(searcher search.Collectible, bucket *search.Bucket) search.ScoreSkipper {
 	skipper, ok := searcher.(search.ScoreSkipper)
 	if !ok || !hc.scoreDesc || hc.searchAfter != nil || len(hc.neededFields) > 0 || !bucket.ScoreOnly() {
-		return func() (*search.DocumentMatch, error) { return searcher.Next(sctx) }
+		return nil
 	}
-	return func() (*search.DocumentMatch, error) {
-		if hc.lowestMatchOutsideResults == nil {
-			return searcher.Next(sctx)
-		}
-		return skipper.NextAbove(sctx, hc.lowestMatchOutsideResults.Score, skipped)
+	if hc.skipped == nil {
+		hc.skipped = hc.consumeSkipped
 	}
+	return skipper
+}
+
+// nextHit advances searcher, through skipper when it is set and the results
+// are full.
+func (hc *TopNCollector) nextHit(searcher search.Collectible, skipper search.ScoreSkipper,
+	sctx *search.Context) (*search.DocumentMatch, error) {
+	if skipper == nil || hc.lowestMatchOutsideResults == nil {
+		return searcher.Next(sctx)
+	}
+	return skipper.NextAbove(sctx, hc.lowestMatchOutsideResults.Score, hc.skipped)
+}
+
+// consumeSkipped counts n hits a ScoreSkipper passed over at score.
+func (hc *TopNCollector) consumeSkipped(score float64, n int) bool {
+	before := hc.hitNumber
+	hc.hitNumber += n
+	hc.bucket.ConsumeScore(score, n)
+	if hc.hitNumber/CheckDoneEvery != before/CheckDoneEvery {
+		hc.skipErr = hc.ctx.Err()
+	}
+	return hc.skipErr == nil
 }
 
 func (hc *TopNCollector) collectSingle(ctx *search.Context, d *search.DocumentMatch, bucket *search.Bucket) error {
@@ -352,19 +360,16 @@ func (hc *TopNCollector) outsideResults(d *search.DocumentMatch) bool {
 // finalizeResults starts with the heap containing the final top size+skip
 // it now throws away the results to be skipped
 // and does final doc id lookup (if necessary)
-func (hc *TopNCollector) finalizeResults() error {
-	var err error
-	hc.results, err = hc.store.Final(hc.skip, func(doc *search.DocumentMatch) error {
+func (hc *TopNCollector) finalizeResults() {
+	hc.results = hc.store.Final(hc.skip)
+	for _, doc := range hc.results {
 		hc.sort.Complete(doc)
 		doc.Complete(nil)
-		return nil
-	})
+	}
 
 	if hc.reverse {
 		for i, j := 0, len(hc.results)-1; i < j; i, j = i+1, j-1 {
 			hc.results[i], hc.results[j] = hc.results[j], hc.results[i]
 		}
 	}
-
-	return err
 }
