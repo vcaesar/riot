@@ -382,7 +382,7 @@ All three engines run the same workload: 100,000 synthetic documents (`body` tex
 | Workload                                  | Bleve v2.6.2 | Bluge v0.2.2 | Riot      | Riot vs Bleve | Riot vs Bluge |
 | ----------------------------------------- | ------------ | ------------ | --------- | ------------- | ------------- |
 | Initial indexing, 100,000 docs            | 6,546 ms     | 5,029 ms     | 500 ms    | 13.1× faster  | 10.1× faster  |
-| 1-doc commit + visible reader             | 0.151 ms     | 0.313 ms     | 0.119 ms§ | 1.3× faster   | 2.6× faster   |
+| 1-doc commit + visible reader             | 0.151 ms     | 0.313 ms     | 0.101 ms§ | 1.5× faster   | 3.1× faster   |
 | Index size on disk                        | 76.71 MB     | 61.06 MB     | 5.76 MB   | 13.3× smaller | 10.6× smaller |
 | Peak memory (RSS)                         | 1,931 MiB    | 1,974 MiB    | 140 MiB   | 13.8× less    | 14.1× less    |
 | Total CPU, whole run                      | 17.84 s      | 19.50 s      | 1.05 s    | 17.0× less    | 18.6× less    |
@@ -390,7 +390,7 @@ All three engines run the same workload: 100,000 synthetic documents (`body` tex
 | Common term, top 10 + count               | 5,848 µs     | 10,861 µs    | 7.17 µs†  | 816× faster   | 1,516× faster |
 | Boolean AND                               | 1,788 µs     | 1,990 µs     | 23.20 µs† | 77× faster    | 86× faster    |
 | Boolean OR                                | 27.18 µs     | 43.61 µs     | 4.46 µs   | 6.1× faster   | 9.8× faster   |
-| Phrase                                    | 60,645 µs    | 61,758 µs    | 2,591 µs  | 23× faster    | 24× faster    |
+| Phrase                                    | 60,645 µs    | 61,758 µs    | 2,079 µs  | 29× faster    | 30× faster    |
 | Prefix `term12*` (constant score in riot) | 3,133 µs     | 3,597 µs     | 35.13 µs  | 89× faster    | 102× faster   |
 | Fuzzy `serch`, distance 1                 | 6,798 µs     | 12,035 µs    | 23.70 µs† | 287× faster   | 508× faster   |
 | Typed numeric range                       | 166.2 µs     | 164.6 µs     | 7.84 µs   | 21× faster    | 21× faster    |

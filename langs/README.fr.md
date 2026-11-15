@@ -382,7 +382,7 @@ Les trois moteurs exécutent la même charge : 100 000 documents synthétiques (
 | Charge | Bleve v2.6.2 | Bluge v0.2.2 | Riot | Riot vs Bleve | Riot vs Bluge |
 | --- | --- | --- | --- | --- | --- |
 | Indexation initiale, 100 000 docs | 6,546 ms | 5,029 ms | 500 ms | 13.1× plus rapide | 10.1× plus rapide |
-| Commit d'un document + lecteur visible | 0.151 ms | 0.313 ms | 0.119 ms§ | 1.3× plus rapide | 2.6× plus rapide |
+| Commit d'un document + lecteur visible | 0.151 ms | 0.313 ms | 0.101 ms§ | 1.5× plus rapide | 3.1× plus rapide |
 | Taille de l'index sur disque | 76.71 MB | 61.06 MB | 5.76 MB | 13.3× plus petit | 10.6× plus petit |
 | Mémoire maximale (RSS) | 1,931 MiB | 1,974 MiB | 140 MiB | 13.8× moins | 14.1× moins |
 | CPU total, exécution complète | 17.84 s | 19.50 s | 1.05 s | 17.0× moins | 18.6× moins |
@@ -390,7 +390,7 @@ Les trois moteurs exécutent la même charge : 100 000 documents synthétiques (
 | Terme courant, top 10 + nombre | 5,848 µs | 10,861 µs | 7.17 µs† | 816× plus rapide | 1,516× plus rapide |
 | Boolean AND | 1,788 µs | 1,990 µs | 23.20 µs† | 77× plus rapide | 86× plus rapide |
 | Boolean OR | 27.18 µs | 43.61 µs | 4.46 µs | 6.1× plus rapide | 9.8× plus rapide |
-| Phrase | 60,645 µs | 61,758 µs | 2,591 µs | 23× plus rapide | 24× plus rapide |
+| Phrase | 60,645 µs | 61,758 µs | 2,079 µs | 29× plus rapide | 30× plus rapide |
 | Préfixe `term12*` (score constant dans riot) | 3,133 µs | 3,597 µs | 35.13 µs | 89× plus rapide | 102× plus rapide |
 | Fuzzy `serch`, distance 1 | 6,798 µs | 12,035 µs | 23.70 µs† | 287× plus rapide | 508× plus rapide |
 | Plage numérique typée | 166.2 µs | 164.6 µs | 7.84 µs | 21× plus rapide | 21× plus rapide |
