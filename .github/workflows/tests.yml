@@ -20,12 +20,14 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: stable
+          check-latest: true
       - name: Test
         run: |
           go version
           go test -run '^TestTextFieldReleaseAllocations$' .
-          go test -race '-coverprofile=coverage.out' ./...
+          go test -race ./...
+          go test '-coverprofile=coverage.out' ./...
       - name: Upload coverage
         uses: codecov/codecov-action@v7
         with:

@@ -99,7 +99,7 @@ func TestInt8RecallAndExactScores(t *testing.T) {
 	for _, metric := range []vec.Metric{vec.Cosine, vec.DotProduct, vec.L2} {
 		total := map[Quantization]float64{}
 		for _, quant := range []Quantization{QuantizationInt8, QuantizationNone} {
-			g := build(t, metric, Params{Quantization: quant}, vectors)
+			g := build(t, metric, Params{EfConstruction: 64, Quantization: quant}, vectors)
 			for _, q := range queries {
 				got, err := g.Search(q, 10, 0, nil)
 				if err != nil {
