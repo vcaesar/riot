@@ -25,7 +25,14 @@ jobs:
         run: |
           go version
           go test -run '^TestTextFieldReleaseAllocations$' .
-          go test -race ./...
+          go test -race '-coverprofile=coverage.out' ./...
+      - name: Upload coverage
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
+          disable_search: true
+          flags: ${{ matrix.platform }}
       - name: Build 32-bit
         if: matrix.platform == 'ubuntu-latest'
         run: |
