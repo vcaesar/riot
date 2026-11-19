@@ -277,7 +277,7 @@ func (st *Stream) commit(persistedCallback func(error), always bool) (err error)
 		w.fireEvent(EventKindBatchIntroduction, time.Since(start))
 	}()
 	w.fireEvent(EventKindBatchIntroductionStart, 0)
-	if applied, err = w.prepareSegment(st.segments, st.ids, nil, persistedCallback); err != nil {
+	if applied, err = w.prepareSegment(st.segments, st.ids, persistedCallback); err != nil {
 		atomic.AddUint64(&w.stats.TotOnErrors, 1)
 		return err
 	}

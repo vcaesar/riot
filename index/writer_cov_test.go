@@ -395,14 +395,14 @@ func TestPrepareSegmentErrors(t *testing.T) {
 	t.Run("docs matching terms", func(t *testing.T) {
 		w := newWriter()
 		w.root.segment[0].segment = covWrap(&covDocsErrSegment{w.root.segment[0].segment.Segment})
-		if _, err := w.prepareSegment(nil, ids, nil, nil); !errors.Is(err, errCov) {
+		if _, err := w.prepareSegment(nil, ids, nil); !errors.Is(err, errCov) {
 			t.Fatalf("got %v", err)
 		}
 	})
 	t.Run("closed", func(t *testing.T) {
 		w := newWriter()
 		close(w.closeCh)
-		if _, err := w.prepareSegment(nil, ids, nil, nil); !errors.Is(err, segment.ErrClosed) {
+		if _, err := w.prepareSegment(nil, ids, nil); !errors.Is(err, segment.ErrClosed) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -413,7 +413,7 @@ func TestPrepareSegmentErrors(t *testing.T) {
 			intro := <-w.introductions
 			intro.applied <- errCov
 		}()
-		if applied, err := w.prepareSegment(nil, ids, nil, nil); applied || !errors.Is(err, errCov) {
+		if applied, err := w.prepareSegment(nil, ids, nil); applied || !errors.Is(err, errCov) {
 			t.Fatalf("got %v %v", applied, err)
 		}
 	})

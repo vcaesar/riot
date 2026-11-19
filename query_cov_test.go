@@ -40,6 +40,11 @@ func covIndex(t *testing.T) *Reader {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := w.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	docs := []*Document{
 		NewDocument("a").
 			AddField(NewTextField("name", "marty hello world").SearchTermPositions()).
@@ -65,9 +70,6 @@ func covIndex(t *testing.T) *Reader {
 	}
 	t.Cleanup(func() {
 		if err := r.Close(); err != nil {
-			t.Error(err)
-		}
-		if err := w.Close(); err != nil {
 			t.Error(err)
 		}
 	})

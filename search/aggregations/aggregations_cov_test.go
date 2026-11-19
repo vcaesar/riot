@@ -243,22 +243,35 @@ func TestSingleValueCountMax(t *testing.T) {
 	}
 }
 
+// docNums returns the numbers at the match number.
+type docNums [][]float64
+
+func (s docNums) Fields() []string                             { return []string{"f"} }
+func (s docNums) Values(*search.DocumentMatch) [][]byte        { return nil }
+func (s docNums) Numbers(d *search.DocumentMatch) []float64    { return s[d.Number] }
+func (s docNums) Dates(*search.DocumentMatch) []time.Time      { return nil }
+func (s docNums) GeoPoints(*search.DocumentMatch) []*geo.Point { return nil }
+
 func TestWeightedAvg(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		weight *stubSource
+		src    search.NumericValuesSource
+		weight search.NumericValuesSource
+		docs   int
 		want   float64
 	}{
-		{name: "weighted", weight: &stubSource{nums: []float64{3}}, want: 3},
-		{name: "empty weight", weight: &stubSource{}, want: 3},
+		{name: "weighted", src: docNums{{2}, {4}}, weight: docNums{{1}, {3}}, docs: 2, want: 3.5},
+		{name: "empty weight", src: &stubSource{nums: []float64{2, 4}}, weight: &stubSource{}, docs: 1, want: 3},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			m := WeightedAvg(&stubSource{nums: []float64{2, 4}}, test.weight)
+			m := WeightedAvg(test.src, test.weight)
 			if got := m.Fields(); !reflect.DeepEqual(got, []string{"f", "f"}) {
 				t.Errorf("Fields() = %v, want [f f]", got)
 			}
 			calc := m.Calculator().(*WeightedAvgCalculator)
-			calc.Consume(&search.DocumentMatch{})
+			for i := range test.docs {
+				calc.Consume(&search.DocumentMatch{Number: uint64(i)})
+			}
 			calc.Finish()
 			if got := calc.Value(); got != test.want {
 				t.Errorf("Value() = %v, want %v", got, test.want)

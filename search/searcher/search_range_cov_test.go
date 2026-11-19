@@ -28,15 +28,15 @@ import (
 )
 
 // tagReader is newCovReader with a doc 5 whose field tag holds pa pb pc pd,
-// each served an optimizable postings list over doc 5.
+// served optimizable postings lists over the distinct docs 1, 2, 3 and 4.
 func tagReader() *covReader {
 	r := newCovReader()
 	r.add(&FakeDocument{
 		NewFakeField("_id", "6", true, false, false, nil),
 		NewFakeField("tag", "pa pb pc pd", false, false, true, nil),
 	})
-	for _, term := range []string{"pa", "pb", "pc", "pd"} {
-		r.its[term] = newCovBatch(covDocs(5), 0)
+	for i, term := range []string{"pa", "pb", "pc", "pd"} {
+		r.its[term] = newCovBatch(covDocs(uint64(i+1)), 0)
 	}
 	return r
 }
@@ -135,7 +135,7 @@ func TestTermRangeSearcherCov(t *testing.T) {
 		s, err := NewTermRangeSearcher(r, []byte("pa"), []byte("pc"), true, true, "tag", 1, nil,
 			similarity.NewCompositeSumScorer(), noExplain())
 		if err == nil {
-			if got, derr := covDrain(covCtx(), s); derr != nil || !slices.Equal(got, docs(5)) {
+			if got, derr := covDrain(covCtx(), s); derr != nil || !slices.Equal(got, docs(1, 2, 3)) {
 				t.Fatalf("got %v %v", got, derr)
 			}
 			t.Skip("known bug: NewTermRangeSearcher drops the dictionary Close error (unnamed result)")
@@ -159,7 +159,7 @@ func TestTermPrefixSearcherCov(t *testing.T) {
 		{name: "range error", setup: func(r *covFastReader) { r.err = errCov }, wantErr: true},
 		{name: "rest of terms", setup: func(r *covFastReader) { r.dictNextErr, r.dictNextAfter = errCov, 3 },
 			wantErr: true},
-		{name: "terms bitmap", setup: func(*covFastReader) {}, want: docs(5)},
+		{name: "terms bitmap", setup: func(*covFastReader) {}, want: docs(1, 2, 3, 4)},
 		{name: "too many", maxCount: 2, setup: func(*covFastReader) {}, wantErr: true},
 	}
 	for _, tc := range tests {
@@ -196,8 +196,8 @@ func TestRegexpSearcherCov(t *testing.T) {
 		{name: "unsupported", pattern: `\bpa`, wantErr: true},
 		{name: "dictionary", pattern: "p.", setup: func(r *covReader) { r.dictErr = errCov }, wantErr: true},
 		{name: "next", pattern: "p.", setup: func(r *covReader) { r.dictNextErr = errCov }, wantErr: true},
-		{name: "no prefix", pattern: ".b", want: docs(5)},
-		{name: "fold case", pattern: "(?i)pa", want: docs(5)},
+		{name: "no prefix", pattern: ".b", want: docs(2)},
+		{name: "fold case", pattern: "(?i)pa", want: docs(1)},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,7 +225,7 @@ func TestRegexpSearcherCov(t *testing.T) {
 		r.dictCloseErr = errCov
 		s, err := NewRegexpStringSearcher(r, "pa", "tag", 1, nil, similarity.NewCompositeSumScorer(), noExplain())
 		if err == nil {
-			if got, derr := covDrain(covCtx(), s); derr != nil || !slices.Equal(got, docs(5)) {
+			if got, derr := covDrain(covCtx(), s); derr != nil || !slices.Equal(got, docs(1)) {
 				t.Fatalf("got %v %v", got, derr)
 			}
 			t.Skip("known bug: NewRegexpStringSearcher drops the dictionary Close error (unnamed result)")

@@ -36,7 +36,7 @@ type segmentIntroduction struct {
 	data      []*segmentWrapper
 	obsoletes map[uint64]*roaring.Bitmap
 	idTerms   []segment.Term
-	internal  map[string][]byte
+	// internal  map[string][]byte
 
 	applied           chan error
 	persisted         chan error

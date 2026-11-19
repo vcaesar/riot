@@ -50,14 +50,15 @@ func TestExcludeFromConjunctionCov(t *testing.T) {
 		return newCovDisjunction(t, 0, noExplain(), children...)
 	}
 	tests := []struct {
-		name    string
-		must    func(t *testing.T) search.Searcher
-		mustNot func(t *testing.T) search.Searcher
-		want    bool
-		wantErr bool
+		name     string
+		must     func(t *testing.T) search.Searcher
+		mustNot  func(t *testing.T) search.Searcher
+		want     bool
+		wantErr  bool
+		wantDocs []uint64
 	}{
-		{name: "term", want: true,
-			must:    func(t *testing.T) search.Searcher { return covExclusionConj(t, newCovBatch(covDocs(1), 0)) },
+		{name: "term", want: true, wantDocs: docs(2),
+			must:    func(t *testing.T) search.Searcher { return covExclusionConj(t, newCovBatch(covDocs(1, 2), 0)) },
 			mustNot: func(*testing.T) search.Searcher { return term(newCovBatch(covDocs(1), 0)) }},
 		{name: "slice", want: true,
 			must: func(t *testing.T) search.Searcher { return covExclusionConj(t, newCovBatch(covDocs(1), 0)) },
@@ -146,12 +147,18 @@ func TestExcludeFromConjunctionCov(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ExcludeFromConjunction(tc.must(t), tc.mustNot(t))
+			must := tc.must(t)
+			got, err := ExcludeFromConjunction(must, tc.mustNot(t))
 			if got != tc.want || (err != nil) != tc.wantErr {
 				t.Fatalf("got %v %v", got, err)
 			}
 			if tc.wantErr && !errors.Is(err, errCov) {
 				t.Fatalf("got %v", err)
+			}
+			if tc.wantDocs != nil {
+				if hits, err := covDrain(ctx, must); err != nil || !slices.Equal(hits, tc.wantDocs) {
+					t.Fatalf("docs: got %v %v, want %v", hits, err, tc.wantDocs)
+				}
 			}
 		})
 	}

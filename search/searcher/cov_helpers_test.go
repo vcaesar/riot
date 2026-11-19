@@ -16,6 +16,7 @@ package searcher
 
 import (
 	"errors"
+	"slices"
 	"sort"
 
 	"github.com/RoaringBitmap/roaring/v2"
@@ -193,7 +194,7 @@ func (p *covBatch) Optimize(kind string, octx segment.OptimizableContext) (segme
 }
 
 // covOctx folds covBatch lists: a union for disjunctions, an intersection
-// otherwise; exclusions only record that they ran.
+// otherwise; exclusions remove the excluded docs from the includes in place.
 type covOctx struct {
 	kind     string
 	include  []*covBatch
@@ -209,6 +210,15 @@ func (c *covOctx) Finish() (segment.PostingsIterator, error) {
 		return nil, c.err
 	}
 	if len(c.exclude) > 0 {
+		excluded := map[uint64]bool{}
+		for _, p := range c.exclude {
+			for _, d := range p.docs {
+				excluded[d.num] = true
+			}
+		}
+		for _, p := range c.include {
+			p.docs = slices.DeleteFunc(p.docs, func(d covDoc) bool { return excluded[d.num] })
+		}
 		c.excluded = true
 		return nil, nil
 	}
