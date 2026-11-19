@@ -373,7 +373,7 @@ func (s *Writer) Batch(batch *Batch) (err error) {
 	}
 
 	indexStart := time.Now()
-	applied, err := s.prepareSegment(newSegments, batch.ids, nil, batch.PersistedCallback())
+	applied, err := s.prepareSegment(newSegments, batch.ids, batch.PersistedCallback())
 	indexTime += time.Since(indexStart)
 	if err != nil {
 		if !applied {
@@ -522,7 +522,7 @@ func (s *Writer) analyze(documents []segment.Document) error {
 // persisted keep the id of their file. Once applied, the root snapshot
 // owns newSegments, so the caller must not close them even on error.
 func (s *Writer) prepareSegment(newSegments []*segmentWrapper, idTerms []segment.Term,
-	internalOps map[string][]byte, persistedCallback func(error)) (applied bool, err error) {
+	persistedCallback func(error)) (applied bool, err error) {
 	ids := make([]uint64, len(newSegments))
 	for i := range ids {
 		if newSegments[i].persisted {
@@ -537,7 +537,6 @@ func (s *Writer) prepareSegment(newSegments []*segmentWrapper, idTerms []segment
 		data:              newSegments,
 		idTerms:           idTerms,
 		obsoletes:         make(map[uint64]*roaring.Bitmap),
-		internal:          internalOps,
 		applied:           make(chan error),
 		persistedCallback: persistedCallback,
 	}
