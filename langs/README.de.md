@@ -382,21 +382,21 @@ Alle drei Engines laufen mit derselben Last: 100.000 synthetische Dokumente (`bo
 
 | Workload | Bleve v2.6.2 | Bluge v0.2.2 | Riot | Riot vs. Bleve | Riot vs. Bluge |
 | --- | --- | --- | --- | --- | --- |
-| Erstindizierung, 100.000 Dokumente | 6,546 ms | 5,029 ms | 500 ms | 13.1× schneller | 10.1× schneller |
-| Commit eines Dokuments + sichtbarer Reader | 0.151 ms | 0.313 ms | 0.101 ms§ | 1.5× schneller | 3.1× schneller |
-| Indexgröße auf der Festplatte | 76.71 MB | 61.06 MB | 5.76 MB | 13.3× kleiner | 10.6× kleiner |
-| Spitzenspeicher (RSS) | 1,931 MiB | 1,974 MiB | 140 MiB | 13.8× weniger | 14.1× weniger |
-| CPU gesamt, ganzer Lauf | 17.84 s | 19.50 s | 1.05 s | 17.0× weniger | 18.6× weniger |
-| Seltener Term | 11.90 µs | 16.98 µs | 2.19 µs | 5.4× schneller | 7.8× schneller |
-| Häufiger Term, Top 10 + Anzahl | 5,848 µs | 10,861 µs | 7.17 µs† | 816× schneller | 1,516× schneller |
-| Boolean AND | 1,788 µs | 1,990 µs | 23.20 µs† | 77× schneller | 86× schneller |
-| Boolean OR | 27.18 µs | 43.61 µs | 4.46 µs | 6.1× schneller | 9.8× schneller |
-| Phrase | 60,645 µs | 61,758 µs | 2,079 µs | 29× schneller | 30× schneller |
-| Präfix `term12*` (konstanter Score in riot) | 3,133 µs | 3,597 µs | 35.13 µs | 89× schneller | 102× schneller |
-| Fuzzy `serch`, Distanz 1 | 6,798 µs | 12,035 µs | 23.70 µs† | 287× schneller | 508× schneller |
-| Typisierter numerischer Bereich | 166.2 µs | 164.6 µs | 7.84 µs | 21× schneller | 21× schneller |
-| Keyword- / Facetten-Term | 385.1 µs | 645.7 µs | 2.69 µs | 143× schneller | 240× schneller |
-| Numerische Statistik‡ | 45,375 µs | 105,356 µs | 433.2 µs | 105× schneller | 243× schneller |
+| Erstindizierung, 100.000 Dokumente | 6,546 ms | 5,029 ms | **500 ms** | 13.1× schneller | 10.1× schneller |
+| Commit eines Dokuments + sichtbarer Reader | 0.151 ms | 0.313 ms | **0.101 ms**§ | 1.5× schneller | 3.1× schneller |
+| Indexgröße auf der Festplatte | 76.71 MB | 61.06 MB | **5.76 MB** | 13.3× kleiner | 10.6× kleiner |
+| Spitzenspeicher (RSS) | 1,931 MiB | 1,974 MiB | **140 MiB** | 13.8× weniger | 14.1× weniger |
+| CPU gesamt, ganzer Lauf | 17.84 s | 19.50 s | **1.05 s** | 17.0× weniger | 18.6× weniger |
+| Seltener Term | 11.90 µs | 16.98 µs | **2.19 µs** | 5.4× schneller | 7.8× schneller |
+| Häufiger Term, Top 10 + Anzahl | 5,848 µs | 10,861 µs | **7.17 µs**† | 816× schneller | 1,516× schneller |
+| Boolean AND | 1,788 µs | 1,990 µs | **23.20 µs**† | 77× schneller | 86× schneller |
+| Boolean OR | 27.18 µs | 43.61 µs | **4.46 µs** | 6.1× schneller | 9.8× schneller |
+| Phrase | 60,645 µs | 61,758 µs | **2,079 µs** | 29× schneller | 30× schneller |
+| Präfix `term12*` (konstanter Score in riot) | 3,133 µs | 3,597 µs | **35.13 µs** | 89× schneller | 102× schneller |
+| Fuzzy `serch`, Distanz 1 | 6,798 µs | 12,035 µs | **23.70 µs**† | 287× schneller | 508× schneller |
+| Typisierter numerischer Bereich | 166.2 µs | 164.6 µs | **7.84 µs** | 21× schneller | 21× schneller |
+| Keyword- / Facetten-Term | 385.1 µs | 645.7 µs | **2.69 µs** | 143× schneller | 240× schneller |
+| Numerische Statistik‡ | 45,375 µs | 105,356 µs | **433.2 µs** | 105× schneller | 243× schneller |
 
 - Spitzenspeicher und CPU umfassen den gesamten Benchmark-Prozess (10K- und 100K-Aufbau plus alle Abfrageschleifen), ermittelt aus `wait4`-rusage. Die Indexgröße stammt aus einem separaten Aufbau auf der Festplatte (Median aus 3).
 
