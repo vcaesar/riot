@@ -382,21 +382,21 @@ Los tres motores ejecutan la misma carga: 100 000 documentos sintéticos (texto 
 
 | Carga de trabajo | Bleve v2.6.2 | Bluge v0.2.2 | Riot | Riot vs Bleve | Riot vs Bluge |
 | --- | --- | --- | --- | --- | --- |
-| Indexación inicial, 100 000 docs | 6,546 ms | 5,029 ms | 500 ms | 13.1× más rápido | 10.1× más rápido |
-| Commit de 1 documento + lector visible | 0.151 ms | 0.313 ms | 0.101 ms§ | 1.5× más rápido | 3.1× más rápido |
-| Tamaño del índice en disco | 76.71 MB | 61.06 MB | 5.76 MB | 13.3× más pequeño | 10.6× más pequeño |
-| Memoria máxima (RSS) | 1,931 MiB | 1,974 MiB | 140 MiB | 13.8× menos | 14.1× menos |
-| CPU total, ejecución completa | 17.84 s | 19.50 s | 1.05 s | 17.0× menos | 18.6× menos |
-| Término raro | 11.90 µs | 16.98 µs | 2.19 µs | 5.4× más rápido | 7.8× más rápido |
-| Término común, top 10 + recuento | 5,848 µs | 10,861 µs | 7.17 µs† | 816× más rápido | 1,516× más rápido |
-| Boolean AND | 1,788 µs | 1,990 µs | 23.20 µs† | 77× más rápido | 86× más rápido |
-| Boolean OR | 27.18 µs | 43.61 µs | 4.46 µs | 6.1× más rápido | 9.8× más rápido |
-| Frase | 60,645 µs | 61,758 µs | 2,079 µs | 29× más rápido | 30× más rápido |
-| Prefijo `term12*` (puntuación constante en riot) | 3,133 µs | 3,597 µs | 35.13 µs | 89× más rápido | 102× más rápido |
-| Fuzzy `serch`, distancia 1 | 6,798 µs | 12,035 µs | 23.70 µs† | 287× más rápido | 508× más rápido |
-| Rango numérico tipado | 166.2 µs | 164.6 µs | 7.84 µs | 21× más rápido | 21× más rápido |
-| Término de palabra clave / faceta | 385.1 µs | 645.7 µs | 2.69 µs | 143× más rápido | 240× más rápido |
-| Estadísticas numéricas‡ | 45,375 µs | 105,356 µs | 433.2 µs | 105× más rápido | 243× más rápido |
+| Indexación inicial, 100 000 docs | 6,546 ms | 5,029 ms | **500 ms** | 13.1× más rápido | 10.1× más rápido |
+| Commit de 1 documento + lector visible | 0.151 ms | 0.313 ms | **0.101 ms**§ | 1.5× más rápido | 3.1× más rápido |
+| Tamaño del índice en disco | 76.71 MB | 61.06 MB | **5.76 MB** | 13.3× más pequeño | 10.6× más pequeño |
+| Memoria máxima (RSS) | 1,931 MiB | 1,974 MiB | **140 MiB** | 13.8× menos | 14.1× menos |
+| CPU total, ejecución completa | 17.84 s | 19.50 s | **1.05 s** | 17.0× menos | 18.6× menos |
+| Término raro | 11.90 µs | 16.98 µs | **2.19 µs** | 5.4× más rápido | 7.8× más rápido |
+| Término común, top 10 + recuento | 5,848 µs | 10,861 µs | **7.17 µs**† | 816× más rápido | 1,516× más rápido |
+| Boolean AND | 1,788 µs | 1,990 µs | **23.20 µs**† | 77× más rápido | 86× más rápido |
+| Boolean OR | 27.18 µs | 43.61 µs | **4.46 µs** | 6.1× más rápido | 9.8× más rápido |
+| Frase | 60,645 µs | 61,758 µs | **2,079 µs** | 29× más rápido | 30× más rápido |
+| Prefijo `term12*` (puntuación constante en riot) | 3,133 µs | 3,597 µs | **35.13 µs** | 89× más rápido | 102× más rápido |
+| Fuzzy `serch`, distancia 1 | 6,798 µs | 12,035 µs | **23.70 µs**† | 287× más rápido | 508× más rápido |
+| Rango numérico tipado | 166.2 µs | 164.6 µs | **7.84 µs** | 21× más rápido | 21× más rápido |
+| Término de palabra clave / faceta | 385.1 µs | 645.7 µs | **2.69 µs** | 143× más rápido | 240× más rápido |
+| Estadísticas numéricas‡ | 45,375 µs | 105,356 µs | **433.2 µs** | 105× más rápido | 243× más rápido |
 
 - La memoria máxima y la CPU cubren todo el proceso de benchmark (construcciones de 10K y 100K y todos los bucles de consultas), tomadas del rusage de `wait4`. El tamaño del índice procede de una construcción en disco aparte (mediana de 3).
 
