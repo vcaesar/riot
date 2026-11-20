@@ -1,6 +1,20 @@
+
 coverage:
   status:
     project:
       default:
         target: auto
         threshold: 0.5%
+        if_not_found: success
+    patch:
+      default:
+        if_not_found: success
+
+comment:
+  require_changes: true
+
+ignore:
+  - "*.md"
+  - "**/*.md"
+  - ".github"
+  - "LICENSE"
