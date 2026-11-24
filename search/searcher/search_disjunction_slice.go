@@ -348,11 +348,13 @@ type rawDisjunction struct {
 	boundEnd   uint64
 	boundFloor int64
 	// bms are the live children's segment bitmaps of the last window,
-	// disjoint whether no two of them share a document, which bounds every
-	// hit by a single child, and union their union once a window needed it
-	bms      []*roaring.Bitmap
-	disjoint bool
-	union    *roaring.Bitmap
+	// disjoint, once checked (only when it decides a skip), whether no two
+	// of them share a document, which bounds every hit by a single child,
+	// and union their union once a window needed it
+	bms             []*roaring.Bitmap
+	disjoint        bool
+	disjointChecked bool
+	union           *roaring.Bitmap
 }
 
 // rawHead is a child's current posting.
@@ -434,19 +436,25 @@ func (r *rawDisjunction) skipWindow(number uint64, floorBits int64) (end, hits u
 		bms = append(bms, bm)
 	}
 	if !same || len(bms) != len(r.bms) {
-		r.disjoint, r.union = disjointBitmaps(bms), nil
+		r.disjointChecked, r.union = false, nil
 	}
 	r.bms = bms
 	bound := sum
-	if r.disjoint {
-		bound = top
+	if numeric.Float64ToInt64(sum*r.boost) > floorBits && numeric.Float64ToInt64(top*r.boost) <= floorBits {
+		// only disjoint bitmaps can skip this window
+		if !r.disjointChecked {
+			r.disjoint, r.disjointChecked = disjointBitmaps(bms), true
+		}
+		if r.disjoint {
+			bound = top
+		}
 	}
 	if numeric.Float64ToInt64(bound*r.boost) > floorBits {
 		r.boundEnd, r.boundFloor = end, floorBits
 		return 0, 0, false
 	}
 	lo, hi := number-base, end-base
-	if r.disjoint {
+	if r.disjointChecked && r.disjoint {
 		for _, bm := range bms {
 			hits += bm.CardinalityInRange(lo, hi)
 		}
@@ -459,10 +467,18 @@ func (r *rawDisjunction) skipWindow(number uint64, floorBits int64) (end, hits u
 	return end, hits, true
 }
 
+// disjointBitmaps uses AndCardinality, not Intersects: roaring's run
+// container Intersects materializes the whole intersection. Bitmaps with
+// more documents together than numbers up to their maximum must share
+// one, which spares the intersection for common terms.
 func disjointBitmaps(bms []*roaring.Bitmap) bool {
 	for i, a := range bms {
 		for _, b := range bms[i+1:] {
-			if a.Intersects(b) {
+			if a.IsEmpty() || b.IsEmpty() {
+				continue
+			}
+			if a.GetCardinality()+b.GetCardinality() > uint64(max(a.Maximum(), b.Maximum()))+1 ||
+				a.AndCardinality(b) != 0 {
 				return false
 			}
 		}
@@ -497,21 +513,30 @@ func (r *rawDisjunction) stepNext(i int) error {
 	return r.step(i, p, err)
 }
 
+//nolint:gocyclo // hot loop, kept inline for speed
 func (r *rawDisjunction) next(ctx *search.Context, target uint64, floor float64,
 	skipped func(float64, int) bool) (*search.DocumentMatch, error) {
 	floorBits := numeric.Float64ToInt64(floor)
+	// under SkipBlocks losing hits go to skipped in runs, as in rawConjunction
+	var pending int
+	var pendingMax float64
 	for {
 		minNum, found, err := r.first(target)
-		if err != nil || !found {
+		if err != nil {
 			return nil, err
+		}
+		if !found {
+			break
 		}
 		if r.blocks != nil && skipped != nil && ctx.SkipBlocks &&
 			(minNum >= r.boundEnd || floorBits > r.boundFloor) {
 			if end, hits, ok := r.skipWindow(minNum, floorBits); ok {
 				// #nosec G115 -- hits counts postings of one uint32-numbered segment.
-				if hits > 0 && !skipped(floor, int(hits)) {
+				// the pending hits lost too, so floor bounds them as well
+				if n := pending + int(hits); n > 0 && !skipped(floor, n) {
 					return nil, nil
 				}
+				pending = 0
 				target = end
 				continue
 			}
@@ -522,16 +547,36 @@ func (r *rawDisjunction) next(ctx *search.Context, target uint64, floor float64,
 			return nil, err
 		}
 		if skipped == nil || numeric.Float64ToInt64(score) > floorBits {
+			if pending > 0 && !skipped(pendingMax, pending) {
+				return nil, nil
+			}
 			rv := ctx.DocumentMatchPool.Get()
 			rv.SetReader(r.indexReader)
 			rv.Number = minNum
 			rv.Score = score
 			return rv, nil
 		}
-		if !skipped(score, 1) {
-			return nil, nil
+		if !ctx.SkipBlocks {
+			if !skipped(score, 1) {
+				return nil, nil
+			}
+			continue
+		}
+		if pending == 0 || score > pendingMax {
+			pendingMax = score
+		}
+		pending++
+		if pending == maxSkippedRun {
+			if !skipped(pendingMax, pending) {
+				return nil, nil
+			}
+			pending = 0
 		}
 	}
+	if pending > 0 {
+		skipped(pendingMax, pending)
+	}
+	return nil, nil
 }
 
 // first advances the children behind target to it and returns the

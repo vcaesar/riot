@@ -474,17 +474,46 @@ func (r *rawConjunction) set(i int, p segment.Posting) bool {
 	return true
 }
 
+// stepNext moves child i to its next posting, straight from its batch
+// when one is buffered, as rawDisjunction.stepNext.
+func (r *rawConjunction) stepNext(i int) error {
+	ts := r.terms[i]
+	c := &ts.cursor
+	if b := c.batch; b != nil && !c.done && b.pos < b.n {
+		r.nums[i], r.freqs[i], r.norms[i] = b.docs[b.pos], b.freqs[b.pos], b.norms[b.pos]
+		b.pos++
+		c.seen++
+		return nil
+	}
+	p, err := c.next(ts.reader)
+	if err != nil {
+		return err
+	}
+	r.set(i, p)
+	return nil
+}
+
 // next returns the next hit at or after target scoring above floor, handing
 // the hits it passes over to skipped (nil when floor admits every hit).
+//
+//nolint:gocyclo // hot loop, kept inline for speed
 func (r *rawConjunction) next(ctx *search.Context, target uint64, floor float64,
 	skipped func(float64, int) bool) (*search.DocumentMatch, error) {
 	floorBits := numeric.Float64ToInt64(floor)
+	// under SkipBlocks the aggregations take hits by a bound on their score,
+	// so losing hits go to skipped in runs, flushed before any other report
+	var pending int
+	var pendingMax float64
 	for !r.done {
 		maxNum := target
 		for _, n := range r.nums {
 			maxNum = max(maxNum, n)
 		}
 		if r.blocks != nil && skipped != nil && ctx.SkipBlocks && maxNum >= r.boundEnd {
+			if pending > 0 && !skipped(pendingMax, pending) {
+				return nil, nil
+			}
+			pending = 0
 			end, stop, ok := r.skipLosingWindow(maxNum, floor, floorBits, skipped)
 			if stop {
 				return nil, nil
@@ -495,8 +524,11 @@ func (r *rawConjunction) next(ctx *search.Context, target uint64, floor float64,
 			}
 		}
 		aligned, err := r.align(maxNum)
-		if err != nil || r.done {
+		if err != nil {
 			return nil, err
+		}
+		if r.done {
+			break
 		}
 		if !aligned {
 			continue
@@ -515,19 +547,37 @@ func (r *rawConjunction) next(ctx *search.Context, target uint64, floor float64,
 			rv.Number = maxNum
 			rv.Score = score
 		}
-		for i, ts := range r.terms {
-			p, err := ts.cursor.next(ts.reader)
-			if err != nil {
+		for i := range r.terms {
+			if err := r.stepNext(i); err != nil {
 				return nil, err
 			}
-			r.set(i, p)
 		}
 		if rv != nil {
+			if pending > 0 && !skipped(pendingMax, pending) {
+				ctx.DocumentMatchPool.Put(rv)
+				return nil, nil
+			}
 			return rv, nil
 		}
-		if !skipped(score, 1) {
-			return nil, nil
+		if !ctx.SkipBlocks {
+			if !skipped(score, 1) {
+				return nil, nil
+			}
+			continue
 		}
+		if pending == 0 || score > pendingMax {
+			pendingMax = score
+		}
+		pending++
+		if pending == maxSkippedRun {
+			if !skipped(pendingMax, pending) {
+				return nil, nil
+			}
+			pending = 0
+		}
+	}
+	if pending > 0 {
+		skipped(pendingMax, pending)
 	}
 	return nil, nil
 }
