@@ -406,6 +406,8 @@ func (c *postingsCursor) nextAbove(reader segment.PostingsIterator, scorer searc
 // nextAboveBatch is nextAbove's loop over batched postings.
 // With skipBlocks, whole postings blocks whose bound is at or below floor
 // are reported to skipped as floor without being decoded.
+//
+//nolint:gocyclo // hot loop, kept inline for speed
 func (c *postingsCursor) nextAboveBatch(reader segment.PostingsIterator, scorer search.Scorer, floor float64,
 	floorBits int64, skipBlocks bool, skipped func(float64, int) bool) (segment.Posting, float64, error) {
 	b := c.batch
@@ -435,17 +437,32 @@ func (c *postingsCursor) nextAboveBatch(reader segment.PostingsIterator, scorer 
 		if err != nil || !ok {
 			return nil, 0, err
 		}
+		// with skipBlocks the aggregations take hits by a bound on their
+		// score, so the hits passed over in a batch go to skipped at once
+		var pending int
+		var pendingMax float64
 		for b.pos < b.n {
 			k := b.pos
 			score := scorer.Score(b.freqs[k], b.norms[k])
 			if numeric.Float64ToInt64(score) > floorBits {
+				if pending > 0 && !skipped(pendingMax, pending) {
+					return nil, 0, nil
+				}
 				return c.pop(), score, nil
 			}
 			b.pos++
 			c.seen++
-			if !skipped(score, 1) {
+			if skipBlocks {
+				if pending == 0 || score > pendingMax {
+					pendingMax = score
+				}
+				pending++
+			} else if !skipped(score, 1) {
 				return nil, 0, nil
 			}
+		}
+		if pending > 0 && !skipped(pendingMax, pending) {
+			return nil, 0, nil
 		}
 	}
 }
